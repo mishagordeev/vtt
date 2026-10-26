@@ -84,3 +84,16 @@ export interface RoomSnapshot {
   messages: ChatMessage[];
   seq: number;
 }
+
+/** Где живут комнаты: Redis (Upstash / Vercel KV) или память процесса. */
+export type StorageMode = "redis" | "memory";
+
+/** Ответ /api/health — состояние хранилища комнат. */
+export interface StorageHealth {
+  mode: StorageMode;
+  /** Redis ответил на PING (в memory-режиме всегда true). */
+  reachable: boolean;
+  /** Задержка PING в мс; null в memory-режиме. */
+  latencyMs: number | null;
+}
+

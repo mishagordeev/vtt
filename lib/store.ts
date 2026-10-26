@@ -2,7 +2,16 @@ import { canEdit, draftFromCharacter, normalizeDraft } from "./characters";
 import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
-import type { ChatMessage, Character, Player, RoomSnapshot, RoomState } from "./types";
+import type {
+  ChatMessage,
+  Character,
+  Player,
+  RoomSnapshot,
+  RoomState,
+  StorageHealth,
+  StorageMode,
+} from "./types";
+
 
 /** Сколько живёт комната (и в Redis, и в памяти). */
 const ROOM_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -31,8 +40,33 @@ function kvCredentials(): { url: string; token: string } | null {
   return { url: url.replace(/\/+$/, ""), token };
 }
 
-export function storageMode(): "redis" | "memory" {
+export function storageMode(): StorageMode {
   return kvCredentials() ? "redis" : "memory";
+}
+
+/**
+ * Проверка хранилища для /api/health: пингует Redis через REST и замеряет задержку.
+ * В memory-режиме пинговать нечего — хранилище считается доступным.
+ */
+export async function probeStorage(): Promise<StorageHealth> {
+  const kv = kvCredentials();
+  if (!kv) return { mode: "memory", reachable: true, latencyMs: null };
+
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(`${kv.url}/ping`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${kv.token}` },
+      cache: "no-store",
+    });
+    const latencyMs = Date.now() - startedAt;
+    if (!res.ok) return { mode: "redis", reachable: false, latencyMs };
+
+    const payload = (await res.json()) as { result?: string };
+    return { mode: "redis", reachable: payload.result === "PONG", latencyMs };
+  } catch {
+    return { mode: "redis", reachable: false, latencyMs: Date.now() - startedAt };
+  }
 }
 
 const storageKey = (code: string) => `${KEY_PREFIX}${code}`;

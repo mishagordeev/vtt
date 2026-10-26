@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { initials } from "@/lib/client";
 import { RULES } from "@/lib/rules";
-import type { Character, Player } from "@/lib/types";
+import type { Character, Player, StorageHealth } from "@/lib/types";
 
 interface DeskPanelProps {
   code: string;
@@ -16,9 +16,45 @@ interface DeskPanelProps {
 
 const ONLINE_WINDOW = 60_000;
 
+/** Как показать режим хранилища: цвет точки, подпись и подсказку. */
+function describeStorage(storage: StorageHealth | null): {
+  label: string;
+  dot: string;
+  hint: string;
+} {
+  if (!storage) {
+    return {
+      label: "проверяем…",
+      dot: "bg-zinc-600",
+      hint: "Запрос к /api/health",
+    };
+  }
+  if (storage.mode === "memory") {
+    return {
+      label: "память процесса",
+      dot: "bg-amber-400",
+      hint: "Redis не подключён: комнаты не переживут перезапуск функции",
+    };
+  }
+  if (!storage.reachable) {
+    return {
+      label: "Redis не отвечает",
+      dot: "bg-rose-500",
+      hint: "Проверьте KV_REST_API_URL и KV_REST_API_TOKEN в переменных окружения",
+    };
+  }
+  const latency = storage.latencyMs === null ? "" : ` · ${storage.latencyMs} мс`;
+  return {
+    label: `Redis${latency}`,
+    dot: "bg-emerald-400",
+    hint: "Комнаты хранятся в Upstash Redis и переживают перезапуск функций",
+  };
+}
+
 export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters }: DeskPanelProps) {
   const [now, setNow] = useState<number>(() => Date.now());
   const [copied, setCopied] = useState(false);
+  const [storage, setStorage] = useState<StorageHealth | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 15_000);
@@ -30,6 +66,23 @@ export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters 
     const id = setTimeout(() => setCopied(false), 2000);
     return () => clearTimeout(id);
   }, [copied]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/health", { cache: "no-store" })
+      .then((res) => res.json() as Promise<{ storage?: StorageHealth }>)
+      .then((payload) => {
+        if (alive && payload.storage) setStorage(payload.storage);
+      })
+      .catch(() => {
+        if (alive) setStorage(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const storageBadge = describeStorage(storage);
 
   const myCharacters = characters.filter(
     (character) => character.owner.toLowerCase() === me.toLowerCase(),
@@ -68,6 +121,13 @@ export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters 
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
               Мастер стола: <span className="text-zinc-300">{gm || "ещё не назначен"}</span>
+            </p>
+            <p
+              className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-500"
+              title={storageBadge.hint}
+            >
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${storageBadge.dot}`} />
+              Хранилище: <span className="text-zinc-400">{storageBadge.label}</span>
             </p>
           </div>
         </section>
