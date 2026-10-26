@@ -3,6 +3,7 @@ import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
 import { RULES } from "./rules";
+import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
 import type {
   ChatMessage,
   Character,
@@ -10,6 +11,8 @@ import type {
   MapPoint,
   MapState,
   MapStroke,
+  MusicState,
+  MusicTrack,
   Player,
   RoomSnapshot,
   RoomState,
@@ -27,9 +30,15 @@ const MAX_TEXT = 2000;
 const MAX_STROKES = 200;
 const MAX_CURSOR_AGE = 60_000;
 const MAX_MAP_POINTS = 600;
+const MAX_MUSIC_TRACKS = 20;
+const MAX_MUSIC_POSITION = 86_400;
 
 export function emptyMap(): MapState {
   return { strokes: [], cursors: {}, updatedAt: Date.now() };
+}
+
+export function emptyMusic(): MusicState {
+  return { tracks: [], updatedAt: Date.now() };
 }
 
 function ensureMap(doc: RoomState): RoomState {
@@ -37,6 +46,13 @@ function ensureMap(doc: RoomState): RoomState {
     doc.map = emptyMap();
   } else if (!doc.map.cursors || typeof doc.map.cursors !== "object") {
     doc.map.cursors = {};
+  }
+  return doc;
+}
+
+function ensureMusic(doc: RoomState): RoomState {
+  if (!doc.music || !Array.isArray(doc.music.tracks)) {
+    doc.music = emptyMusic();
   }
   return doc;
 }
@@ -103,7 +119,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
-      return ensureMap(JSON.parse(payload.result) as RoomState);
+      return ensureMusic(ensureMap(JSON.parse(payload.result) as RoomState));
     } catch {
       return null;
     }
@@ -115,7 +131,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     memoryRooms.delete(code);
     return null;
   }
-  return ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState);
+  return ensureMusic(ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState));
 }
 
 async function writeDoc(doc: RoomState): Promise<void> {
@@ -203,6 +219,7 @@ export async function createRoom(): Promise<RoomState> {
       messages: [],
       characters: [],
       map: emptyMap(),
+      music: emptyMusic(),
       seq: 1,
     };
     appendMessage(doc, {
@@ -230,6 +247,8 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     characters: doc.characters,
     messages,
     map: doc.map,
+    music: doc.music,
+    serverNow: Date.now(),
     seq: doc.seq,
   };
 }
@@ -528,3 +547,111 @@ export async function updateMap(
   });
 }
 
+function musicPosition(value: unknown, fallback = 0): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(MAX_MUSIC_POSITION, number));
+}
+
+function musicTitle(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function computedMusicPosition(track: MusicTrack, now: number): number {
+  if (!track.playing || !track.startedAt) return track.position;
+  return musicPosition(track.position + Math.max(0, now - track.startedAt) / 1000);
+}
+
+/** Добавление, play/pause, удаление и остановка всех треков. */
+export async function updateMusic(
+  code: string,
+  rawActor: unknown,
+  rawAction: unknown,
+): Promise<{ music: MusicState; serverNow: number }> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  const action =
+    rawAction && typeof rawAction === "object"
+      ? (rawAction as Record<string, unknown>)
+      : {};
+  const kind = String(action.action ?? "");
+
+  let pending: { videoId: string; title: string; url: string } | null = null;
+  if (kind === "add") {
+    const videoId = parseYouTubeId(String(action.url ?? ""));
+    if (!videoId) throw new AppError(400, "Некорректная ссылка YouTube");
+    const supplied = musicTitle(action.title);
+    const fetched = supplied ? "" : await fetchYouTubeTitle(videoId);
+    pending = {
+      videoId,
+      title: supplied || fetched || `YouTube · ${videoId}`,
+      url: youtubeWatchUrl(videoId),
+    };
+  }
+
+  return withRoom(code, (doc) => {
+    ensureMusic(doc);
+    if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    const now = Date.now();
+    const music = doc.music;
+    const trackId = String(action.id ?? "");
+
+    if (kind === "add" && pending) {
+      if (music.tracks.length >= MAX_MUSIC_TRACKS) {
+        throw new AppError(400, `Не больше ${MAX_MUSIC_TRACKS} треков в комнате`);
+      }
+      if (music.tracks.some((track) => track.videoId === pending.videoId)) {
+        throw new AppError(400, "Этот трек уже добавлен");
+      }
+      music.tracks.push({
+        id: uid("mus"),
+        videoId: pending.videoId,
+        title: pending.title,
+        url: pending.url,
+        addedBy: actor,
+        addedAt: now,
+        playing: false,
+        position: 0,
+        startedAt: 0,
+      });
+    } else if (kind === "play" || kind === "pause") {
+      const track = music.tracks.find((entry) => entry.id === trackId);
+      if (!track) throw new AppError(404, "Трек не найден");
+      const fallback = computedMusicPosition(track, now);
+      const position = musicPosition(action.position, fallback);
+      track.position = position;
+      track.playing = kind === "play";
+      track.startedAt = kind === "play" ? now : 0;
+    } else if (kind === "remove") {
+      const track = music.tracks.find((entry) => entry.id === trackId);
+      if (!track) throw new AppError(404, "Трек не найден");
+      const isGM = doc.gm.trim().toLowerCase() === actor.toLowerCase();
+      if (!isGM && track.addedBy.toLowerCase() !== actor.toLowerCase()) {
+        throw new AppError(403, "Удалить трек может автор или мастер");
+      }
+      music.tracks = music.tracks.filter((entry) => entry.id !== trackId);
+    } else if (kind === "stopAll") {
+      if (doc.gm.trim().toLowerCase() !== actor.toLowerCase()) {
+        throw new AppError(403, "Остановить всё может только мастер");
+      }
+      const positions =
+        action.positions && typeof action.positions === "object"
+          ? (action.positions as Record<string, unknown>)
+          : {};
+      for (const track of music.tracks) {
+        track.position = musicPosition(
+          positions[track.id],
+          computedMusicPosition(track, now),
+        );
+        track.playing = false;
+        track.startedAt = 0;
+      }
+    } else {
+      throw new AppError(400, "Неизвестное действие с музыкой");
+    }
+
+    music.updatedAt = now;
+    return { music, serverNow: now };
+  });
+}

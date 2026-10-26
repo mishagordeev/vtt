@@ -98,6 +98,26 @@ export interface CharacterDraft {
   fields: Record<string, string>;
 }
 
+export interface MusicTrack {
+  id: string;
+  videoId: string;
+  title: string;
+  url: string;
+  addedBy: string;
+  addedAt: number;
+  /** Общее состояние воспроизведения для всех игроков. */
+  playing: boolean;
+  /** Позиция в секундах на момент startedAt (или паузы). */
+  position: number;
+  /** Время сервера, когда началось воспроизведение; 0 на паузе. */
+  startedAt: number;
+}
+
+export interface MusicState {
+  tracks: MusicTrack[];
+  updatedAt: number;
+}
+
 export interface RoomState {
   code: string;
   title: string;
@@ -107,6 +127,7 @@ export interface RoomState {
   messages: ChatMessage[];
   characters: Character[];
   map: MapState;
+  music: MusicState;
   seq: number;
 }
 
@@ -149,6 +170,9 @@ export interface RoomSnapshot {
   characters: Character[];
   messages: ChatMessage[];
   map: MapState;
+  music: MusicState;
+  /** Время сервера на момент ответа — для синхронизации музыки. */
+  serverNow: number;
   seq: number;
 }
 

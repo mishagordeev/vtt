@@ -4,23 +4,28 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { AppError } from "@/lib/errors";
-import type { Character, CharacterDraft, ChatMessage, MapState, Player, RoomSnapshot } from "@/lib/types";
+import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
 import { CharactersPanel } from "./CharactersPanel";
 import { DeskPanel } from "./DeskPanel";
 import { JoinGate } from "./JoinGate";
+import { MusicHost } from "./MusicHost";
+import { MusicPanel } from "./MusicPanel";
 
 const POLL_INTERVAL = 4000;
 const TABLE_POLL_INTERVAL = 2000;
 const BEAT_INTERVAL = 30000;
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, updatedAt: 0 };
+const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
+const MUSIC_VOLUME_KEY = "pp:music:volume";
 
-type Tab = "table" | "characters";
+type Tab = "table" | "characters" | "music";
 type Phase = "boot" | "join" | "room" | "missing";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "table", label: "Стол" },
   { id: "characters", label: "Персонажи" },
+  { id: "music", label: "Музыка" },
 ];
 
 const nameKey = (code: string) => `pp:room:${code}:name`;
@@ -34,10 +39,22 @@ export default function RoomScreen({ code }: { code: string }) {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [map, setMap] = useState<MapState>(EMPTY_MAP);
+  const [music, setMusic] = useState<MusicState>(EMPTY_MUSIC);
+  const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [musicVolume, setMusicVolume] = useState(60);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
+    if (raw === null) return;
+    const stored = Number(raw);
+    if (Number.isFinite(stored)) {
+      setMusicVolume(Math.max(0, Math.min(100, stored)));
+    }
+  }, []);
 
   const sinceRef = useRef(0);
   const meRef = useRef("");
@@ -52,6 +69,10 @@ export default function RoomScreen({ code }: { code: string }) {
       setGm(snapshot.gm);
       setCharacters(snapshot.characters);
       setMap(snapshot.map ?? EMPTY_MAP);
+      setMusic(snapshot.music ?? EMPTY_MUSIC);
+      if (Number.isFinite(snapshot.serverNow)) {
+        setClockOffset(snapshot.serverNow - Date.now());
+      }
       setMessages((prev) => {
         if (snapshot.messages.length === 0) return prev;
         const seen = new Set(prev.map((message) => message.id));
@@ -116,7 +137,7 @@ export default function RoomScreen({ code }: { code: string }) {
   useEffect(() => {
     if (phase !== "room") return;
     let alive = true;
-    const pollMs = tab === "table" ? TABLE_POLL_INTERVAL : POLL_INTERVAL;
+    const pollMs = tab === "table" || tab === "music" ? TABLE_POLL_INTERVAL : POLL_INTERVAL;
 
     const pollId = window.setInterval(() => {
       if (!alive || document.visibilityState !== "visible") return;
@@ -210,6 +231,39 @@ export default function RoomScreen({ code }: { code: string }) {
     [code],
   );
 
+  const musicAction = useCallback(
+    async (payload: Record<string, unknown>): Promise<MusicState | null> => {
+      try {
+        const result = await api<{ music: MusicState; serverNow: number }>(
+          `/api/rooms/${code}/music`,
+          {
+            method: "POST",
+            body: JSON.stringify({ actor: meRef.current, ...payload }),
+          },
+        );
+        setMusic(result.music);
+        if (Number.isFinite(result.serverNow)) {
+          setClockOffset(result.serverNow - Date.now());
+        }
+        return result.music;
+      } catch {
+        return null;
+      }
+    },
+    [code],
+  );
+
+  const musicEnded = useCallback(
+    (id: string) => {
+      void musicAction({ action: "pause", id, position: 0 });
+    },
+    [musicAction],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(MUSIC_VOLUME_KEY, String(musicVolume));
+  }, [musicVolume]);
+
   function changeName() {
     window.localStorage.removeItem(nameKey(code));
     window.localStorage.removeItem("pp:name");
@@ -301,6 +355,11 @@ export default function RoomScreen({ code }: { code: string }) {
                     {characters.length}
                   </span>
                 ) : null}
+                {entry.id === "music" && music.tracks.length > 0 ? (
+                  <span className="ml-1 font-mono text-[10px] text-zinc-500">
+                    {music.tracks.filter((track) => track.playing).length || music.tracks.length}
+                  </span>
+                ) : null}
               </button>
             ))}
           </nav>
@@ -333,6 +392,16 @@ export default function RoomScreen({ code }: { code: string }) {
               onMapAction={mapAction}
               onOpenCharacters={() => setTab("characters")}
             />
+          ) : tab === "music" ? (
+            <MusicPanel
+              me={me}
+              gm={gm}
+              music={music}
+              volume={musicVolume}
+              clockOffset={clockOffset}
+              onVolume={(value) => setMusicVolume(value)}
+              onAction={musicAction}
+            />
           ) : (
             <CharactersPanel
               me={me}
@@ -353,6 +422,13 @@ export default function RoomScreen({ code }: { code: string }) {
           <ChatPanel messages={messages} me={me} connected={connected} onSend={send} />
         </section>
       </div>
+
+      <MusicHost
+        tracks={music.tracks}
+        volume={musicVolume}
+        clockOffset={clockOffset}
+        onEnded={musicEnded}
+      />
     </div>
   );
 }
