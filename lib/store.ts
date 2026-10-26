@@ -2,6 +2,7 @@ import { canEdit, draftFromCharacter, normalizeDraft } from "./characters";
 import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
+import { RULES } from "./rules";
 import type {
   ChatMessage,
   Character,
@@ -301,6 +302,11 @@ export async function createCharacter(
       owner,
       name: draft.name,
       archetype: draft.archetype,
+      level: draft.level,
+      alignment: draft.alignment,
+      trait: draft.trait,
+      flaw: draft.flaw,
+      money: draft.money,
       stats: draft.stats,
       resources: draft.resources,
       skills: draft.skills,
@@ -337,9 +343,12 @@ export async function updateCharacter(
 
     const resources = { ...current.resources };
     for (const key of Object.keys(patchResources)) {
+      // Совместимость: старые листы хранили ОЗ под ключом health, а stress больше не используется.
+      const target = key === "health" ? "hp" : key;
+      if (!RULES.resources.some((resource) => resource.key === target)) continue;
       const incoming = asRecord(patchResources[key]);
-      resources[key] = {
-        ...(resources[key] ?? { current: 0, max: 0 }),
+      resources[target] = {
+        ...(resources[target] ?? { current: 0, max: 0 }),
         ...incoming,
       } as { current: number; max: number };
     }
@@ -347,6 +356,11 @@ export async function updateCharacter(
     const normalized = normalizeDraft({
       name: patch.name ?? current.name,
       archetype: patch.archetype ?? current.archetype,
+      level: patch.level ?? current.level,
+      alignment: patch.alignment ?? current.alignment,
+      trait: patch.trait ?? current.trait,
+      flaw: patch.flaw ?? current.flaw,
+      money: patch.money ?? current.money,
       stats: { ...current.stats, ...asRecord(patch.stats) },
       resources,
       skills: Array.isArray(patch.skills) ? patch.skills : current.skills,
@@ -356,6 +370,11 @@ export async function updateCharacter(
 
     character.name = normalized.name;
     character.archetype = normalized.archetype;
+    character.level = normalized.level;
+    character.alignment = normalized.alignment;
+    character.trait = normalized.trait;
+    character.flaw = normalized.flaw;
+    character.money = normalized.money;
     character.stats = normalized.stats;
     character.resources = normalized.resources;
     character.skills = normalized.skills;

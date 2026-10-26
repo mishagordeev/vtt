@@ -66,7 +66,8 @@ export function CharactersPanel({
         <div className="rounded-2xl border border-dashed border-zinc-800 px-4 py-10 text-center">
           <p className="text-sm text-zinc-400">Пока ни одного листа.</p>
           <p className="mt-1 text-xs text-zinc-600">
-            Создайте персонажа — характеристики, ресурсы и навыки подтянутся из схемы правил.
+            Создайте персонажа: предыстория подставит навыки и знания, а ОЗ, КБ и испытания
+            посчитаются из характеристик и доспеха.
           </p>
         </div>
       ) : (

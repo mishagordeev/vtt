@@ -35,16 +35,32 @@ export interface ResourceState {
   max: number;
 }
 
+/** Боевой навык, небоевой навык или знание (1.4, 6.4–6.7). */
+export type SkillKind = "combat" | "noncombat" | "knowledge";
+
 export interface Skill {
   name: string;
-  level: number;
+  /** Ранг I–V; 0 — не взят. */
+  rank: number;
+  kind: SkillKind;
 }
 
 export interface Character {
   id: string;
   owner: string;
   name: string;
+  /** Предыстория: готовый набор навыков и знаний (1.4.8). */
   archetype: string;
+  /** Уровень 1–10. */
+  level: number;
+  /** Одна из девяти клеток мировоззрения (9.1). */
+  alignment: string;
+  /** Особенность (1.3.3). */
+  trait: string;
+  /** Изъян (1.3.4). */
+  flaw: string;
+  /** Стартовые и заработанные деньги, зм. */
+  money: number;
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
@@ -56,6 +72,11 @@ export interface Character {
 export interface CharacterDraft {
   name: string;
   archetype: string;
+  level: number;
+  alignment: string;
+  trait: string;
+  flaw: string;
+  money: number;
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
