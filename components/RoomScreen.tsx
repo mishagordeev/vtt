@@ -155,23 +155,25 @@ export default function RoomScreen({ code }: { code: string }) {
   );
 
   const createCharacter = useCallback(
-    async (draft: CharacterDraft) => {
-      await api(`/api/rooms/${code}/characters`, {
+    async (draft: CharacterDraft): Promise<Character> => {
+      const result = await api<{ character: Character }>(`/api/rooms/${code}/characters`, {
         method: "POST",
         body: JSON.stringify({ owner: meRef.current, character: draft }),
       });
       await load();
+      return result.character;
     },
     [code, load],
   );
 
   const updateCharacter = useCallback(
-    async (id: string, draft: CharacterDraft) => {
-      await api(`/api/rooms/${code}/characters/${id}`, {
+    async (id: string, draft: CharacterDraft): Promise<Character> => {
+      const result = await api<{ character: Character }>(`/api/rooms/${code}/characters/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ actor: meRef.current, patch: draft }),
       });
       await load();
+      return result.character;
     },
     [code, load],
   );
@@ -185,35 +187,6 @@ export default function RoomScreen({ code }: { code: string }) {
       await load();
     },
     [code, load],
-  );
-
-  const changeResource = useCallback(
-    (id: string, key: string, delta: number) => {
-      const character = characters.find((entry) => entry.id === id);
-      const resource = character?.resources[key];
-      if (!character || !resource) return;
-      const next = Math.min(resource.max, Math.max(0, resource.current + delta));
-      if (next === resource.current) return;
-
-      setCharacters((prev) =>
-        prev.map((entry) =>
-          entry.id === id
-            ? { ...entry, resources: { ...entry.resources, [key]: { ...resource, current: next } } }
-            : entry,
-        ),
-      );
-
-      void api(`/api/rooms/${code}/characters/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          actor: meRef.current,
-          patch: { resources: { [key]: { current: next } } },
-        }),
-      }).catch(() => {
-        void load();
-      });
-    },
-    [characters, code, load],
   );
 
   function changeName() {
@@ -345,7 +318,6 @@ export default function RoomScreen({ code }: { code: string }) {
               onCreate={createCharacter}
               onUpdate={updateCharacter}
               onDelete={removeCharacter}
-              onResource={changeResource}
             />
           )}
         </section>

@@ -200,16 +200,19 @@ export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters 
                       {character.name}
                     </span>
                     <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">
-                      {character.archetype}
+                      {character.level ?? 1} ур.
                     </span>
                   </div>
                   <p className="truncate text-[11px] text-zinc-500">
                     {character.owner}
                     {" · "}
                     {Object.entries(character.resources)
+                      .filter(([key]) => key === "hp" || key === "health")
                       .map(([key, value]) => {
                         const label =
-                          RULES.resources.find((resource) => resource.key === key)?.label ?? key;
+                          RULES.resources.find(
+                            (resource) => resource.key === (key === "health" ? "hp" : key),
+                          )?.label ?? key;
                         return `${label} ${value.current}/${value.max}`;
                       })
                       .join(" · ")}

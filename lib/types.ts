@@ -45,25 +45,32 @@ export interface Skill {
   kind: SkillKind;
 }
 
+/** Где лежит предмет: в руках (надет/взят) или в рюкзаке. */
+export type ItemLocation = "hands" | "backpack";
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  location: ItemLocation;
+}
+
 export interface Character {
   id: string;
   owner: string;
   name: string;
-  /** Предыстория: готовый набор навыков и знаний (1.4.8). */
-  archetype: string;
   /** Уровень 1–10. */
   level: number;
-  /** Одна из девяти клеток мировоззрения (9.1). */
-  alignment: string;
-  /** Особенность (1.3.3). */
-  trait: string;
-  /** Изъян (1.3.4). */
-  flaw: string;
-  /** Стартовые и заработанные деньги, зм. */
-  money: number;
+  /** Обрезанный круглый портрет (data URL). */
+  portrait: string;
+  /** Полная картинка для просмотра (data URL). */
+  portraitFull: string;
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
+  trait: string;
+  flaw: string;
+  money: number;
+  inventory: InventoryItem[];
   fields: Record<string, string>;
   createdAt: number;
   updatedAt: number;
@@ -71,15 +78,16 @@ export interface Character {
 
 export interface CharacterDraft {
   name: string;
-  archetype: string;
   level: number;
-  alignment: string;
-  trait: string;
-  flaw: string;
-  money: number;
+  portrait: string;
+  portraitFull: string;
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
+  trait: string;
+  flaw: string;
+  money: number;
+  inventory: InventoryItem[];
   fields: Record<string, string>;
 }
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * СХЕМА ЛИСТА ПЕРСОНАЖА ИГРЫ «ВТОРЫЕ» (редакция 3.0).
  *
  * Единственное место, где описан состав листа: характеристики, производные
@@ -11,7 +11,7 @@
  *   — 7.3 доспехи и щиты; 9.1 мировоззрение.
  */
 
-import type { Character, Skill, SkillKind } from "./types";
+import type { InventoryItem, Skill, SkillKind } from "./types";
 
 export type StatKey = "str" | "dex" | "con" | "int" | "wis" | "cha";
 
@@ -44,17 +44,24 @@ export interface TextFieldDef {
   options?: string[];
 }
 
-export interface ArmorDef {
-  name: string;
-  /** КБ доспеха без бонуса Ловкости. */
-  ac: number;
-  /** Предел бонуса Ловкости; null — без ограничений. */
-  maxDex: number | null;
-}
+export type ItemKind = "weapon" | "armor" | "shield" | "gear" | "light";
 
-export interface ShieldDef {
+export interface ItemDef {
   name: string;
-  bonus: number;
+  kind: ItemKind;
+  /** Занятые слоты инвентаря. */
+  slots: number;
+  /** Цена для справки, как в книге. */
+  price: string;
+  /** Короткое описание для каталога. */
+  description: string;
+  damage?: string;
+  /** КБ доспеха без бонуса Ловкости. */
+  ac?: number;
+  /** Предел бонуса Ловкости; null — без ограничений. */
+  maxDex?: number | null;
+  /** Бонус щита к КБ. */
+  shieldBonus?: number;
 }
 
 export interface SkillDef {
@@ -68,13 +75,6 @@ export interface SkillDef {
   hint?: string;
 }
 
-export interface BackgroundDef {
-  name: string;
-  skills: string[];
-  knowledge: string[];
-  note: string;
-}
-
 export const STATS: StatDef[] = [
   { key: "str", label: "Сила", short: "Сил", min: 3, max: 18, defaultValue: 10, hint: "Мышцы, нагрузка, грубая работа" },
   { key: "dex", label: "Ловкость", short: "Лов", min: 3, max: 18, defaultValue: 10, hint: "Защита, точность, скрытность" },
@@ -82,31 +82,6 @@ export const STATS: StatDef[] = [
   { key: "int", label: "Интеллект", short: "Инт", min: 3, max: 18, defaultValue: 10, hint: "Знания, языки, память" },
   { key: "wis", label: "Мудрость", short: "Мдр", min: 3, max: 18, defaultValue: 10, hint: "Воля, чутьё, медицина" },
   { key: "cha", label: "Харизма", short: "Хар", min: 3, max: 18, defaultValue: 10, hint: "Реакция, торг, командование" },
-];
-
-export const BACKGROUNDS: BackgroundDef[] = [
-  { name: "Легионер", skills: ["Древковое", "Скалолазание и такелаж", "Командование и мораль"], knowledge: ["Военное дело", "Осады и укрепления"], note: "Строй, караул и приказ, который нельзя обсуждать." },
-  { name: "Расхититель руин", skills: ["Скрытность", "Взлом замков", "Поиск и снятие ловушек"], knowledge: ["Архитектура руин", "Знаки мародёров"], note: "Живёт там, где каждый замок старше его прадеда." },
-  { name: "Писарь-архивариус", skills: ["Грамота", "Картография", "Оценка и сбыт"], knowledge: ["История Империи", "Древние наречия"], note: "Читал больше, чем видел; знает цену бумаге и печати." },
-  { name: "Служитель культа", skills: ["Полевая медицина", "Этикет и приличия", "Сказительство и песни"], knowledge: ["Богословие и сферы", "Обычаи и запреты"], note: "Обряды, имена богов и слова, которых лучше не произносить." },
-  { name: "Степной проводник", skills: ["Выживание", "Следопытство и погоня", "Верховая езда"], knowledge: ["География Пограничья", "Природа и звери"], note: "Родился в седле и читает следы лучше, чем буквы." },
-  { name: "Мореход-контрабандист", skills: ["Плавание", "Гребля", "Убеждение и торг"], knowledge: ["Морские пути", "Торговля и оценка"], note: "Знает, какой груз лучше не показывать таможне." },
-  { name: "Кузнец-ремесленник", skills: ["Кузнечное дело", "Оружейное и доспешное дело", "Оценка и сбыт"], knowledge: ["Металлы и сплавы", "Механика и инженерия"], note: "Чинил оружие до того, как научился им пользоваться." },
-  { name: "Сказитель", skills: ["Сказительство и песни", "Сбор слухов", "Ложь и подлоги"], knowledge: ["Легенды и история", "Генеалогия и геральдика"], note: "Зарабатывает голосом и памятью — пока не повесили." },
-  { name: "Лекарь-травник", skills: ["Полевая медицина", "Травничество", "Выживание"], knowledge: ["Анатомия и медицина", "Яды и болезни"], note: "Знает, какие травы останавливают кровь, а какие дыхание." },
-  { name: "Охотник за реликвиями", skills: ["Внимание и бдительность", "Механика и архитектура", "Грамота"], knowledge: ["Арканная археология", "Древние наречия"], note: "Руина для него — механизм, который хочет его убить." },
-];
-
-export const ALIGNMENTS: string[] = [
-  "Законопослушный добрый",
-  "Нейтральный добрый",
-  "Хаотичный добрый",
-  "Законопослушный нейтральный",
-  "Истинно нейтральный",
-  "Хаотичный нейтральный",
-  "Законопослушный злой",
-  "Нейтральный злой",
-  "Хаотичный злой",
 ];
 
 export const TRAITS: string[] = [
@@ -123,26 +98,69 @@ export const FLAWS: string[] = [
   "Легко ушибается", "Лень", "Могущественный враг", "Невезучий", "Неловкость",
   "Раздражающая личность", "Трусость", "Фанатизм", "Фобия", "Косноязычие",
 ];
-
-export const ARMOR: ArmorDef[] = [
-  { name: "Без доспеха", ac: 10, maxDex: null },
-  { name: "Кожаный доспех", ac: 12, maxDex: null },
-  { name: "Шкуры гадов / стеганка", ac: 13, maxDex: 4 },
-  { name: "Клепаная кожа", ac: 13, maxDex: 3 },
-  { name: "Кольчужная рубаха", ac: 14, maxDex: 3 },
-  { name: "Кольчужный хауберк", ac: 15, maxDex: 2 },
-  { name: "Чешуйчатый доспех", ac: 15, maxDex: 2 },
-  { name: "Пластинчатый панцирь", ac: 16, maxDex: 1 },
-  { name: "Лаоркандский полулатый", ac: 17, maxDex: 1 },
-  { name: "Полный рыцарский латный", ac: 18, maxDex: 0 },
+/** Каталог снаряжения (7.3–7.5): слоты, цена, короткое описание. */
+export const ITEMS: ItemDef[] = [
+  { name: "Кожаный доспех", kind: "armor", slots: 1, price: "5 зм", ac: 12, maxDex: null, description: "Мягкая кожа: КБ 12, Ловкость без предела." },
+  { name: "Шкуры гадов / стеганка", kind: "armor", slots: 1, price: "15 зм", ac: 13, maxDex: 4, description: "КБ 13, Ловкость не выше +4." },
+  { name: "Клепаная кожа", kind: "armor", slots: 1, price: "25 зм", ac: 13, maxDex: 3, description: "КБ 13, Ловкость не выше +3, −1 к скрытности." },
+  { name: "Кольчужная рубаха", kind: "armor", slots: 2, price: "50 зм", ac: 14, maxDex: 3, description: "КБ 14, Ловкость не выше +3, −2 к скрытности." },
+  { name: "Кольчужный хауберк", kind: "armor", slots: 2, price: "75 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности." },
+  { name: "Чешуйчатый доспех", kind: "armor", slots: 2, price: "60 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности." },
+  { name: "Пластинчатый панцирь", kind: "armor", slots: 3, price: "120 зм", ac: 16, maxDex: 1, description: "КБ 16, Ловкость не выше +1, −4 к скрытности." },
+  { name: "Лаоркандский полулатый", kind: "armor", slots: 3, price: "250 зм", ac: 17, maxDex: 1, description: "КБ 17, Ловкость не выше +1, −5 к скрытности." },
+  { name: "Полный рыцарский латный", kind: "armor", slots: 4, price: "500 зм", ac: 18, maxDex: 0, description: "КБ 18, Ловкость не добавляется, −6 к скрытности." },
+  { name: "Баклер", kind: "shield", slots: 1, price: "3 зм", shieldBonus: 1, description: "+1 к КБ; от стрел не защищает, рука почти свободна." },
+  { name: "Круглый пехотный щит", kind: "shield", slots: 1, price: "7 зм", shieldBonus: 1, description: "+1 к КБ; защищает от стрел, позволяет парировать." },
+  { name: "Тяжёлый ростовой щит", kind: "shield", slots: 2, price: "15 зм", shieldBonus: 2, description: "+2 к КБ и укрытие; скорость −5 фт." },
+  { name: "Боевой посох", kind: "weapon", slots: 1, price: "2 см", damage: "1d6", description: "Двуручное хрупкое оружие." },
+  { name: "Булава лёгкая", kind: "weapon", slots: 1, price: "5 зм", damage: "1d6", description: "Простое дробящее оружие." },
+  { name: "Булава тяжёлая", kind: "weapon", slots: 1, price: "10 зм", damage: "1d8", description: "Тяжёлое дробящее оружие." },
+  { name: "Боевой молот", kind: "weapon", slots: 1, price: "6 зм", damage: "1d6+1", description: "Пробивает чешую." },
+  { name: "Кинжал походный", kind: "weapon", slots: 1, price: "2 зм", damage: "1d4", description: "Метательное 10/20/30; до 3 шт. в слот." },
+  { name: "Кинжал кривой (пеш-кабз)", kind: "weapon", slots: 1, price: "4 зм", damage: "1d4+1", description: "+1 против кольчуг." },
+  { name: "Короткий меч", kind: "weapon", slots: 1, price: "10 зм", damage: "1d6", description: "Оружие лазутчиков; колющий и рубящий." },
+  { name: "Длинный имперский меч", kind: "weapon", slots: 1, price: "15 зм", damage: "1d8", description: "Универсальное рубяще-колющее оружие." },
+  { name: "Сабля степная", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6+1", description: "+1 при атаке с седла." },
+  { name: "Тесак горский", kind: "weapon", slots: 1, price: "8 зм", damage: "1d8", description: "Рубящий замах." },
+  { name: "Двуручный меч", kind: "weapon", slots: 2, price: "40 зм", damage: "1d10", description: "Двуручное оружие." },
+  { name: "Боевой топор", kind: "weapon", slots: 1, price: "5 зм", damage: "1d8", description: "Скол при критическом промахе." },
+  { name: "Секира двуручная", kind: "weapon", slots: 2, price: "20 зм", damage: "1d10+1", description: "Двуручное оружие." },
+  { name: "Копьё пехотное", kind: "weapon", slots: 1, price: "2 зм", damage: "1d6", description: "Первым бьёт при чардже." },
+  { name: "Длинная пика", kind: "weapon", slots: 2, price: "5 зм", damage: "1d8", description: "Двуручное, длина 15 фт." },
+  { name: "Цеп боевой", kind: "weapon", slots: 1, price: "8 зм", damage: "1d6+1", description: "Игнорирует щит врага." },
+  { name: "Короткий лук", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6", description: "Дистанция 50/100/150 фт." },
+  { name: "Степной композитный лук", kind: "weapon", slots: 1, price: "45 зм", damage: "1d8", description: "Дистанция 60/120/180 фт." },
+  { name: "Длинный лаоркандский лук", kind: "weapon", slots: 2, price: "60 зм", damage: "1d8+1", description: "Дистанция 70/140/210 фт." },
+  { name: "Лёгкий арбалет", kind: "weapon", slots: 1, price: "25 зм", damage: "1d6+1", description: "60/120/180 фт; выстрел раз в раунд." },
+  { name: "Тяжёлый арбалет", kind: "weapon", slots: 2, price: "50 зм", damage: "1d10", description: "80/160/240 фт; выстрел раз в два раунда." },
+  { name: "Праща", kind: "weapon", slots: 1, price: "5 см", damage: "1d4+1", description: "Дистанция 40/80/120 фт." },
+  { name: "Метательный дротик", kind: "weapon", slots: 1, price: "1 зм", damage: "1d4", description: "Пачка 3 шт.; 30/60/90 фт." },
+  { name: "Факелы (6 шт.)", kind: "light", slots: 1, price: "1 см", description: "Горят 1 Ход, свет 30 фт." },
+  { name: "Масляный фонарь", kind: "light", slots: 1, price: "7 зм", description: "Горит 4 часа, ровный свет 30 фт." },
+  { name: "Направленный фонарь", kind: "light", slots: 1, price: "12 зм", description: "Луч 60 фт, скрывает владельца позади." },
+  { name: "Масло горючее (1 пинта)", kind: "gear", slots: 1, price: "2 см", description: "Заправка лампы или 1d6 огня на 2 раунда." },
+  { name: "Трутница", kind: "gear", slots: 0, price: "1 зм", description: "Кремень, огниво и трут; не занимает слот." },
+  { name: "Сухие пайки (7 дней)", kind: "gear", slots: 1, price: "3 зм", description: "Вяленое мясо, галеты, смоква." },
+  { name: "Свежий провиант (7 дней)", kind: "gear", slots: 1, price: "1 зм", description: "Портится через 3 дня в катакомбах." },
+  { name: "Бурдюк для воды", kind: "gear", slots: 1, price: "1 зм", description: "Дневная норма воды на переход." },
+  { name: "Пеньковая верёвка (50 фт)", kind: "gear", slots: 1, price: "1 зм", description: "Держит до трёх тяжело вооружённых бойцов." },
+  { name: "Шёлковая верёвка (50 фт)", kind: "gear", slots: 1, price: "10 зм", description: "Сверхпрочная и лёгкая верёвка шуари." },
+  { name: "Колья и клинья (12 шт.)", kind: "gear", slots: 1, price: "1 зм", description: "Заклинить дверь, закрепить верёвку." },
+  { name: "Шест первопроходца (10 фт)", kind: "gear", slots: 1, price: "5 см", description: "Проверять ямы, плиты и своды." },
+  { name: "Инструменты взломщика", kind: "gear", slots: 1, price: "25 зм", description: "Отмычки, напильники, щупы; нужны для взлома." },
+  { name: "Аптечка полевая", kind: "gear", slots: 1, price: "5 зм", description: "Бинты и притирки на 5 перевязок." },
+  { name: "Набор трав", kind: "gear", slots: 1, price: "10 зм", description: "Для травничества и противоядий." },
+  { name: "Святая вода", kind: "gear", slots: 1, price: "25 зм", description: "1d6 урона нежити и созданиям Хаоса." },
+  { name: "Противоядие", kind: "gear", slots: 0, price: "10 зм", description: "+2 к Стойкости против яда; не лечит, а выигрывает время." },
+  { name: "Зеркальце на рукояти", kind: "gear", slots: 0, price: "5 зм", description: "Осматривать углы и отражать взгляд." },
+  { name: "Мел (коробок)", kind: "gear", slots: 0, price: "2 см", description: "Метки на стенах и защитные круги." },
+  { name: "Лопата сапёрная / кирка", kind: "gear", slots: 1, price: "2 зм", description: "Расчистка завала, 1d4 дробящего урона." },
+  { name: "Стрелы (20 шт.)", kind: "gear", slots: 1, price: "2 зм", description: "Запас для лука." },
+  { name: "Болты (20 шт.)", kind: "gear", slots: 1, price: "3 зм", description: "Запас для арбалета." },
+  { name: "Письменные принадлежности", kind: "gear", slots: 1, price: "5 зм", description: "Перья, чернила, бумага; нужны для Грамоты и подделок." },
 ];
 
-export const SHIELDS: ShieldDef[] = [
-  { name: "Без щита", bonus: 0 },
-  { name: "Баклер", bonus: 1 },
-  { name: "Круглый пехотный щит", bonus: 1 },
-  { name: "Тяжёлый ростовой щит", bonus: 2 },
-];
+
 
 /** Боевые навыки (6.5): группа оружия, основная характеристика, минимум 8. */
 export const COMBAT_SKILLS: SkillDef[] = [
@@ -273,18 +291,60 @@ export function skillKind(name: string): SkillKind {
   return findSkill(name)?.kind ?? "noncombat";
 }
 
+const ITEM_INDEX = new Map<string, ItemDef>(ITEMS.map((item) => [item.name.toLowerCase(), item]));
+
+export function findItem(name: string): ItemDef | undefined {
+  return ITEM_INDEX.get(name.trim().toLowerCase());
+}
+
+/** Предел переносимого груза: слоты равны значению Силы (7.2). */
+export function carryCapacity(stats: Record<string, number>): number {
+  return statValue(stats, "str");
+}
+
+/** Сколько слотов занимает инвентарь. */
+export function inventorySlots(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? []).reduce((sum, item) => sum + (findItem(item.name)?.slots ?? 1), 0);
+}
+
+export function handsCount(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? []).filter(
+    (item) => item.location === "hands" && findItem(item.name)?.kind !== "armor",
+  ).length;
+}
+
+/** Причина, почему предмет нельзя добавить, или null. */
+export function inventoryBlockReason(
+  inventory: InventoryItem[] | undefined,
+  stats: Record<string, number>,
+  item: ItemDef,
+  location: InventoryItem["location"],
+): string | null {
+  const list = inventory ?? [];
+  const used = inventorySlots(list);
+  const capacity = carryCapacity(stats);
+  if (used + item.slots > capacity) {
+    return `Не хватает слотов: ${used + item.slots} из ${capacity}`;
+  }
+  if (location === "hands") {
+    if (handsCount(list) >= 2) return "В руках уже две вещи";
+    if (item.kind === "armor" && list.some((entry) => entry.location === "hands" && findItem(entry.name)?.kind === "armor")) {
+      return "Доспех уже надет";
+    }
+    if (item.kind === "shield" && list.some((entry) => entry.location === "hands" && findItem(entry.name)?.kind === "shield")) {
+      return "Щит уже в руках";
+    }
+  }
+  return null;
+}
+
+
 export const RESOURCES: ResourceDef[] = [
   { key: "hp", label: "ОЗ", min: 0, max: 999, defaultMax: 8, hint: "Очки Здоровья: 0 — без чувств, −10 — смерть" },
 ];
 
 export const FIELDS: TextFieldDef[] = [
-  { key: "concept", label: "Замысел", placeholder: "Кто он и чего хочет — одной фразой", maxLength: 200 },
-  { key: "flawNote", label: "Уточнение изъяна", placeholder: "Фобия: темнота; аллергия: пыльца; враг: артель скупщика", maxLength: 160 },
-  { key: "armor", label: "Доспех", placeholder: "Без доспеха", maxLength: 40, options: ARMOR.map((armor) => armor.name) },
-  { key: "shield", label: "Щит", placeholder: "Без щита", maxLength: 40, options: SHIELDS.map((shield) => shield.name) },
-  { key: "gear", label: "Снаряжение", placeholder: "Оружие, инструменты, свет, вода, припасы", maxLength: 1200, multiline: true },
-  { key: "bonds", label: "Связи и долги", placeholder: "Кому должен, кого боится, за кем идёт", maxLength: 800, multiline: true },
-  { key: "notes", label: "Заметки", placeholder: "Шрамы, обеты, репутация, всё остальное", maxLength: 1600, multiline: true },
+  { key: "notes", label: "Заметки", placeholder: "Шрамы, обеты, репутация, важные мелочи", maxLength: 2000, multiline: true },
 ];
 
 export interface CharacterRules {
@@ -292,32 +352,24 @@ export interface CharacterRules {
   tagline: string;
   maxSkills: number;
   maxSkillRank: number;
-  backgrounds: BackgroundDef[];
   stats: StatDef[];
   resources: ResourceDef[];
   fields: TextFieldDef[];
   traits: string[];
   flaws: string[];
-  alignments: string[];
-  armor: ArmorDef[];
-  shields: ShieldDef[];
 }
 
 export const RULES: CharacterRules = {
   game: "Вторые",
   tagline:
-    "Лист редакции 3.0: шесть характеристик, ОЗ и КБ, навыки и знания с рангами, одна особенность и один изъян. Схема — lib/rules.ts, источник — «Книга игрока».",
+    "Лист редакции 3.0: шесть характеристик, ОЗ и КБ, навыки и знания с рангами, особенность и изъян, снаряжение по слотам Силы.",
   maxSkills: 24,
   maxSkillRank: 5,
-  backgrounds: BACKGROUNDS,
   stats: STATS,
   resources: RESOURCES,
   fields: FIELDS,
   traits: TRAITS,
   flaws: FLAWS,
-  alignments: ALIGNMENTS,
-  armor: ARMOR,
-  shields: SHIELDS,
 };
 
 /** Модификатор характеристики: (значение − 10) / 2, вниз. */
@@ -356,6 +408,7 @@ export interface DerivableCharacter {
   stats: Record<string, number>;
   fields?: Record<string, string>;
   level?: number;
+  inventory?: InventoryItem[];
 }
 
 export interface DerivedStats {
@@ -366,16 +419,42 @@ export interface DerivedStats {
   speed: string;
   slots: number;
   companions: number;
-  armor: ArmorDef;
-  shield: ShieldDef;
+  armor: { name: string; ac: number; maxDex: number | null };
+  shield: { name: string; bonus: number };
 }
 
-export function findArmor(name: string | undefined): ArmorDef {
-  return ARMOR.find((armor) => armor.name === name) ?? ARMOR[0];
+function equippedArmor(
+  inventory: InventoryItem[] | undefined,
+  legacyName: string | undefined,
+): { name: string; ac: number; maxDex: number | null } {
+  const hands = (inventory ?? []).filter((item) => item.location === "hands");
+  const armors = hands
+    .map((item) => findItem(item.name))
+    .filter((item): item is ItemDef => Boolean(item && item.kind === "armor" && item.ac !== undefined))
+    .sort((a, b) => (b.ac ?? 10) - (a.ac ?? 10));
+  if (armors[0]) {
+    return { name: armors[0].name, ac: armors[0].ac ?? 10, maxDex: armors[0].maxDex ?? null };
+  }
+  const legacy = legacyName ? findItem(legacyName) : undefined;
+  if (legacy?.ac !== undefined) {
+    return { name: legacy.name, ac: legacy.ac, maxDex: legacy.maxDex ?? null };
+  }
+  return { name: "Без доспеха", ac: 10, maxDex: null };
 }
 
-export function findShield(name: string | undefined): ShieldDef {
-  return SHIELDS.find((shield) => shield.name === name) ?? SHIELDS[0];
+function equippedShield(
+  inventory: InventoryItem[] | undefined,
+  legacyName: string | undefined,
+): { name: string; bonus: number } {
+  const hands = (inventory ?? []).filter((item) => item.location === "hands");
+  const shields = hands
+    .map((item) => findItem(item.name))
+    .filter((item): item is ItemDef => Boolean(item && item.kind === "shield" && item.shieldBonus !== undefined))
+    .sort((a, b) => (b.shieldBonus ?? 0) - (a.shieldBonus ?? 0));
+  if (shields[0]) return { name: shields[0].name, bonus: shields[0].shieldBonus ?? 0 };
+  const legacy = legacyName ? findItem(legacyName) : undefined;
+  if (legacy?.shieldBonus !== undefined) return { name: legacy.name, bonus: legacy.shieldBonus };
+  return { name: "Без щита", bonus: 0 };
 }
 
 /** Производные числа по 1.5: ОЗ, КБ, испытания, скорость, слоты, предел соратников. */
@@ -386,8 +465,8 @@ export function derive(character: DerivableCharacter): DerivedStats {
   const conMod = abilityMod(statValue(stats, "con"));
   const chaMod = abilityMod(statValue(stats, "cha"));
 
-  const armor = findArmor(character.fields?.armor);
-  const shield = findShield(character.fields?.shield);
+  const armor = equippedArmor(character.inventory, character.fields?.armor);
+  const shield = equippedShield(character.inventory, character.fields?.shield);
   const cappedDex = armor.maxDex === null ? dexMod : Math.min(dexMod, armor.maxDex);
 
   const perLevel = 5 + conMod;
@@ -429,20 +508,71 @@ export function formatMod(value: number): string {
   return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
 }
 
-/** Рекомендованные навыки предыстории (1.4.8). */
-export function backgroundByName(name: string | undefined): BackgroundDef | undefined {
-  return BACKGROUNDS.find((background) => background.name === name);
+/** Три способа генерации характеристик из 1.1. */
+export type AbilityMethod = "grim" | "spread" | "heroic";
+
+export const ABILITY_METHODS: { key: AbilityMethod; label: string; description: string }[] = [
+  {
+    key: "grim",
+    label: "Суровый жребий",
+    description: "3d6 шесть раз по порядку: Сила, Ловкость, Телосложение, Интеллект, Мудрость, Харизма.",
+  },
+  {
+    key: "spread",
+    label: "Раскладка",
+    description: "3d6 семь раз, худший результат отбросить; шесть чисел разложить по характеристикам.",
+  },
+  {
+    key: "heroic",
+    label: "Героический жребий",
+    description: "4d6 шесть раз, каждый раз отбрасывая меньшую кость; разложить по характеристикам.",
+  },
+];
+
+function rollDie(sides: number, random: () => number): number {
+  return 1 + Math.floor(random() * sides);
 }
 
-/** Минимальный набор навыков и знаний из предыстории — на ранг I. */
-export function backgroundSkills(background: BackgroundDef | undefined): Skill[] {
-  if (!background) return [];
-  return [
-    ...background.skills.map((skill) => ({ name: skill, rank: 1, kind: skillKind(skill) })),
-    ...background.knowledge.map((knowledge) => ({ name: knowledge, rank: 1, kind: "knowledge" as SkillKind })),
-  ];
+function rollPool(count: number, dice: number, random: () => number): number[][] {
+  const rolls: number[][] = [];
+  for (let i = 0; i < count; i += 1) {
+    const values = Array.from({ length: dice }, () => rollDie(6, random));
+    rolls.push(values);
+  }
+  return rolls;
 }
 
-/** Совместимость: персонаж мог быть создан до редакции 3.0. */
-export type LegacyCharacter = Character & { archetype?: string };
+function sumWithoutLowest(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.slice(1).reduce((sum, value) => sum + value, 0);
+}
+
+export interface AbilityRoll {
+  method: AbilityMethod;
+  /** Итоговые числа: для «сурового» — по порядку характеристик. */
+  values: number[];
+  /** Подробности бросков для показа игроку. */
+  details: number[][];
+}
+
+export function rollAbilityScores(method: AbilityMethod, random: () => number = Math.random): AbilityRoll {
+  if (method === "grim") {
+    const details = rollPool(6, 3, random);
+    return { method, details, values: details.map((row) => row.reduce((sum, value) => sum + value, 0)) };
+  }
+
+  if (method === "spread") {
+    const details = rollPool(7, 3, random);
+    const totals = details
+      .map((row) => row.reduce((sum, value) => sum + value, 0))
+      .sort((a, b) => b - a)
+      .slice(0, 6);
+    return { method, details, values: totals };
+  }
+
+  const details = rollPool(6, 4, random);
+  const totals = details.map(sumWithoutLowest).sort((a, b) => b - a);
+  return { method, details, values: totals };
+}
+
 

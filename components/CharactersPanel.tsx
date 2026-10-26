@@ -1,28 +1,34 @@
 "use client";
 
-import { useState } from "react";
-import { draftFromCharacter } from "@/lib/characters";
-import { RULES } from "@/lib/rules";
+import { useCallback, useEffect, useState } from "react";
+import { draftFromCharacter, emptyDraft } from "@/lib/characters";
+import { derive } from "@/lib/rules";
 import type { Character, CharacterDraft } from "@/lib/types";
-import { CharacterCard } from "./CharacterCard";
-import { CharacterForm } from "./CharacterForm";
+import { CharacterSheet, type SheetMode } from "./CharacterSheet";
 
 interface CharactersPanelProps {
   me: string;
   gm: string;
   characters: Character[];
-  onCreate: (draft: CharacterDraft) => Promise<void>;
-  onUpdate: (id: string, draft: CharacterDraft) => Promise<void>;
+  onCreate: (draft: CharacterDraft) => Promise<Character>;
+  onUpdate: (id: string, draft: CharacterDraft) => Promise<Character>;
   onDelete: (id: string) => Promise<void>;
-  onResource: (id: string, key: string, delta: number) => void;
 }
 
-type EditorState =
-  | { mode: "closed" }
-  | { mode: "create" }
-  | { mode: "edit"; character: Character };
+type Mode =
+  | { kind: "empty" }
+  | { kind: "view"; id: string }
+  | { kind: "edit"; id: string }
+  | { kind: "create" };
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
 
 export function CharactersPanel({
   me,
@@ -31,78 +37,225 @@ export function CharactersPanel({
   onCreate,
   onUpdate,
   onDelete,
-  onResource,
 }: CharactersPanelProps) {
-  const [editor, setEditor] = useState<EditorState>({ mode: "closed" });
+  const [mode, setMode] = useState<Mode>({ kind: "empty" });
+  const [draft, setDraft] = useState<CharacterDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const sorted = [...characters].sort((a, b) => {
-    const mineA = sameName(a.owner, me) ? 0 : 1;
-    const mineB = sameName(b.owner, me) ? 0 : 1;
-    if (mineA !== mineB) return mineA - mineB;
-    return a.name.localeCompare(b.name, "ru");
-  });
+  const isGM = sameName(gm, me);
+  const canEditCharacter = useCallback(
+    (character: Character) => isGM || sameName(character.owner, me),
+    [gm, isGM, me],
+  );
+  const selected =
+    mode.kind === "view" || mode.kind === "edit"
+      ? characters.find((entry) => entry.id === mode.id)
+      : undefined;
 
-  const canEdit = (character: Character) => sameName(character.owner, me) || sameName(gm, me);
+  const open = useCallback((character: Character) => {
+    setMode({ kind: "view", id: character.id });
+    setDraft(draftFromCharacter(character));
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    if (mode.kind === "empty" && characters.length > 0) open(characters[0]);
+  }, [characters, mode.kind, open]);
+
+  useEffect(() => {
+    if (mode.kind === "view" && selected) setDraft(draftFromCharacter(selected));
+  }, [mode.kind, selected]);
+
+  useEffect(() => {
+    if ((mode.kind === "view" || mode.kind === "edit") && !selected) {
+      setMode({ kind: "empty" });
+      setDraft(null);
+    }
+  }, [mode.kind, selected]);
+
+  function startCreate() {
+    if (mode.kind === "edit" || mode.kind === "create") {
+      if (!window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
+    }
+    setMode({ kind: "create" });
+    setDraft(emptyDraft());
+    setError(null);
+  }
+
+  function startEdit() {
+    if (!selected) return;
+    setDraft(draftFromCharacter(selected));
+    setMode({ kind: "edit", id: selected.id });
+    setError(null);
+  }
+
+  function cancelEdit() {
+    if (mode.kind === "edit" && selected) {
+      setDraft(draftFromCharacter(selected));
+      setMode({ kind: "view", id: selected.id });
+    } else if (mode.kind === "create") {
+      setMode({ kind: "empty" });
+      setDraft(null);
+    }
+    setError(null);
+  }
+
+  async function save() {
+    if (!draft || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved =
+        mode.kind === "create"
+          ? await onCreate(draft)
+          : mode.kind === "edit"
+            ? await onUpdate(mode.id, draft)
+            : null;
+      if (saved) {
+        setMode({ kind: "view", id: saved.id });
+        setDraft(draftFromCharacter(saved));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось сохранить персонажа");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!selected) return;
+    try {
+      await onDelete(selected.id);
+      setMode({ kind: "empty" });
+      setDraft(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось удалить персонажа");
+    }
+  }
+
+  const sheetMode: SheetMode =
+    mode.kind === "create" ? "create" : mode.kind === "edit" ? "edit" : "view";
+  const canEditSheet = mode.kind === "create" || (selected ? canEditCharacter(selected) : false);
 
   return (
-    <div className="scroll-thin h-full overflow-y-auto px-4 py-4">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-zinc-400">
-            Персонажи «{RULES.game}»
-          </h2>
-          <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-500">{RULES.tagline}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setEditor({ mode: "create" })}
-          className="rounded-lg bg-emerald-500 px-3.5 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400"
-        >
-          Новый персонаж
-        </button>
-      </div>
+    <div className="flex h-full min-h-0 flex-col lg:flex-row">
+      <section className="min-h-0 flex-1 overflow-hidden">
+        {draft ? (
+          <CharacterSheet
+            key={mode.kind === "create" ? "new" : mode.kind === "view" || mode.kind === "edit" ? mode.id : "none"}
+            draft={draft}
+            mode={sheetMode}
+            canEdit={canEditSheet}
+            busy={busy}
+            error={error}
+            owner={selected?.owner ?? me}
+            onChange={setDraft}
+            onSave={() => void save()}
+            onCancel={cancelEdit}
+            onEdit={startEdit}
+            onDelete={() => void remove()}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-sm text-center">
+              <p className="text-sm text-zinc-400">Выберите персонажа в списке справа.</p>
+              <p className="mt-1 text-xs text-zinc-600">
+                Или создайте нового — лист откроется здесь, с вкладками характеристик, навыков,
+                особенностей и снаряжения.
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
 
-      {sorted.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-800 px-4 py-10 text-center">
-          <p className="text-sm text-zinc-400">Пока ни одного листа.</p>
-          <p className="mt-1 text-xs text-zinc-600">
-            Создайте персонажа: предыстория подставит навыки и знания, а ОЗ, КБ и испытания
-            посчитаются из характеристик и доспеха.
-          </p>
+      <aside className="flex h-[42vh] shrink-0 flex-col border-t border-zinc-800/80 lg:h-auto lg:w-[300px] lg:border-l lg:border-t-0">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">
+              Персонажи
+            </h2>
+            <p className="text-[10px] text-zinc-600">{characters.length} в комнате</p>
+          </div>
+          <button
+            type="button"
+            onClick={startCreate}
+            className="rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-semibold text-emerald-950 transition hover:bg-emerald-400"
+          >
+            Новый
+          </button>
         </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {sorted.map((character) => (
-            <CharacterCard
-              key={character.id}
-              character={character}
-              editable={canEdit(character)}
-              isMine={sameName(character.owner, me)}
-              onEdit={() => setEditor({ mode: "edit", character })}
-              onDelete={() => void onDelete(character.id)}
-              onResource={(key, delta) => onResource(character.id, key, delta)}
-            />
-          ))}
-        </div>
-      )}
 
-      {editor.mode !== "closed" ? (
-        <CharacterForm
-          title={editor.mode === "create" ? "Новый персонаж" : `Правка: ${editor.character.name}`}
-          initial={
-            editor.mode === "edit" ? draftFromCharacter(editor.character) : undefined
-          }
-          onCancel={() => setEditor({ mode: "closed" })}
-          onSubmit={async (draft) => {
-            if (editor.mode === "edit") {
-              await onUpdate(editor.character.id, draft);
-            } else {
-              await onCreate(draft);
-            }
-            setEditor({ mode: "closed" });
-          }}
-        />
-      ) : null}
+        <div className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+          {characters.map((character) => {
+            const active =
+              (mode.kind === "view" || mode.kind === "edit") && mode.id === character.id;
+            const hp = character.resources?.hp ?? character.resources?.health;
+            const derived = derive({
+              stats: character.stats ?? {},
+              fields: character.fields ?? {},
+              level: character.level ?? 1,
+              inventory: character.inventory,
+            });
+            return (
+              <button
+                key={character.id}
+                type="button"
+                onClick={() => {
+                  if (
+                    (mode.kind === "edit" || mode.kind === "create") &&
+                    !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")
+                  ) {
+                    return;
+                  }
+                  open(character);
+                }}
+                className={`flex w-full items-center gap-2 rounded-xl border p-2 text-left transition ${
+                  active
+                    ? "border-emerald-400/50 bg-emerald-500/10"
+                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+                }`}
+              >
+                <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-zinc-700 bg-zinc-900">
+                  {character.portrait ? (
+                    <img src={character.portrait} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center font-mono text-[11px] text-zinc-600">
+                      {initials(character.name)}
+                    </span>
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-zinc-100">{character.name}</span>
+                  <span className="block truncate text-[10px] text-zinc-500">
+                    {character.owner} · {character.level ?? 1} ур. · КБ {derived.ac}
+                    {hp ? ` · ОЗ ${hp.current}/${hp.max}` : ""}
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap gap-1 text-[9px] text-zinc-600">
+                    {character.trait ? (
+                      <span className="text-emerald-300/80">{character.trait}</span>
+                    ) : null}
+                    {character.flaw ? (
+                      <span className="text-rose-300/80">{character.flaw}</span>
+                    ) : null}
+                    <span>{character.skills?.length ?? 0} нав.</span>
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+          {characters.length === 0 ? (
+            <p className="px-2 py-6 text-center text-xs text-zinc-600">
+              Пока ни одного листа. Нажмите «Новый».
+            </p>
+          ) : null}
+        </div>
+
+        <div className="border-t border-zinc-800 px-3 py-2 text-[10px] text-zinc-600">
+          Править чужие листы может только мастер. Остальные видят их только для чтения.
+        </div>
+      </aside>
     </div>
   );
 }
+

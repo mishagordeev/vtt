@@ -301,15 +301,16 @@ export async function createCharacter(
       id: uid("chr"),
       owner,
       name: draft.name,
-      archetype: draft.archetype,
       level: draft.level,
-      alignment: draft.alignment,
-      trait: draft.trait,
-      flaw: draft.flaw,
-      money: draft.money,
+      portrait: draft.portrait,
+      portraitFull: draft.portraitFull,
       stats: draft.stats,
       resources: draft.resources,
       skills: draft.skills,
+      trait: draft.trait,
+      flaw: draft.flaw,
+      money: draft.money,
+      inventory: draft.inventory,
       fields: draft.fields,
       createdAt: now,
       updatedAt: now,
@@ -355,29 +356,31 @@ export async function updateCharacter(
 
     const normalized = normalizeDraft({
       name: patch.name ?? current.name,
-      archetype: patch.archetype ?? current.archetype,
       level: patch.level ?? current.level,
-      alignment: patch.alignment ?? current.alignment,
+      portrait: patch.portrait ?? current.portrait,
+      portraitFull: patch.portraitFull ?? current.portraitFull,
       trait: patch.trait ?? current.trait,
       flaw: patch.flaw ?? current.flaw,
       money: patch.money ?? current.money,
       stats: { ...current.stats, ...asRecord(patch.stats) },
       resources,
       skills: Array.isArray(patch.skills) ? patch.skills : current.skills,
+      inventory: Array.isArray(patch.inventory) ? patch.inventory : current.inventory,
       fields: { ...current.fields, ...asRecord(patch.fields) },
     });
     if (!normalized.name) throw new AppError(400, "Укажите имя персонажа");
 
     character.name = normalized.name;
-    character.archetype = normalized.archetype;
     character.level = normalized.level;
-    character.alignment = normalized.alignment;
+    character.portrait = normalized.portrait;
+    character.portraitFull = normalized.portraitFull;
     character.trait = normalized.trait;
     character.flaw = normalized.flaw;
     character.money = normalized.money;
     character.stats = normalized.stats;
     character.resources = normalized.resources;
     character.skills = normalized.skills;
+    character.inventory = normalized.inventory;
     character.fields = normalized.fields;
     character.updatedAt = Date.now();
     return character;

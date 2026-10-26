@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  BACKGROUNDS,
+  ITEMS,
   RULES,
   SKILLS,
   abilityMod,
-  backgroundSkills,
+  carryCapacity,
   derive,
+  findItem,
   findSkill,
+  inventoryBlockReason,
+  inventorySlots,
   proficiencyBonus,
   rankBonus,
   rankLabel,
+  rollAbilityScores,
 } from "../lib/rules.ts";
+import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "../lib/notes.ts";
 
 test("модификатор характеристики считается как в книге 1.1", () => {
   assert.equal(abilityMod(3), -4);
@@ -44,11 +49,13 @@ test("бонус испытаний растёт на 5 и 9 уровнях", ()
 test("производные числа: ОЗ, КБ, испытания", () => {
   const derived = derive({
     stats: { str: 16, dex: 16, con: 14, int: 10, wis: 12, cha: 8 },
-    fields: { armor: "Кольчужная рубаха", shield: "Круглый пехотный щит" },
     level: 1,
+    inventory: [
+      { id: "a", name: "Кольчужная рубаха", location: "hands" },
+      { id: "b", name: "Круглый пехотный щит", location: "hands" },
+    ],
   });
   assert.equal(derived.hpSuggested, 10);
-  // кольчуга 14, Ловкость +3 не выше предела 3, щит +1
   assert.equal(derived.ac, 18);
   assert.equal(derived.saves.fortitude, 4);
   assert.equal(derived.saves.reflexes, 5);
@@ -60,15 +67,15 @@ test("производные числа: ОЗ, КБ, испытания", () => 
 test("тяжёлый доспех ограничивает Ловкость, уровень повышает ОЗ", () => {
   const derived = derive({
     stats: { str: 18, dex: 18, con: 16, int: 10, wis: 10, cha: 10 },
-    fields: { armor: "Пластинчатый панцирь", shield: "Без щита" },
     level: 3,
+    inventory: [{ id: "a", name: "Пластинчатый панцирь", location: "hands" }],
   });
-  assert.equal(derived.ac, 17); // 16 + предел Ловкости 1
+  assert.equal(derived.ac, 17);
   assert.equal(derived.hpSuggested, 8 + 3 + 2 * (5 + 3));
   assert.equal(derived.companions, 2);
 });
 
-test("каталог навыков целостен, предыстории ссылаются на существующие записи", () => {
+test("каталог навыков целостен", () => {
   const names = new Set();
   for (const skill of SKILLS) {
     assert.ok(!names.has(skill.name), `дубль навыка: ${skill.name}`);
@@ -76,22 +83,8 @@ test("каталог навыков целостен, предыстории с�
     assert.ok(skill.min >= 3 && skill.min <= 15, `минимум вне диапазона: ${skill.name}`);
     assert.ok(["str", "dex", "con", "int", "wis", "cha"].includes(skill.stat));
   }
-
-  for (const background of BACKGROUNDS) {
-    assert.equal(background.skills.length, 3, `${background.name}: должно быть 3 навыка`);
-    assert.equal(background.knowledge.length, 2, `${background.name}: должно быть 2 знания`);
-    for (const name of background.skills) {
-      const def = findSkill(name);
-      assert.ok(def, `${background.name}: нет навыка ${name}`);
-      assert.notEqual(def?.kind, "knowledge", `${background.name}: ${name} — знание, а не навык`);
-    }
-    for (const name of background.knowledge) {
-      const def = findSkill(name);
-      assert.ok(def, `${background.name}: нет знания ${name}`);
-      assert.equal(def?.kind, "knowledge", `${background.name}: ${name} — не знание`);
-    }
-    assert.equal(backgroundSkills(background).length, 5);
-  }
+  assert.equal(SKILLS.filter((skill) => skill.kind === "combat").length, 10);
+  assert.equal(SKILLS.filter((skill) => skill.kind === "knowledge").length, 23);
 });
 
 test("уточнения языков и традиций находят базовую запись", () => {
@@ -101,7 +94,89 @@ test("уточнения языков и традиций находят баз�
   assert.equal(findSkill("Несуществующий навык"), undefined);
 });
 
-test("схема листа: шесть характеристик и ОЗ", () => {
+test("каталог предметов целостен", () => {
+  const names = new Set();
+  for (const item of ITEMS) {
+    assert.ok(!names.has(item.name), `дубль предмета: ${item.name}`);
+    names.add(item.name);
+    assert.ok(item.slots >= 0 && item.slots <= 4, `слоты вне диапазона: ${item.name}`);
+    if (item.kind === "armor") assert.ok(typeof item.ac === "number", `доспех без КБ: ${item.name}`);
+    if (item.kind === "shield") assert.ok(typeof item.shieldBonus === "number", `щит без бонуса: ${item.name}`);
+  }
+  assert.ok(findItem("кожаный доспех"));
+  assert.equal(findItem("Кожаный доспех")?.ac, 12);
+});
+
+test("переносимый вес равен Силе, руки ограничены", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  assert.equal(carryCapacity(stats), 10);
+
+  const full = Array.from({ length: 10 }, (_, index) => ({
+    id: `i${index}`,
+    name: "Факелы (6 шт.)",
+    location: "backpack",
+  }));
+  assert.equal(inventorySlots(full), 10);
+  const torch = findItem("Факелы (6 шт.)");
+  assert.ok(torch);
+  assert.match(inventoryBlockReason(full, stats, torch, "backpack") ?? "", /Не хватает слотов/);
+
+  const hands = [
+    { id: "a", name: "Короткий меч", location: "hands" },
+    { id: "b", name: "Круглый пехотный щит", location: "hands" },
+  ];
+  const sword = findItem("Короткий меч");
+  assert.ok(sword);
+  assert.match(inventoryBlockReason(hands, stats, sword, "hands") ?? "", /две вещи/);
+
+  const armor = findItem("Кожаный доспех");
+  assert.ok(armor);
+  assert.match(
+    inventoryBlockReason(
+      [{ id: "a", name: "Кожаный доспех", location: "hands" }],
+      stats,
+      armor,
+      "hands",
+    ) ?? "",
+    /Доспех уже надет/,
+  );
+});
+
+test("три способа генерации характеристик", () => {
+  const lows = rollAbilityScores("grim", () => 0);
+  assert.deepEqual(lows.values, [3, 3, 3, 3, 3, 3]);
+
+  const highs = rollAbilityScores("grim", () => 0.999);
+  assert.deepEqual(highs.values, [18, 18, 18, 18, 18, 18]);
+  assert.equal(highs.details.length, 6);
+  assert.equal(highs.details[0].length, 3);
+
+  const spread = rollAbilityScores("spread", () => 0.999);
+  assert.equal(spread.details.length, 7);
+  assert.deepEqual(spread.values, [18, 18, 18, 18, 18, 18]);
+
+  const heroic = rollAbilityScores("heroic", () => 0);
+  assert.equal(heroic.details.length, 6);
+  assert.equal(heroic.details[0].length, 4);
+  assert.deepEqual(heroic.values, [3, 3, 3, 3, 3, 3]);
+});
+
+test("у каждого элемента каталога есть короткое описание", () => {
+  for (const skill of SKILLS) {
+    assert.ok((SKILL_NOTES[skill.name] ?? "").trim().length > 3, `нет описания навыка: ${skill.name}`);
+  }
+  for (const trait of RULES.traits) {
+    assert.ok((TRAIT_NOTES[trait] ?? "").trim().length > 3, `нет описания особенности: ${trait}`);
+  }
+  for (const flaw of RULES.flaws) {
+    assert.ok((FLAW_NOTES[flaw] ?? "").trim().length > 3, `нет описания изъяна: ${flaw}`);
+  }
+  for (const item of ITEMS) {
+    assert.ok(item.description.trim().length > 3, `нет описания предмета: ${item.name}`);
+  }
+});
+
+test("схема листа: шесть характеристик, ОЗ и заметки", () => {
   assert.deepEqual(
     RULES.stats.map((stat) => stat.key),
     ["str", "dex", "con", "int", "wis", "cha"],
@@ -109,7 +184,11 @@ test("схема листа: шесть характеристик и ОЗ", () 
   assert.equal(RULES.resources.length, 1);
   assert.equal(RULES.resources[0].key, "hp");
   assert.equal(RULES.resources[0].defaultMax, 8);
-  assert.ok(RULES.traits.length >= 20);
-  assert.ok(RULES.flaws.length >= 12);
-  assert.equal(RULES.alignments.length, 9);
+  assert.equal(RULES.traits.length, 25);
+  assert.equal(RULES.flaws.length, 15);
+  assert.deepEqual(
+    RULES.fields.map((field) => field.key),
+    ["notes"],
+  );
 });
+
