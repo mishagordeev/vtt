@@ -43,6 +43,8 @@ export interface Skill {
   /** Ранг I–V; 0 — не взят. */
   rank: number;
   kind: SkillKind;
+  /** Кто выдал навык: происхождение. Пусто — выбран вручную. */
+  source?: string;
 }
 
 /** Где лежит предмет: в руках (надет/взят) или в рюкзаке. */
@@ -52,6 +54,10 @@ export interface InventoryItem {
   id: string;
   name: string;
   location: ItemLocation;
+  /** Количество для монет; у остальных предметов — 1. */
+  qty?: number;
+  /** Навык или знание, чей стартовый набор дал предмет. */
+  source?: string;
 }
 
 export interface Character {
@@ -60,6 +66,8 @@ export interface Character {
   name: string;
   /** Уровень 1–10. */
   level: number;
+  /** Происхождение: народ Кас-Хатара (1.2). */
+  origin: string;
   /** Обрезанный круглый портрет (data URL). */
   portrait: string;
   /** Полная картинка для просмотра (data URL). */
@@ -69,7 +77,6 @@ export interface Character {
   skills: Skill[];
   trait: string;
   flaw: string;
-  money: number;
   inventory: InventoryItem[];
   fields: Record<string, string>;
   createdAt: number;
@@ -79,6 +86,7 @@ export interface Character {
 export interface CharacterDraft {
   name: string;
   level: number;
+  origin: string;
   portrait: string;
   portraitFull: string;
   stats: Record<string, number>;
@@ -86,7 +94,6 @@ export interface CharacterDraft {
   skills: Skill[];
   trait: string;
   flaw: string;
-  money: number;
   inventory: InventoryItem[];
   fields: Record<string, string>;
 }
@@ -99,7 +106,37 @@ export interface RoomState {
   players: Player[];
   messages: ChatMessage[];
   characters: Character[];
+  map: MapState;
   seq: number;
+}
+
+export interface MapPoint {
+  /** Нормализованная координата 0–1 по ширине карты. */
+  x: number;
+  /** Нормализованная координата 0–1 по высоте карты. */
+  y: number;
+}
+
+export interface MapStroke {
+  id: string;
+  author: string;
+  color: string;
+  /** Толщина линии как доля ширины карты. */
+  width: number;
+  points: MapPoint[];
+}
+
+export interface MapCursor {
+  name: string;
+  x: number;
+  y: number;
+  updatedAt: number;
+}
+
+export interface MapState {
+  strokes: MapStroke[];
+  cursors: Record<string, MapCursor>;
+  updatedAt: number;
 }
 
 /** Ответ /api/rooms/[code]/state */
@@ -111,6 +148,7 @@ export interface RoomSnapshot {
   players: Player[];
   characters: Character[];
   messages: ChatMessage[];
+  map: MapState;
   seq: number;
 }
 

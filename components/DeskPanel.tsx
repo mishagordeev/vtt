@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { initials } from "@/lib/client";
-import { RULES } from "@/lib/rules";
-import type { Character, Player, StorageHealth } from "@/lib/types";
+import { derive, carryCapacity, coinsAmount, inventorySlots, RULES } from "@/lib/rules";
+import type { Character, MapState, Player, StorageHealth } from "@/lib/types";
+import { MapBoard } from "./MapBoard";
 
 interface DeskPanelProps {
   code: string;
@@ -11,6 +12,8 @@ interface DeskPanelProps {
   gm: string;
   players: Player[];
   characters: Character[];
+  map: MapState;
+  onMapAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
   onOpenCharacters: () => void;
 }
 
@@ -51,7 +54,16 @@ function describeStorage(storage: StorageHealth | null): {
   };
 }
 
-export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters }: DeskPanelProps) {
+export function DeskPanel({
+  code,
+  me,
+  gm,
+  players,
+  characters,
+  map,
+  onMapAction,
+  onOpenCharacters,
+}: DeskPanelProps) {
   const [now, setNow] = useState<number>(() => Date.now());
   const [copied, setCopied] = useState(false);
   const [storage, setStorage] = useState<StorageHealth | null>(null);
@@ -104,6 +116,8 @@ export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters 
   return (
     <div className="scroll-thin h-full overflow-y-auto px-4 py-4">
       <div className="space-y-5">
+        <MapBoard me={me} gm={gm} map={map} onAction={onMapAction} />
+
         <section className="space-y-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
             Комната
@@ -190,35 +204,39 @@ export function DeskPanel({ code, me, gm, players, characters, onOpenCharacters 
             </button>
           ) : (
             <ul className="space-y-1.5">
-              {[...myCharacters, ...others].map((character) => (
-                <li
-                  key={character.id}
-                  className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-2.5 py-2"
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-zinc-100">
-                      {character.name}
-                    </span>
-                    <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">
-                      {character.level ?? 1} ур.
-                    </span>
-                  </div>
-                  <p className="truncate text-[11px] text-zinc-500">
-                    {character.owner}
-                    {" · "}
-                    {Object.entries(character.resources)
-                      .filter(([key]) => key === "hp" || key === "health")
-                      .map(([key, value]) => {
-                        const label =
-                          RULES.resources.find(
-                            (resource) => resource.key === (key === "health" ? "hp" : key),
-                          )?.label ?? key;
-                        return `${label} ${value.current}/${value.max}`;
-                      })
-                      .join(" · ")}
-                  </p>
-                </li>
-              ))}
+              {[...myCharacters, ...others].map((character) => {
+                const hp = character.resources?.hp ?? character.resources?.health;
+                const derived = derive({
+                  stats: character.stats ?? {},
+                  fields: character.fields ?? {},
+                  level: character.level ?? 1,
+                  inventory: character.inventory,
+                });
+                const load = inventorySlots(character.inventory);
+                const capacity = carryCapacity(character.stats ?? {});
+                return (
+                  <li
+                    key={character.id}
+                    className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-2.5 py-2"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-100">
+                        {character.name}
+                      </span>
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">
+                        ур. {character.level ?? 1}
+                      </span>
+                    </div>
+                    <p className="truncate text-[10px] text-zinc-500">{character.owner}</p>
+                    <p className="mt-0.5 flex flex-wrap gap-x-1.5 font-mono text-[9px] text-zinc-500">
+                      <span>КБ {derived.ac}</span>
+                      <span>ОЗ {hp ? `${hp.current}/${hp.max}` : "—"}</span>
+                      <span className={load > capacity ? "text-rose-300" : ""}>груз {load}/{capacity}</span>
+                      <span className="text-amber-200/80">{coinsAmount(character.inventory)} зм</span>
+                    </p>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

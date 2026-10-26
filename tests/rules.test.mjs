@@ -2,19 +2,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ITEMS,
+  ORIGINS,
   RULES,
   SKILLS,
+  STARTER_KITS,
   abilityMod,
   carryCapacity,
+  coinsAmount,
   derive,
   findItem,
   findSkill,
+  handsCount,
   inventoryBlockReason,
   inventorySlots,
+  overloadedIds,
   proficiencyBonus,
   rankBonus,
   rankLabel,
   rollAbilityScores,
+  zeroSlotCount,
 } from "../lib/rules.ts";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "../lib/notes.ts";
 
@@ -190,5 +196,98 @@ test("схема листа: шесть характеристик, ОЗ и за
     RULES.fields.map((field) => field.key),
     ["notes"],
   );
+});
+
+test("происхождения дают один навык и два знания, наборы существуют", () => {
+  assert.equal(ORIGINS.length, 6);
+  for (const origin of ORIGINS) {
+    const skill = findSkill(origin.skill);
+    assert.ok(skill, `нет навыка происхождения: ${origin.skill}`);
+    assert.notEqual(skill.kind, "knowledge", `культурный навык не должен быть знанием: ${origin.skill}`);
+    assert.equal(origin.knowledge.length, 2);
+    for (const name of origin.knowledge) {
+      const knowledge = findSkill(name);
+      assert.ok(knowledge, `нет знания происхождения: ${name}`);
+      assert.equal(knowledge.kind, "knowledge", `не знание: ${name}`);
+    }
+    for (const name of [origin.skill, ...origin.knowledge]) {
+      assert.ok((STARTER_KITS[name] ?? []).length > 0, `нет набора для дара: ${name}`);
+    }
+  }
+});
+
+test("у каждого навыка и знания есть стартовый набор из каталога", () => {
+  for (const skill of SKILLS) {
+    const kit = STARTER_KITS[skill.name];
+    assert.ok(Array.isArray(kit) && kit.length > 0, `нет стартового набора: ${skill.name}`);
+    for (const itemName of kit) {
+      assert.ok(findItem(itemName), `набор ${skill.name}: нет предмета ${itemName}`);
+    }
+  }
+});
+
+test("монеты лежат в рюкзаке: 1 слот за 100", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  const inventory = [
+    { id: "coins", name: "Монеты", location: "backpack", qty: 250 },
+  ];
+  assert.equal(inventorySlots(inventory), 3);
+  assert.equal(coinsAmount(inventory), 250);
+  assert.equal(zeroSlotCount(inventory), 0);
+  const coins = findItem("Монеты");
+  assert.ok(coins);
+  assert.match(inventoryBlockReason(inventory, stats, coins, "hands") ?? "", /только в рюкзаке/);
+});
+
+test("руки: 1 оружие + щит, 2 одноручных, 1 двуручное, один доспех", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  const sword = findItem("Короткий меч");
+  const shield = findItem("Круглый пехотный щит");
+  const greatsword = findItem("Двуручный меч");
+  const armor = findItem("Кожаный доспех");
+  assert.ok(sword && shield && greatsword && armor);
+
+  const swordShield = [
+    { id: "a", name: "Короткий меч", location: "hands" },
+    { id: "b", name: "Круглый пехотный щит", location: "hands" },
+  ];
+  assert.equal(handsCount(swordShield), 2);
+  assert.match(inventoryBlockReason(swordShield, stats, sword, "hands") ?? "", /две вещи/);
+
+  const twoSwords = [{ id: "a", name: "Короткий меч", location: "hands" }];
+  assert.equal(inventoryBlockReason(twoSwords, stats, sword, "hands"), null);
+
+  assert.match(
+    inventoryBlockReason([{ id: "a", name: "Короткий меч", location: "hands" }], stats, greatsword, "hands") ?? "",
+    /Двуручное/,
+  );
+  const withGreatsword = [{ id: "a", name: "Двуручный меч", location: "hands" }];
+  assert.match(inventoryBlockReason(withGreatsword, stats, sword, "hands") ?? "", /Двуручное/);
+  assert.equal(inventoryBlockReason([{ id: "a", name: "Кожаный доспех", location: "hands" }], stats, sword, "hands"), null);
+  assert.match(
+    inventoryBlockReason([{ id: "a", name: "Кожаный доспех", location: "hands" }], stats, armor, "hands") ?? "",
+    /Доспех уже надет/,
+  );
+});
+
+test("не больше четырёх предметов без слотов и перегруз", () => {
+  const stats = { str: 2, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  const chalk = findItem("Мел (коробок)");
+  assert.ok(chalk);
+  const four = Array.from({ length: 4 }, (_, index) => ({
+    id: `z${index}`,
+    name: "Мел (коробок)",
+    location: "backpack",
+  }));
+  assert.equal(zeroSlotCount(four), 4);
+  assert.match(inventoryBlockReason(four, stats, chalk, "backpack") ?? "", /четырёх/);
+
+  const heavy = [
+    { id: "a", name: "Кольчужная рубаха", location: "hands" },
+    { id: "b", name: "Кожаный доспех", location: "backpack" },
+  ];
+  const over = overloadedIds(heavy, stats);
+  assert.ok(over.has("b"));
+  assert.ok(!over.has("a"));
 });
 

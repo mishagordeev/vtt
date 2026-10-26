@@ -6,6 +6,10 @@ import { RULES } from "./rules";
 import type {
   ChatMessage,
   Character,
+  MapCursor,
+  MapPoint,
+  MapState,
+  MapStroke,
   Player,
   RoomSnapshot,
   RoomState,
@@ -20,6 +24,22 @@ const ROOM_TTL_SECONDS = 60 * 60 * 24 * 30;
 const MAX_MESSAGES = 600;
 const KEY_PREFIX = "poison-press:room:";
 const MAX_TEXT = 2000;
+const MAX_STROKES = 200;
+const MAX_CURSOR_AGE = 60_000;
+const MAX_MAP_POINTS = 600;
+
+export function emptyMap(): MapState {
+  return { strokes: [], cursors: {}, updatedAt: Date.now() };
+}
+
+function ensureMap(doc: RoomState): RoomState {
+  if (!doc.map || !Array.isArray(doc.map.strokes)) {
+    doc.map = emptyMap();
+  } else if (!doc.map.cursors || typeof doc.map.cursors !== "object") {
+    doc.map.cursors = {};
+  }
+  return doc;
+}
 
 type MemoryEntry = { doc: RoomState; expiresAt: number };
 
@@ -83,7 +103,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
-      return JSON.parse(payload.result) as RoomState;
+      return ensureMap(JSON.parse(payload.result) as RoomState);
     } catch {
       return null;
     }
@@ -95,7 +115,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     memoryRooms.delete(code);
     return null;
   }
-  return JSON.parse(JSON.stringify(entry.doc)) as RoomState;
+  return ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState);
 }
 
 async function writeDoc(doc: RoomState): Promise<void> {
@@ -182,6 +202,7 @@ export async function createRoom(): Promise<RoomState> {
       players: [],
       messages: [],
       characters: [],
+      map: emptyMap(),
       seq: 1,
     };
     appendMessage(doc, {
@@ -208,6 +229,7 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     players: doc.players,
     characters: doc.characters,
     messages,
+    map: doc.map,
     seq: doc.seq,
   };
 }
@@ -302,6 +324,7 @@ export async function createCharacter(
       owner,
       name: draft.name,
       level: draft.level,
+      origin: draft.origin,
       portrait: draft.portrait,
       portraitFull: draft.portraitFull,
       stats: draft.stats,
@@ -309,7 +332,6 @@ export async function createCharacter(
       skills: draft.skills,
       trait: draft.trait,
       flaw: draft.flaw,
-      money: draft.money,
       inventory: draft.inventory,
       fields: draft.fields,
       createdAt: now,
@@ -357,11 +379,11 @@ export async function updateCharacter(
     const normalized = normalizeDraft({
       name: patch.name ?? current.name,
       level: patch.level ?? current.level,
+      origin: patch.origin ?? current.origin,
       portrait: patch.portrait ?? current.portrait,
       portraitFull: patch.portraitFull ?? current.portraitFull,
       trait: patch.trait ?? current.trait,
       flaw: patch.flaw ?? current.flaw,
-      money: patch.money ?? current.money,
       stats: { ...current.stats, ...asRecord(patch.stats) },
       resources,
       skills: Array.isArray(patch.skills) ? patch.skills : current.skills,
@@ -372,11 +394,11 @@ export async function updateCharacter(
 
     character.name = normalized.name;
     character.level = normalized.level;
+    character.origin = normalized.origin;
     character.portrait = normalized.portrait;
     character.portraitFull = normalized.portraitFull;
     character.trait = normalized.trait;
     character.flaw = normalized.flaw;
-    character.money = normalized.money;
     character.stats = normalized.stats;
     character.resources = normalized.resources;
     character.skills = normalized.skills;
@@ -398,3 +420,111 @@ export async function deleteCharacter(code: string, id: string, rawActor: unknow
     doc.characters = doc.characters.filter((entry) => entry.id !== id);
   });
 }
+
+/** Ограничивает координату карты диапазоном 0–1. */
+function mapCoord(value: unknown): number | null {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(1, number));
+}
+
+function readMapPoints(raw: unknown): MapPoint[] {
+  if (!Array.isArray(raw)) return [];
+  const points: MapPoint[] = [];
+  for (const entry of raw.slice(0, MAX_MAP_POINTS)) {
+    if (!entry || typeof entry !== "object") continue;
+    const x = mapCoord((entry as { x?: unknown }).x);
+    const y = mapCoord((entry as { y?: unknown }).y);
+    if (x === null || y === null) continue;
+    points.push({ x, y });
+  }
+  return points;
+}
+
+/** Расстояние от точки до отрезка в нормализованных координатах карты. */
+function distanceToSegment(point: MapPoint, start: MapPoint, end: MapPoint): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared),
+  );
+  return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
+}
+
+/** Действия с картой: курсор, линия, ластик, очистка. */
+export async function updateMap(
+  code: string,
+  rawActor: unknown,
+  rawAction: unknown,
+): Promise<MapState> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  const action = rawAction && typeof rawAction === "object" ? (rawAction as Record<string, unknown>) : {};
+
+  return withRoom(code, (doc) => {
+    ensureMap(doc);
+    if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    const map = doc.map;
+    const kind = String(action.action ?? "");
+    const now = Date.now();
+
+    if (kind === "cursor") {
+      const x = mapCoord(action.x);
+      const y = mapCoord(action.y);
+      if (x === null || y === null) throw new AppError(400, "Некорректная позиция курсора");
+      const key = actor.toLowerCase();
+      map.cursors[key] = { name: actor, x, y, updatedAt: now } satisfies MapCursor;
+    } else if (kind === "stroke") {
+      const points = readMapPoints(action.points);
+      if (points.length === 0) throw new AppError(400, "Пустая линия");
+      const color = /^#[0-9a-f]{6}$/i.test(String(action.color ?? "")) ? String(action.color) : "#e11d48";
+      const width = Math.max(0.001, Math.min(0.02, Number(action.width) || 0.004));
+      const stroke: MapStroke = { id: uid("drw"), author: actor, color, width, points };
+      map.strokes.push(stroke);
+      if (map.strokes.length > MAX_STROKES) {
+        map.strokes.splice(0, map.strokes.length - MAX_STROKES);
+      }
+    } else if (kind === "erase") {
+      const points = readMapPoints(action.points);
+      const radius = Math.max(0.005, Math.min(0.08, Number(action.radius) || 0.02));
+      if (points.length === 0) throw new AppError(400, "Пустой ластик");
+      map.strokes = map.strokes.filter((stroke) => {
+        return !stroke.points.some((point, index) => {
+          const previous = index > 0 ? stroke.points[index - 1] : null;
+          const next = index + 1 < stroke.points.length ? stroke.points[index + 1] : null;
+          return points.some((erase) => {
+            if (Math.hypot(point.x - erase.x, point.y - erase.y) <= radius) return true;
+            if (previous && distanceToSegment(erase, previous, point) <= radius) return true;
+            if (next && distanceToSegment(erase, point, next) <= radius) return true;
+            return false;
+          });
+        });
+      });
+    } else if (kind === "clear") {
+      if (doc.gm.trim().toLowerCase() !== actor.toLowerCase()) {
+        throw new AppError(403, "Очистить карту может только мастер");
+      }
+      map.strokes = [];
+    } else {
+      throw new AppError(400, "Неизвестное действие с картой");
+    }
+
+    for (const [key, cursor] of Object.entries(map.cursors)) {
+      if (now - cursor.updatedAt > MAX_CURSOR_AGE) delete map.cursors[key];
+    }
+    const keys = Object.keys(map.cursors);
+    if (keys.length > 30) {
+      keys
+        .sort((a, b) => (map.cursors[a]?.updatedAt ?? 0) - (map.cursors[b]?.updatedAt ?? 0))
+        .slice(0, keys.length - 30)
+        .forEach((key) => delete map.cursors[key]);
+    }
+
+    map.updatedAt = now;
+    return map;
+  });
+}
+

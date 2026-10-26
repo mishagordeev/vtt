@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { AppError } from "@/lib/errors";
-import type { Character, CharacterDraft, ChatMessage, Player, RoomSnapshot } from "@/lib/types";
+import type { Character, CharacterDraft, ChatMessage, MapState, Player, RoomSnapshot } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
 import { CharactersPanel } from "./CharactersPanel";
 import { DeskPanel } from "./DeskPanel";
 import { JoinGate } from "./JoinGate";
 
 const POLL_INTERVAL = 4000;
+const TABLE_POLL_INTERVAL = 2000;
 const BEAT_INTERVAL = 30000;
+const EMPTY_MAP: MapState = { strokes: [], cursors: {}, updatedAt: 0 };
 
 type Tab = "table" | "characters";
 type Phase = "boot" | "join" | "room" | "missing";
@@ -31,6 +33,7 @@ export default function RoomScreen({ code }: { code: string }) {
   const [gm, setGm] = useState("");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [map, setMap] = useState<MapState>(EMPTY_MAP);
   const [connected, setConnected] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
@@ -48,6 +51,7 @@ export default function RoomScreen({ code }: { code: string }) {
       setPlayers(snapshot.players);
       setGm(snapshot.gm);
       setCharacters(snapshot.characters);
+      setMap(snapshot.map ?? EMPTY_MAP);
       setMessages((prev) => {
         if (snapshot.messages.length === 0) return prev;
         const seen = new Set(prev.map((message) => message.id));
@@ -112,11 +116,12 @@ export default function RoomScreen({ code }: { code: string }) {
   useEffect(() => {
     if (phase !== "room") return;
     let alive = true;
+    const pollMs = tab === "table" ? TABLE_POLL_INTERVAL : POLL_INTERVAL;
 
     const pollId = window.setInterval(() => {
       if (!alive || document.visibilityState !== "visible") return;
       void load();
-    }, POLL_INTERVAL);
+    }, pollMs);
 
     const beatId = window.setInterval(() => {
       if (document.visibilityState !== "visible" || !meRef.current) return;
@@ -137,7 +142,7 @@ export default function RoomScreen({ code }: { code: string }) {
       window.clearInterval(beatId);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [phase, code, load]);
+  }, [phase, code, load, tab]);
 
   const send = useCallback(
     async (text: string) => {
@@ -187,6 +192,22 @@ export default function RoomScreen({ code }: { code: string }) {
       await load();
     },
     [code, load],
+  );
+
+  const mapAction = useCallback(
+    async (payload: Record<string, unknown>): Promise<MapState | null> => {
+      try {
+        const result = await api<{ map: MapState }>(`/api/rooms/${code}/map`, {
+          method: "POST",
+          body: JSON.stringify({ actor: meRef.current, ...payload }),
+        });
+        setMap(result.map);
+        return result.map;
+      } catch {
+        return null;
+      }
+    },
+    [code],
   );
 
   function changeName() {
@@ -308,6 +329,8 @@ export default function RoomScreen({ code }: { code: string }) {
               gm={gm}
               players={players}
               characters={characters}
+              map={map}
+              onMapAction={mapAction}
               onOpenCharacters={() => setTab("characters")}
             />
           ) : (

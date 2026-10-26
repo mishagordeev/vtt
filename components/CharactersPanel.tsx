@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { draftFromCharacter, emptyDraft } from "@/lib/characters";
-import { derive } from "@/lib/rules";
+import { carryCapacity, coinsAmount, derive, inventorySlots } from "@/lib/rules";
 import type { Character, CharacterDraft } from "@/lib/types";
 import { CharacterSheet, type SheetMode } from "./CharacterSheet";
 
@@ -228,17 +228,18 @@ export function CharactersPanel({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-zinc-100">{character.name}</span>
                   <span className="block truncate text-[10px] text-zinc-500">
-                    {character.owner} · {character.level ?? 1} ур. · КБ {derived.ac}
-                    {hp ? ` · ОЗ ${hp.current}/${hp.max}` : ""}
+                    {character.owner}
                   </span>
-                  <span className="mt-0.5 flex flex-wrap gap-1 text-[9px] text-zinc-600">
-                    {character.trait ? (
-                      <span className="text-emerald-300/80">{character.trait}</span>
-                    ) : null}
-                    {character.flaw ? (
-                      <span className="text-rose-300/80">{character.flaw}</span>
-                    ) : null}
-                    <span>{character.skills?.length ?? 0} нав.</span>
+                  <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 font-mono text-[9px] text-zinc-500">
+                    <span>ур. {character.level ?? 1}</span>
+                    <span>КБ {derived.ac}</span>
+                    <span className={hp && hp.current <= 0 ? "text-rose-300" : ""}>
+                      ОЗ {hp ? `${hp.current}/${hp.max}` : "—"}
+                    </span>
+                    <span className={inventorySlots(character.inventory) > carryCapacity(character.stats ?? {}) ? "text-rose-300" : ""}>
+                      груз {inventorySlots(character.inventory)}/{carryCapacity(character.stats ?? {})}
+                    </span>
+                    <span className="text-amber-200/80">{coinsAmount(character.inventory)} зм</span>
                   </span>
                 </span>
               </button>

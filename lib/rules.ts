@@ -44,7 +44,7 @@ export interface TextFieldDef {
   options?: string[];
 }
 
-export type ItemKind = "weapon" | "armor" | "shield" | "gear" | "light";
+export type ItemKind = "weapon" | "armor" | "shield" | "gear" | "light" | "coins";
 
 export interface ItemDef {
   name: string;
@@ -56,6 +56,8 @@ export interface ItemDef {
   /** Короткое описание для каталога. */
   description: string;
   damage?: string;
+  /** Двуручное оружие: занимает обе руки. */
+  twoHanded?: boolean;
   /** КБ доспеха без бонуса Ловкости. */
   ac?: number;
   /** Предел бонуса Ловкости; null — без ограничений. */
@@ -98,6 +100,72 @@ export const FLAWS: string[] = [
   "Легко ушибается", "Лень", "Могущественный враг", "Невезучий", "Неловкость",
   "Раздражающая личность", "Трусость", "Фанатизм", "Фобия", "Косноязычие",
 ];
+
+export interface OriginDef {
+  name: string;
+  description: string;
+  mods: Partial<Record<StatKey, number>>;
+  languages: string[];
+  /** Культурный код: один конкретный навык и два знания. */
+  skill: string;
+  knowledge: [string, string];
+}
+
+export const ORIGINS: OriginDef[] = [
+  {
+    name: "Лаоркандцы",
+    description: "Наследники Империи: монументальная архитектура, законы Порядка, книжная грамота и суета царств-преемников.",
+    mods: { int: 1, con: -1 },
+    languages: ["Разговорный лаоркандский", "Высокий лаоркандский"],
+    skill: "Грамота",
+    knowledge: ["История Империи", "Древние наречия"],
+  },
+  {
+    name: "Степники-кочевники",
+    description: "Вольные племена сухих степей: коневодство, набеги, работорговля и жизнь в седле.",
+    mods: { dex: 1, int: -1 },
+    languages: ["Разговорный лаоркандский", "Племенной степной диалект"],
+    skill: "Верховая езда",
+    knowledge: ["География Пограничья", "Природа и звери"],
+  },
+  {
+    name: "Горцы",
+    description: "Воины высокогорий и приречных чащ, поклоняющиеся духам предков и не жалующие чужаков.",
+    mods: { str: 1, cha: -1 },
+    languages: ["Разговорный лаоркандский", "Горский диалект Горячеречья"],
+    skill: "Скалолазание и такелаж",
+    knowledge: ["Природа и звери", "Обычаи и запреты"],
+  },
+  {
+    name: "Зарахшадцы",
+    description: "Стражи Пограничья из северной крепости Зарахшад, веками живущие у Океана Хаоса.",
+    mods: { con: 1, wis: -1 },
+    languages: ["Разговорный лаоркандский", "Северный зарахшадский говор"],
+    skill: "Подземное чутьё",
+    knowledge: ["Архитектура руин", "Запреты и суеверия"],
+  },
+  {
+    name: "Дармаханцы",
+    description: "Селяне Земли Пактов, связанные древним договором с падшей нимфой Наамой.",
+    mods: { wis: 1, str: -1 },
+    languages: ["Разговорный лаоркандский", "Сельский говор Земли Пактов"],
+    skill: "Травничество",
+    knowledge: ["Богословие и сферы", "Обычаи и запреты"],
+  },
+  {
+    name: "Заморские мореходы",
+    description: "Шуари и иншаджа — торговцы, пираты и странники с дальних берегов По ту сторону моря.",
+    mods: { cha: 1, con: -1 },
+    languages: ["Разговорный лаоркандский", "Заморский язык шуари"],
+    skill: "Плавание",
+    knowledge: ["Морские пути", "Торговля и оценка"],
+  },
+];
+
+export function findOrigin(name: string | undefined): OriginDef | undefined {
+  return ORIGINS.find((origin) => origin.name === name);
+}
+
 /** Каталог снаряжения (7.3–7.5): слоты, цена, короткое описание. */
 export const ITEMS: ItemDef[] = [
   { name: "Кожаный доспех", kind: "armor", slots: 1, price: "5 зм", ac: 12, maxDex: null, description: "Мягкая кожа: КБ 12, Ловкость без предела." },
@@ -112,7 +180,7 @@ export const ITEMS: ItemDef[] = [
   { name: "Баклер", kind: "shield", slots: 1, price: "3 зм", shieldBonus: 1, description: "+1 к КБ; от стрел не защищает, рука почти свободна." },
   { name: "Круглый пехотный щит", kind: "shield", slots: 1, price: "7 зм", shieldBonus: 1, description: "+1 к КБ; защищает от стрел, позволяет парировать." },
   { name: "Тяжёлый ростовой щит", kind: "shield", slots: 2, price: "15 зм", shieldBonus: 2, description: "+2 к КБ и укрытие; скорость −5 фт." },
-  { name: "Боевой посох", kind: "weapon", slots: 1, price: "2 см", damage: "1d6", description: "Двуручное хрупкое оружие." },
+  { name: "Боевой посох", kind: "weapon", slots: 1, price: "2 см", damage: "1d6", twoHanded: true, description: "Двуручное хрупкое оружие." },
   { name: "Булава лёгкая", kind: "weapon", slots: 1, price: "5 зм", damage: "1d6", description: "Простое дробящее оружие." },
   { name: "Булава тяжёлая", kind: "weapon", slots: 1, price: "10 зм", damage: "1d8", description: "Тяжёлое дробящее оружие." },
   { name: "Боевой молот", kind: "weapon", slots: 1, price: "6 зм", damage: "1d6+1", description: "Пробивает чешую." },
@@ -122,17 +190,17 @@ export const ITEMS: ItemDef[] = [
   { name: "Длинный имперский меч", kind: "weapon", slots: 1, price: "15 зм", damage: "1d8", description: "Универсальное рубяще-колющее оружие." },
   { name: "Сабля степная", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6+1", description: "+1 при атаке с седла." },
   { name: "Тесак горский", kind: "weapon", slots: 1, price: "8 зм", damage: "1d8", description: "Рубящий замах." },
-  { name: "Двуручный меч", kind: "weapon", slots: 2, price: "40 зм", damage: "1d10", description: "Двуручное оружие." },
+  { name: "Двуручный меч", kind: "weapon", slots: 2, price: "40 зм", damage: "1d10", twoHanded: true, description: "Двуручное оружие." },
   { name: "Боевой топор", kind: "weapon", slots: 1, price: "5 зм", damage: "1d8", description: "Скол при критическом промахе." },
-  { name: "Секира двуручная", kind: "weapon", slots: 2, price: "20 зм", damage: "1d10+1", description: "Двуручное оружие." },
+  { name: "Секира двуручная", kind: "weapon", slots: 2, price: "20 зм", damage: "1d10+1", twoHanded: true, description: "Двуручное оружие." },
   { name: "Копьё пехотное", kind: "weapon", slots: 1, price: "2 зм", damage: "1d6", description: "Первым бьёт при чардже." },
-  { name: "Длинная пика", kind: "weapon", slots: 2, price: "5 зм", damage: "1d8", description: "Двуручное, длина 15 фт." },
+  { name: "Длинная пика", kind: "weapon", slots: 2, price: "5 зм", damage: "1d8", twoHanded: true, description: "Двуручное, длина 15 фт." },
   { name: "Цеп боевой", kind: "weapon", slots: 1, price: "8 зм", damage: "1d6+1", description: "Игнорирует щит врага." },
-  { name: "Короткий лук", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6", description: "Дистанция 50/100/150 фт." },
-  { name: "Степной композитный лук", kind: "weapon", slots: 1, price: "45 зм", damage: "1d8", description: "Дистанция 60/120/180 фт." },
-  { name: "Длинный лаоркандский лук", kind: "weapon", slots: 2, price: "60 зм", damage: "1d8+1", description: "Дистанция 70/140/210 фт." },
-  { name: "Лёгкий арбалет", kind: "weapon", slots: 1, price: "25 зм", damage: "1d6+1", description: "60/120/180 фт; выстрел раз в раунд." },
-  { name: "Тяжёлый арбалет", kind: "weapon", slots: 2, price: "50 зм", damage: "1d10", description: "80/160/240 фт; выстрел раз в два раунда." },
+  { name: "Короткий лук", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6", twoHanded: true, description: "Дистанция 50/100/150 фт." },
+  { name: "Степной композитный лук", kind: "weapon", slots: 1, price: "45 зм", damage: "1d8", twoHanded: true, description: "Дистанция 60/120/180 фт." },
+  { name: "Длинный лаоркандский лук", kind: "weapon", slots: 2, price: "60 зм", damage: "1d8+1", twoHanded: true, description: "Дистанция 70/140/210 фт." },
+  { name: "Лёгкий арбалет", kind: "weapon", slots: 1, price: "25 зм", damage: "1d6+1", twoHanded: true, description: "60/120/180 фт; выстрел раз в раунд." },
+  { name: "Тяжёлый арбалет", kind: "weapon", slots: 2, price: "50 зм", damage: "1d10", twoHanded: true, description: "80/160/240 фт; выстрел раз в два раунда." },
   { name: "Праща", kind: "weapon", slots: 1, price: "5 см", damage: "1d4+1", description: "Дистанция 40/80/120 фт." },
   { name: "Метательный дротик", kind: "weapon", slots: 1, price: "1 зм", damage: "1d4", description: "Пачка 3 шт.; 30/60/90 фт." },
   { name: "Факелы (6 шт.)", kind: "light", slots: 1, price: "1 см", description: "Горят 1 Ход, свет 30 фт." },
@@ -157,8 +225,147 @@ export const ITEMS: ItemDef[] = [
   { name: "Лопата сапёрная / кирка", kind: "gear", slots: 1, price: "2 зм", description: "Расчистка завала, 1d4 дробящего урона." },
   { name: "Стрелы (20 шт.)", kind: "gear", slots: 1, price: "2 зм", description: "Запас для лука." },
   { name: "Болты (20 шт.)", kind: "gear", slots: 1, price: "3 зм", description: "Запас для арбалета." },
+  { name: "Седло и уздечка", kind: "gear", slots: 2, price: "10 зм", description: "Седло, уздечка, попона; лошадь покупается отдельно." },
+  { name: "Плащ и мягкие сапоги", kind: "gear", slots: 1, price: "4 зм", description: "Тёмный плащ, мягкая обувь и сажа для скрытности." },
+  { name: "Набор гримёра", kind: "gear", slots: 1, price: "8 зм", description: "Грим, клей, парик и ножницы для маскировки." },
+  { name: "Набор кузнеца", kind: "gear", slots: 1, price: "15 зм", description: "Молот, клещи и напильники." },
+  { name: "Набор оружейника", kind: "gear", slots: 1, price: "12 зм", description: "Точило, заклёпки и инструменты для починки оружия." },
+  { name: "Набор картографа", kind: "gear", slots: 1, price: "10 зм", description: "Планшет, уголь, линейка и циркуль." },
+  { name: "Набор механика", kind: "gear", slots: 1, price: "10 зм", description: "Отвес, угольник, мел и шнур для механизмов." },
+  { name: "Набор алхимика", kind: "gear", slots: 1, price: "20 зм", description: "Ступка, спирт, сера и пузырьки." },
+  { name: "Набор ювелира", kind: "gear", slots: 1, price: "15 зм", description: "Лупа, напильники и шлифовальный камень." },
+  { name: "Музыкальный инструмент", kind: "gear", slots: 1, price: "12 зм", description: "Лютня или флейта; ужин и слух за песню." },
+  { name: "Лом и кувалда", kind: "gear", slots: 2, price: "8 зм", description: "Выбить дверь, отжать плиту, сдвинуть статую." },
+  { name: "Весло и смола", kind: "gear", slots: 2, price: "5 зм", description: "Запасное весло, смола и пакля для лодки." },
+  { name: "Вожжи и упряжь", kind: "gear", slots: 1, price: "3 зм", description: "Ремни, вожжи и дёготь для обоза." },
+  { name: "Поплавок и трубка", kind: "gear", slots: 0, price: "1 зм", description: "Пробковый поплавок и тростниковая трубка." },
+  { name: "Ремень и кляп", kind: "gear", slots: 0, price: "1 зм", description: "Ремень, кляп и верёвка для пленного." },
+  { name: "Кастет", kind: "weapon", slots: 1, price: "2 зм", damage: "1d3", description: "Кулачный бой; простое оружие." },
+  { name: "Поводок и намордник", kind: "gear", slots: 0, price: "2 зм", description: "Для дрессировки и спокойного зверя." },
+  { name: "Одеяло и подшлемник", kind: "gear", slots: 1, price: "4 зм", description: "Тёплый сон в походе." },
+  { name: "Символ бога", kind: "gear", slots: 0, price: "2 зм", description: "Знак веры для молитв и обрядов." },
+  { name: "Ладан и соль", kind: "gear", slots: 0, price: "1 зм", description: "Для духов, запретов и погребальных обрядов." },
+  { name: "Набор костей", kind: "gear", slots: 0, price: "2 зм", description: "Кости и карты для слухов и азарта." },
+  { name: "Парадная накидка", kind: "gear", slots: 1, price: "8 зм", description: "Для приёмов, храмов и разговоров со знатью." },
+  { name: "Знак артели", kind: "gear", slots: 0, price: "1 зм", description: "Метка своей артели и выход на чёрный рынок." },
+  { name: "Фальшивая печать", kind: "gear", slots: 0, price: "5 зм", description: "Подорожные и печати для подлогов." },
+  { name: "Весы и пробирный камень", kind: "gear", slots: 1, price: "8 зм", description: "Оценка металла и подделок." },
+  { name: "Сигнальный рожок", kind: "gear", slots: 1, price: "5 зм", description: "Команды, строй и сбор отряда." },
+  { name: "Карта Пограничья", kind: "gear", slots: 0, price: "10 зм", description: "Старая карта трактов, колодцев и руин." },
+  { name: "Словарь и таблички", kind: "gear", slots: 1, price: "10 зм", description: "Для языков и древних наречий." },
+  { name: "Арканные таблицы", kind: "gear", slots: 1, price: "12 зм", description: "Таблицы формул и законов традиции." },
+  { name: "Исторические хроники", kind: "gear", slots: 1, price: "15 зм", description: "Даты, династии и падения городов." },
+  { name: "Гербовая книга", kind: "gear", slots: 1, price: "12 зм", description: "Роды, гербы, печати и старые обиды." },
+  { name: "Тяжёлый перстень", kind: "gear", slots: 0, price: "3 зм", description: "Для устрашения и солидного вида." },
+  { name: "Образцы монет", kind: "gear", slots: 0, price: "2 зм", description: "Монеты разных царств для торга." },
+  { name: "Свисток", kind: "gear", slots: 0, price: "1 зм", description: "Сигнал, внимание, перекличка." },
+  { name: "Плащ от дождя", kind: "gear", slots: 1, price: "3 зм", description: "Погодное чутьё и сухая ночь." },
+  { name: "Набор для ловкости рук", kind: "gear", slots: 0, price: "5 зм", description: "Напёрстки, фальшивая монета и тонкое лезвие." },
+  { name: "Тетива", kind: "gear", slots: 0, price: "1 зм", description: "Запасная тетива для лука." },
+  { name: "Монеты", kind: "coins", slots: 0, price: "—", description: "1 слот за каждые 100 монет любого металла; лежат в рюкзаке." },
   { name: "Письменные принадлежности", kind: "gear", slots: 1, price: "5 зм", description: "Перья, чернила, бумага; нужны для Грамоты и подделок." },
 ];
+
+/** Начальное снаряжение по навыку или знанию (1.4.5): кладётся в рюкзак. */
+export const STARTER_KITS: Record<string, string[]> = {
+  // Боевые навыки
+  "Мечи": ["Длинный имперский меч"],
+  "Топоры и секиры": ["Боевой топор"],
+  "Древковое": ["Копьё пехотное"],
+  "Дробящее": ["Булава лёгкая"],
+  "Луки": ["Короткий лук", "Стрелы (20 шт.)"],
+  "Арбалеты": ["Лёгкий арбалет", "Болты (20 шт.)"],
+  "Метательное": ["Метательный дротик"],
+  "Кинжалы и ножи": ["Кинжал походный"],
+  "Щиты": ["Круглый пехотный щит"],
+  "Кулачный бой и захваты": ["Кастет"],
+  // Сила
+  "Скалолазание и такелаж": ["Пеньковая верёвка (50 фт)", "Колья и клинья (12 шт.)"],
+  "Плавание": ["Поплавок и трубка"],
+  "Гребля": ["Весло и смола"],
+  "Возничество и обозы": ["Вожжи и упряжь"],
+  "Борьба и захваты": ["Ремень и кляп"],
+  "Грубая сила": ["Лом и кувалда"],
+  "Копание и расчистка": ["Лопата сапёрная / кирка"],
+  "Кузнечное дело": ["Набор кузнеца"],
+  // Ловкость
+  "Верховая езда": ["Седло и уздечка"],
+  "Скрытность": ["Плащ и мягкие сапоги"],
+  "Маскировка и грим": ["Набор гримёра"],
+  "Взлом замков": ["Инструменты взломщика"],
+  "Поиск и снятие ловушек": ["Инструменты взломщика", "Зеркальце на рукояти"],
+  "Ловкость рук": ["Набор для ловкости рук"],
+  "Балансировка и акробатика": ["Шест первопроходца (10 фт)"],
+  "Огранка и ювелирное дело": ["Набор ювелира"],
+  "Стрельба навскидку": ["Тетива", "Стрелы (20 шт.)"],
+  // Телосложение
+  "Выносливость": ["Бурдюк для воды"],
+  "Терпение": ["Ремень и кляп"],
+  "Сопротивление ядам и хворям": ["Противоядие", "Набор трав"],
+  "Задержка дыхания и ныряние": ["Поплавок и трубка"],
+  "Бег и погоня": ["Бурдюк для воды"],
+  "Походный сон": ["Одеяло и подшлемник"],
+  // Интеллект
+  "Грамота": ["Письменные принадлежности"],
+  "Картография": ["Набор картографа", "Карта Пограничья"],
+  "Оружейное и доспешное дело": ["Набор оружейника"],
+  "Механика и архитектура": ["Набор механика"],
+  "Установка ловушек": ["Колья и клинья (12 шт.)", "Пеньковая верёвка (50 фт)"],
+  "Алхимия и минералогия": ["Набор алхимика"],
+  "Оценка и сбыт": ["Весы и пробирный камень"],
+  // Мудрость
+  "Внимание и бдительность": ["Свисток", "Зеркальце на рукояти"],
+  "Выживание": ["Бурдюк для воды", "Сухие пайки (7 дней)"],
+  "Погодное чутьё": ["Плащ от дождя"],
+  "Следопытство и погоня": ["Письменные принадлежности", "Мел (коробок)"],
+  "Подземное чутьё": ["Факелы (6 шт.)", "Мел (коробок)"],
+  "Полевая медицина": ["Аптечка полевая"],
+  "Травничество": ["Набор трав"],
+  "Теология и оккультные запреты": ["Символ бога", "Святая вода"],
+  "Знание духов и знамений": ["Ладан и соль"],
+  "Погребальные обряды": ["Лопата сапёрная / кирка", "Святая вода"],
+  "Дрессировка животных": ["Поводок и намордник"],
+  // Харизма
+  "Убеждение и торг": ["Образцы монет"],
+  "Сбор слухов": ["Набор костей"],
+  "Игры и азарт": ["Набор костей"],
+  "Устрашение": ["Тяжёлый перстень"],
+  "Этикет и приличия": ["Парадная накидка"],
+  "Сказительство и песни": ["Музыкальный инструмент"],
+  "Уличная сеть и жаргон": ["Знак артели"],
+  "Ложь и подлоги": ["Фальшивая печать", "Письменные принадлежности"],
+  "Командование и мораль": ["Сигнальный рожок"],
+  // Знания
+  "Язык (каждый отдельно)": ["Словарь и таблички"],
+  "История Империи": ["Исторические хроники"],
+  "Древние наречия": ["Словарь и таблички"],
+  "Арканная теория (одна традиция)": ["Арканные таблицы"],
+  "Арканная археология": ["Мел (коробок)"],
+  "Богословие и сферы": ["Символ бога"],
+  "Обычаи и запреты": ["Парадная накидка"],
+  "Запреты и суеверия": ["Ладан и соль"],
+  "Природа и звери": ["Набор трав"],
+  "География Пограничья": ["Карта Пограничья"],
+  "Архитектура руин": ["Мел (коробок)", "Колья и клинья (12 шт.)"],
+  "Механика и инженерия": ["Набор механика"],
+  "Металлы и сплавы": ["Весы и пробирный камень"],
+  "Яды и болезни": ["Набор трав", "Противоядие"],
+  "Анатомия и медицина": ["Аптечка полевая"],
+  "Военное дело": ["Сигнальный рожок"],
+  "Осады и укрепления": ["Набор механика"],
+  "Торговля и оценка": ["Весы и пробирный камень", "Образцы монет"],
+  "Легенды и история": ["Музыкальный инструмент"],
+  "Генеалогия и геральдика": ["Гербовая книга"],
+  "Знаки мародёров": ["Мел (коробок)"],
+  "Морские пути": ["Карта Пограничья"],
+  "Псионика (опционально)": ["Арканные таблицы"],
+};
+
+export function starterKit(name: string): string[] {
+  return STARTER_KITS[name] ?? [];
+}
+
+
 
 
 
@@ -302,15 +509,41 @@ export function carryCapacity(stats: Record<string, number>): number {
   return statValue(stats, "str");
 }
 
-/** Сколько слотов занимает инвентарь. */
+export const COINS_NAME = "Монеты";
+
+export function coinsSlots(amount: number): number {
+  return Math.ceil(Math.max(0, Number(amount) || 0) / 100);
+}
+
+export function itemSlots(entry: InventoryItem): number {
+  const def = findItem(entry.name);
+  if (def?.kind === "coins") return coinsSlots(entry.qty ?? 0);
+  return def?.slots ?? 1;
+}
+
+/** Сколько слотов занимает инвентарь, включая монеты по 100 штук на слот. */
 export function inventorySlots(inventory: InventoryItem[] | undefined): number {
-  return (inventory ?? []).reduce((sum, item) => sum + (findItem(item.name)?.slots ?? 1), 0);
+  return (inventory ?? []).reduce((sum, item) => sum + itemSlots(item), 0);
+}
+
+export function coinsAmount(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? [])
+    .filter((item) => findItem(item.name)?.kind === "coins")
+    .reduce((sum, item) => sum + Math.max(0, Number(item.qty) || 0), 0);
+}
+
+export function zeroSlotCount(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? []).filter((entry) => {
+    const def = findItem(entry.name);
+    return def && def.kind !== "coins" && def.slots === 0;
+  }).length;
 }
 
 export function handsCount(inventory: InventoryItem[] | undefined): number {
-  return (inventory ?? []).filter(
-    (item) => item.location === "hands" && findItem(item.name)?.kind !== "armor",
-  ).length;
+  return (inventory ?? []).filter((item) => {
+    const def = findItem(item.name);
+    return item.location === "hands" && def && def.kind !== "armor" && def.kind !== "coins";
+  }).length;
 }
 
 /** Причина, почему предмет нельзя добавить, или null. */
@@ -319,24 +552,68 @@ export function inventoryBlockReason(
   stats: Record<string, number>,
   item: ItemDef,
   location: InventoryItem["location"],
+  options?: { ignoreCapacity?: boolean },
 ): string | null {
   const list = inventory ?? [];
-  const used = inventorySlots(list);
-  const capacity = carryCapacity(stats);
-  if (used + item.slots > capacity) {
-    return `Не хватает слотов: ${used + item.slots} из ${capacity}`;
+  const defs = (entries: InventoryItem[]) =>
+    entries
+      .map((entry) => ({ entry, def: findItem(entry.name) }))
+      .filter((row): row is { entry: InventoryItem; def: ItemDef } => Boolean(row.def));
+
+  if (item.kind === "coins") {
+    return location === "backpack" ? null : "Монеты лежат только в рюкзаке";
   }
+
+  if (!options?.ignoreCapacity) {
+    const used = inventorySlots(list);
+    const capacity = carryCapacity(stats);
+    if (used + item.slots > capacity) {
+      return `Не хватает слотов: ${used + item.slots} из ${capacity}`;
+    }
+  }
+
+  if (item.slots === 0 && zeroSlotCount(list) >= 4) {
+    return "Не больше четырёх предметов без слотов";
+  }
+
   if (location === "hands") {
-    if (handsCount(list) >= 2) return "В руках уже две вещи";
-    if (item.kind === "armor" && list.some((entry) => entry.location === "hands" && findItem(entry.name)?.kind === "armor")) {
-      return "Доспех уже надет";
-    }
-    if (item.kind === "shield" && list.some((entry) => entry.location === "hands" && findItem(entry.name)?.kind === "shield")) {
-      return "Щит уже в руках";
+    const hand = defs(list.filter((entry) => entry.location === "hands"));
+    const armors = hand.filter((row) => row.def.kind === "armor");
+    if (item.kind === "armor") {
+      if (armors.length > 0) return "Доспех уже надет";
+    } else {
+      const held = hand.filter((row) => row.def.kind !== "armor");
+      if (held.length >= 2) return "В руках уже две вещи";
+      if (item.twoHanded && held.length > 0) return "Двуручное оружие занимает обе руки";
+      if (held.some((row) => row.def.twoHanded)) return "Двуручное оружие уже занимает обе руки";
+      if (item.kind === "shield" && held.some((row) => row.def.kind === "shield")) {
+        return "Щит уже в руках";
+      }
     }
   }
+
   return null;
 }
+
+/** Какие предметы дают перегруз: всё, что выходит за предел Силы по порядку. */
+export function overloadedIds(
+  inventory: InventoryItem[] | undefined,
+  stats: Record<string, number>,
+): Set<string> {
+  const capacity = carryCapacity(stats);
+  const ordered = [
+    ...(inventory ?? []).filter((item) => item.location === "hands"),
+    ...(inventory ?? []).filter((item) => item.location === "backpack"),
+  ];
+  let total = 0;
+  const ids = new Set<string>();
+  for (const item of ordered) {
+    total += itemSlots(item);
+    if (total > capacity) ids.add(item.id);
+  }
+  return ids;
+}
+
 
 
 export const RESOURCES: ResourceDef[] = [
@@ -357,12 +634,13 @@ export interface CharacterRules {
   fields: TextFieldDef[];
   traits: string[];
   flaws: string[];
+  origins: OriginDef[];
 }
 
 export const RULES: CharacterRules = {
   game: "Вторые",
   tagline:
-    "Лист редакции 3.0: шесть характеристик, ОЗ и КБ, навыки и знания с рангами, особенность и изъян, снаряжение по слотам Силы.",
+    "Лист редакции 3.0: происхождение, характеристики, ОЗ и КБ, навыки и знания, особенность и изъян, снаряжение по слотам Силы.",
   maxSkills: 24,
   maxSkillRank: 5,
   stats: STATS,
@@ -370,6 +648,7 @@ export const RULES: CharacterRules = {
   fields: FIELDS,
   traits: TRAITS,
   flaws: FLAWS,
+  origins: ORIGINS,
 };
 
 /** Модификатор характеристики: (значение − 10) / 2, вниз. */
