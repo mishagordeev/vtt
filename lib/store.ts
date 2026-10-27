@@ -258,7 +258,11 @@ export async function probeStorage(deep = false): Promise<StorageHealth> {
 
 const storageKey = (code: string) => `${KEY_PREFIX}${code}`;
 
-function storageError(status: number, action: "read" | "write"): AppError {
+function storageError(
+  status: number,
+  action: "read" | "write",
+  detail: string | null = null,
+): AppError {
   if (status === 429) {
     return new AppError(
       429,
@@ -272,6 +276,12 @@ function storageError(status: number, action: "read" | "write"): AppError {
     );
   }
   if (status === 403) {
+    if (/fixed plan limits|plan limits|upgrade|quota/i.test(detail ?? "")) {
+      return new AppError(
+        429,
+        "Лимит Upstash Redis исчерпан (HTTP 403, Fixed plan). Ключи верны, но база уперлась в лимит тарифа. Откройте Upstash Console → ваша база → Billing/Plan → Upgrade / Enable auto upgrade. После смены тарифа перезапуск не нужен, повторите запрос.",
+      );
+    }
     if (action === "write") {
       return new AppError(
         503,
@@ -304,7 +314,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
       headers: { Authorization: `Bearer ${kv.token}` },
       cache: "no-store",
     });
-    if (!res.ok) throw storageError(res.status, "read");
+    if (!res.ok) throw storageError(res.status, "read", await responseSnippet(res));
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
@@ -335,7 +345,7 @@ async function writeDoc(doc: RoomState): Promise<void> {
         cache: "no-store",
       },
     );
-    if (!res.ok) throw storageError(res.status, "write");
+    if (!res.ok) throw storageError(res.status, "write", await responseSnippet(res));
     return;
   }
 
@@ -434,13 +444,19 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     }
   }
   const messages = since > 0 ? doc.messages.filter((message) => message.seq >= since) : doc.messages;
+  // Полный портрет — самая тяжёлая часть снимка. Он нужен только для просмотра
+  // поверх листа, поэтому не гоняем его в каждом опросе /state.
+  const characters = doc.characters.map((character) => ({
+    ...character,
+    portraitFull: "",
+  }));
   return {
     code: doc.code,
     title: doc.title,
     createdAt: doc.createdAt,
     gm: doc.gm,
     players: doc.players,
-    characters: doc.characters,
+    characters,
     messages,
     map: doc.map,
     music: doc.music,
@@ -609,7 +625,7 @@ export async function updateCharacter(
       level: patch.level ?? current.level,
       origin: patch.origin ?? current.origin,
       portrait: patch.portrait ?? current.portrait,
-      portraitFull: patch.portraitFull ?? current.portraitFull,
+      portraitFull: patch.portraitFull || current.portraitFull,
       traits: Array.isArray(patch.traits) ? patch.traits : current.traits,
       flaws: Array.isArray(patch.flaws) ? patch.flaws : current.flaws,
       languages: Array.isArray(patch.languages) ? patch.languages : current.languages,

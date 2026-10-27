@@ -40,6 +40,13 @@ function describeStorage(storage: StorageHealth | null): {
     };
   }
   if (!storage.reachable) {
+    if (/plan limits|upgrade|quota/i.test(storage.error ?? "")) {
+      return {
+        label: "Upstash: лимит плана",
+        dot: "bg-rose-500",
+        hint: "Fixed plan исчерпан. Upstash Console → база → Billing/Plan → Upgrade / Enable auto upgrade.",
+      };
+    }
     const where = storage.host ? ` (${storage.host})` : "";
     return {
       label: "Redis не отвечает",

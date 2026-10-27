@@ -165,6 +165,10 @@ KV_REST_API_TOKEN=...
 `503`, если Redis недоступен или не может писать. Тот же статус виден в панели стола
 строкой «Хранилище: Redis · N мс».
 
+Если в `error` приходит `This database has reached current Fixed plan limits`, ключи
+верны, но закончился лимит тарифа Upstash. Откройте Upstash Console → базу →
+**Billing/Plan** → **Upgrade** или **Enable auto upgrade**; передеплой не нужен.
+
 ### Регион функций
 
 Регион функций Vercel выбирается отдельно от региона базы: новый проект по умолчанию

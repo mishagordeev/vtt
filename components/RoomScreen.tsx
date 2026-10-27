@@ -12,8 +12,8 @@ import { JoinGate } from "./JoinGate";
 import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 
-const POLL_INTERVAL = 6000;
-const TABLE_POLL_INTERVAL = 4000;
+const POLL_INTERVAL = 8000;
+const TABLE_POLL_INTERVAL = 5000;
 const BEAT_INTERVAL = 60000;
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
