@@ -12,10 +12,10 @@ import { JoinGate } from "./JoinGate";
 import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 
-const POLL_INTERVAL = 4000;
-const TABLE_POLL_INTERVAL = 2000;
-const BEAT_INTERVAL = 30000;
-const EMPTY_MAP: MapState = { strokes: [], cursors: {}, updatedAt: 0 };
+const POLL_INTERVAL = 6000;
+const TABLE_POLL_INTERVAL = 4000;
+const BEAT_INTERVAL = 60000;
+const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
 const MUSIC_VOLUME_KEY = "pp:music:volume";
 
@@ -42,6 +42,7 @@ export default function RoomScreen({ code }: { code: string }) {
   const [music, setMusic] = useState<MusicState>(EMPTY_MUSIC);
   const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -80,12 +81,16 @@ export default function RoomScreen({ code }: { code: string }) {
         return fresh.length > 0 ? [...prev, ...fresh] : prev;
       });
       setConnected(true);
+      setLoadError(null);
     } catch (error) {
       if (error instanceof AppError && error.status === 404) {
         setPhase("missing");
         return;
       }
       setConnected(false);
+      setLoadError(
+        error instanceof Error ? error.message : "Не удалось связаться с комнатой",
+      );
     }
   }, [code]);
 
@@ -376,6 +381,12 @@ export default function RoomScreen({ code }: { code: string }) {
           </div>
         </div>
       </header>
+
+      {loadError ? (
+        <div className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100">
+          {loadError}
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         <section

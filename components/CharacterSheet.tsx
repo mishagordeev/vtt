@@ -4,16 +4,18 @@ import { useEffect, useMemo, useState } from "react";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "@/lib/notes";
 import {
   ABILITY_METHODS,
-  COINS_NAME,
+  COIN_TYPES,
   FLAWS,
   ITEMS,
+  LANGUAGES,
   ORIGINS,
   RULES,
   SKILLS,
   TRAITS,
   abilityMod,
   carryCapacity,
-  coinsAmount,
+  coinCount,
+  coinsGoldValue,
   derive,
   findItem,
   findOrigin,
@@ -22,12 +24,16 @@ import {
   handsCount,
   inventoryBlockReason,
   inventorySlots,
+  isCoinItem,
   itemSlots,
+  languageSlots,
   overloadedIds,
   rankLabel,
   rollAbilityScores,
   skillAvailable,
   skillBonus,
+  skillSlotBudget,
+  skillsSlotUsage,
   starterKit,
   zeroSlotCount,
   type AbilityMethod,
@@ -104,13 +110,13 @@ interface FeatureListProps {
   hint: string;
   items: string[];
   notes: Record<string, string>;
-  selected: string;
+  selected: string[];
   editing: boolean;
   accent: "emerald" | "rose";
-  onSelect: (name: string) => void;
+  onToggle: (name: string) => void;
 }
 
-function FeatureList({ title, hint, items, notes, selected, editing, accent, onSelect }: FeatureListProps) {
+function FeatureList({ title, hint, items, notes, selected, editing, accent, onToggle }: FeatureListProps) {
   const activeClass =
     accent === "emerald"
       ? "border-emerald-400/50 bg-emerald-500/10"
@@ -118,32 +124,38 @@ function FeatureList({ title, hint, items, notes, selected, editing, accent, onS
   return (
     <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
       <div>
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">{title}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">{title}</h3>
+          <span className="font-mono text-[10px] text-zinc-600">{selected.length}/2</span>
+        </div>
         <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">{hint}</p>
       </div>
       <div className="scroll-thin max-h-[440px] space-y-1 overflow-y-auto pr-1">
-        {items.map((name) => (
-          <label
-            key={name}
-            className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition ${
-              selected === name ? activeClass : "border-zinc-800 bg-zinc-950/40 hover:border-zinc-700"
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={selected === name}
-              disabled={!editing}
-              onChange={() => onSelect(selected === name ? "" : name)}
-              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
-                accent === "emerald" ? "accent-emerald-400" : "accent-rose-400"
+        {items.map((name) => {
+          const active = selected.includes(name);
+          return (
+            <label
+              key={name}
+              className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 transition ${
+                active ? activeClass : "border-zinc-800 bg-zinc-950/40 hover:border-zinc-700"
               }`}
-            />
-            <span className="min-w-0">
-              <span className="block text-sm text-zinc-200">{name}</span>
-              <span className="block text-[11px] leading-snug text-zinc-500">{notes[name] ?? ""}</span>
-            </span>
-          </label>
-        ))}
+            >
+              <input
+                type="checkbox"
+                checked={active}
+                disabled={!editing || (!active && selected.length >= 2)}
+                onChange={() => onToggle(name)}
+                className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                  accent === "emerald" ? "accent-emerald-400" : "accent-rose-400"
+                }`}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm text-zinc-200">{name}</span>
+                <span className="block text-[11px] leading-snug text-zinc-500">{notes[name] ?? ""}</span>
+              </span>
+            </label>
+          );
+        })}
       </div>
     </section>
   );
@@ -201,9 +213,13 @@ export function CharacterSheet({
   const capacity = carryCapacity(draft.stats);
   const used = inventorySlots(draft.inventory);
   const hands = handsCount(draft.inventory);
-  const coins = coinsAmount(draft.inventory);
+  const money = coinsGoldValue(draft.inventory);
+  const coinQty = coinCount(draft.inventory);
   const overloaded = overloadedIds(draft.inventory, draft.stats);
   const origin = findOrigin(draft.origin);
+  const languageBudget = languageSlots(draft.stats);
+  const slotBudget = skillSlotBudget(draft.level, draft.stats);
+  const slotUsage = skillsSlotUsage(draft.skills);
   const hp = draft.resources.hp ?? { current: derived.hpSuggested, max: derived.hpSuggested };
   const selectedSkills = useMemo(
     () => new Map(draft.skills.map((skill) => [skill.name.toLowerCase(), skill])),
@@ -212,6 +228,56 @@ export function CharacterSheet({
 
   function patch(patchValue: Partial<CharacterDraft>) {
     onChange({ ...draft, ...patchValue });
+  }
+
+  function toggleFeature(kind: "traits" | "flaws", name: string) {
+    if (!editing) return;
+    const current = kind === "traits" ? draft.traits : draft.flaws;
+    if (kind === "flaws" && current.includes(name) && current.length - 1 < draft.traits.length) {
+      setNotice("Сначала уберите особенность: изъян не может исчезнуть, пока она есть.");
+      return;
+    }
+    const next = current.includes(name)
+      ? current.filter((entry) => entry !== name)
+      : [...current, name];
+    if (next.length > 2) {
+      setNotice("Можно выбрать не больше двух особенностей и двух изъянов.");
+      return;
+    }
+    if (kind === "traits" && next.length > draft.flaws.length && next.length > 1) {
+      setNotice("Для второй особенности нужен второй изъян.");
+    }
+    if (kind === "flaws" && next.length < draft.traits.length) {
+      setNotice("Особенность без изъяна не остаётся: сначала уберите особенность.");
+    }
+    patch({ [kind]: next } as Partial<CharacterDraft>);
+  }
+
+  function setExtraLanguage(index: number, value: string) {
+    const base = origin?.languages ?? [];
+    const extras = draft.languages.filter((language) => !base.includes(language));
+    if (value && extras.some((language, position) => language === value && position !== index)) {
+      setNotice("Этот язык уже выбран.");
+      return;
+    }
+    if (!value) extras.splice(index, 1);
+    else extras[index] = value;
+    const next = [...base, ...Array.from(new Set(extras.filter(Boolean)))];
+    patch({ languages: next });
+  }
+  function setFeatureAt(kind: "traits" | "flaws", index: number, value: string) {
+    if (kind === "flaws" && !value && draft.flaws.length - 1 < draft.traits.length) {
+      setNotice("Сначала уберите особенность: изъян не может исчезнуть, пока она есть.");
+      return;
+    }
+    const current = [...(kind === "traits" ? draft.traits : draft.flaws)];
+    if (value && current.some((entry, position) => entry === value && position !== index)) {
+      setNotice("Этот пункт уже выбран.");
+      return;
+    }
+    if (!value) current.splice(index, 1);
+    else current[index] = value;
+    patch({ [kind]: current } as Partial<CharacterDraft>);
   }
 
   function setStat(key: string, value: number) {
@@ -249,27 +315,67 @@ export function CharacterSheet({
     }
   }
 
-  function kitEntries(name: string, baseInventory: InventoryItem[]): InventoryItem[] {
-    const entries: InventoryItem[] = [];
+  function sourcesOf(item: InventoryItem): string[] {
+    return item.sources?.length ? item.sources : item.source ? [item.source] : [];
+  }
+
+  function applyKit(name: string, inventory: InventoryItem[]): InventoryItem[] {
+    const next = inventory.map((item) => ({ ...item, sources: [...sourcesOf(item)] }));
     for (const itemName of starterKit(name)) {
       const def = findItem(itemName);
       if (!def) continue;
-      const reason = inventoryBlockReason(
-        [...baseInventory, ...entries],
-        draft.stats,
-        def,
-        "backpack",
-        { ignoreCapacity: true },
-      );
+      const existing = next.find((item) => item.name === def.name);
+      if (existing) {
+        if (existing.sources?.length) {
+          existing.sources = Array.from(new Set([...existing.sources, name]));
+          existing.source = existing.sources[0];
+        }
+        continue;
+      }
+      const reason = inventoryBlockReason(next, draft.stats, def, "backpack", {
+        ignoreCapacity: true,
+      });
       if (reason) continue;
-      entries.push({
+      next.push({
         id: `itm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: def.name,
         location: "backpack",
+        sources: [name],
         source: name,
       });
     }
-    return entries;
+    return next;
+  }
+
+  function removeKitSource(name: string, inventory: InventoryItem[]): InventoryItem[] {
+    const next: InventoryItem[] = [];
+    for (const item of inventory) {
+      const sources = sourcesOf(item);
+      if (!sources.includes(name)) {
+        next.push(item);
+        continue;
+      }
+      const rest = sources.filter((source) => source !== name);
+      if (rest.length === 0) continue;
+      next.push({ ...item, sources: rest, source: rest[0] });
+    }
+    return next;
+  }
+
+  function removeLegacyKit(
+    name: string,
+    inventory: InventoryItem[],
+    remainingSkills: Skill[],
+  ): InventoryItem[] {
+    const removed = new Set(starterKit(name));
+    if (removed.size === 0) return inventory;
+    const kept = new Set(
+      remainingSkills.flatMap((skill) => starterKit(skill.name)),
+    );
+    return inventory.filter((item) => {
+      if (sourcesOf(item).length > 0) return true;
+      return !(removed.has(item.name) && !kept.has(item.name));
+    });
   }
 
   function toggleSkill(def: SkillDef) {
@@ -277,9 +383,14 @@ export function CharacterSheet({
     const current = selectedSkills.get(def.name.toLowerCase());
     if (current?.source) return;
     if (current) {
+      const remaining = draft.skills.filter((skill) => skill.name.toLowerCase() !== def.name.toLowerCase());
       patch({
-        skills: draft.skills.filter((skill) => skill.name.toLowerCase() !== def.name.toLowerCase()),
-        inventory: draft.inventory.filter((item) => item.source !== def.name),
+        skills: remaining,
+        inventory: removeLegacyKit(
+          def.name,
+          removeKitSource(def.name, draft.inventory),
+          remaining,
+        ),
       });
       return;
     }
@@ -287,10 +398,9 @@ export function CharacterSheet({
       setNotice(`Не больше ${RULES.maxSkills} навыков и знаний.`);
       return;
     }
-    const kit = kitEntries(def.name, draft.inventory);
     patch({
       skills: [...draft.skills, { name: def.name, rank: 1, kind: def.kind }],
-      inventory: [...draft.inventory, ...kit],
+      inventory: applyKit(def.name, draft.inventory),
     });
   }
 
@@ -326,14 +436,32 @@ export function CharacterSheet({
 
     const oldGrants = previous ? [previous.skill, ...previous.knowledge] : [];
     let skills = draft.skills.filter((skill) => skill.source !== previous?.name);
-    let inventory = draft.inventory.filter(
-      (item) => !(item.source && oldGrants.includes(item.source)),
+    let inventory = draft.inventory;
+    for (const grant of oldGrants) inventory = removeKitSource(grant, inventory);
+
+    let languages = draft.languages.filter(
+      (language) => !(previous?.languages ?? []).includes(language),
     );
+    if (next) {
+      for (const language of next.languages) {
+        if (!languages.includes(language) && LANGUAGES.some((entry) => entry.name === language)) {
+          languages.push(language);
+        }
+      }
+    }
+    languages = Array.from(new Set(languages));
 
     if (next) {
       for (const name of [next.skill, ...next.knowledge]) {
         const exists = skills.some((skill) => skill.name.toLowerCase() === name.toLowerCase());
-        if (exists) continue;
+        if (exists) {
+          skills = skills.map((skill) =>
+            skill.name.toLowerCase() === name.toLowerCase()
+              ? { ...skill, source: skill.source ?? next.name }
+              : skill,
+          );
+          continue;
+        }
         const def = findSkill(name);
         const grantedKnowledge = next.knowledge.some((entry) => entry === name);
         skills = [
@@ -345,7 +473,7 @@ export function CharacterSheet({
             source: next.name,
           },
         ];
-        inventory = [...inventory, ...kitEntries(name, inventory)];
+        inventory = applyKit(name, inventory);
       }
     }
 
@@ -353,7 +481,7 @@ export function CharacterSheet({
       setNotice(`Происхождение даёт больше ${RULES.maxSkills} навыков и знаний.`);
       return;
     }
-    patch({ origin: nextName, stats, skills, inventory });
+    patch({ origin: nextName, stats, skills, inventory, languages });
   }
 
   function addItem(def: ItemDef, location: ItemLocation) {
@@ -405,17 +533,49 @@ export function CharacterSheet({
     patch({ inventory: draft.inventory.filter((entry) => entry.id !== id) });
   }
 
-  function setCoins(value: number) {
+  function setCoin(name: string, value: number) {
     if (!editing) return;
+    const type = COIN_TYPES.find((coin) => coin.name === name);
+    if (!type) return;
     const qty = Math.max(0, Math.min(999999, Math.round(value) || 0));
-    const existing = draft.inventory.find((item) => findItem(item.name)?.kind === "coins");
+    const existing = draft.inventory.find((item) => item.name === type.name);
     const inventory = existing
-      ? draft.inventory.map((item) => (item.id === existing.id ? { ...item, qty, location: "backpack" as const } : item))
+      ? draft.inventory.map((item) =>
+          item.id === existing.id ? { ...item, qty, location: "backpack" as const } : item,
+        )
       : [
           ...draft.inventory,
-          { id: "itm-coins", name: COINS_NAME, location: "backpack" as const, qty },
+          {
+            id: `itm-coin-${type.key}`,
+            name: type.name,
+            location: "backpack" as const,
+            qty,
+          },
         ];
     patch({ inventory });
+  }
+
+  function levelUp() {
+    if (!editing) return;
+    if (draft.level >= 10) {
+      setNotice("Уровень 10 — максимум.");
+      return;
+    }
+    const nextLevel = draft.level + 1;
+    const conMod = abilityMod(draft.stats.con ?? 10);
+    const roll = nextLevel === 10 ? 3 : Math.floor(Math.random() * 8) + 1;
+    const gain = Math.max(1, roll + (nextLevel === 10 ? 0 : conMod));
+    const hp = draft.resources.hp ?? { current: derived.hpSuggested, max: derived.hpSuggested };
+    const nextMax = Math.min(999, hp.max + gain);
+    const nextCurrent = Math.min(nextMax, hp.current + gain);
+    patch({
+      level: nextLevel,
+      resources: { ...draft.resources, hp: { current: nextCurrent, max: nextMax } },
+    });
+    setNotice(
+      `Уровень ${nextLevel}: +${gain} ОЗ${nextLevel === 10 ? " (вместо броска +3)" : ` (d8: ${roll}, Тел ${formatMod(conMod)})`}.` +
+        (nextLevel === 4 || nextLevel === 8 || nextLevel === 10 ? " Не забудьте +1 к характеристике." : ""),
+    );
   }
 
   function setHp(current: number, max: number) {
@@ -432,9 +592,22 @@ export function CharacterSheet({
 
 
   function renderInventory(location: ItemLocation, title: string) {
-    const items = draft.inventory.filter((item) => item.location === location);
+    const items = draft.inventory.filter(
+      (item) => item.location === location && !isCoinItem(item),
+    );
     return (
-      <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2">
+      <section
+        className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2"
+        onDragOver={(event) => {
+          if (editing) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!editing) return;
+          event.preventDefault();
+          const id = event.dataTransfer.getData("text/plain");
+          if (id) moveItem(id, location);
+        }}
+      >
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[11px] uppercase tracking-wide text-zinc-500">{title}</h3>
           <span className="font-mono text-[10px] text-zinc-600">
@@ -444,33 +617,43 @@ export function CharacterSheet({
         {location === "hands" ? (
           <p className="text-[10px] leading-snug text-zinc-600">
             1 оружие + щит, 2 одноручных или 1 двуручное. Доспех — один и не занимает руки.
+            Перетащите предмет сюда или в рюкзак.
           </p>
-        ) : null}
+        ) : (
+          <p className="text-[10px] leading-snug text-zinc-600">
+            Перетащите предмет в «В руках» или обратно.
+          </p>
+        )}
         {items.length === 0 ? (
           <p className="py-2 text-[11px] text-zinc-600">Пусто.</p>
         ) : (
           <ul className="space-y-1">
             {items.map((item) => {
               const def = findItem(item.name);
-              const isCoins = def?.kind === "coins";
               const over = overloaded.has(item.id);
               const slots = itemSlots(item);
               const target: ItemLocation = location === "hands" ? "backpack" : "hands";
-              const reason = isCoins
-                ? "Монеты лежат только в рюкзаке"
-                : def
-                  ? inventoryBlockReason(
-                      draft.inventory.filter((entry) => entry.id !== item.id),
-                      draft.stats,
-                      def,
-                      target,
-                    )
-                  : "Неизвестный предмет";
+              const reason = def
+                ? inventoryBlockReason(
+                    draft.inventory.filter((entry) => entry.id !== item.id),
+                    draft.stats,
+                    def,
+                    target,
+                  )
+                : "Неизвестный предмет";
+              const sources = item.sources?.length ? item.sources : item.source ? [item.source] : [];
               return (
                 <li
                   key={item.id}
-                  title={over ? "Перегруз: не хватает слотов Силы" : reason ?? undefined}
+                  draggable={editing}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/plain", item.id);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  title={over ? "Перегруз: не хватает слотов Силы" : reason ?? "Перетащите в другую колонку"}
                   className={`flex items-center gap-1.5 rounded border px-2 py-1 ${
+                    editing ? "cursor-grab active:cursor-grabbing" : ""
+                  } ${
                     over
                       ? "border-rose-500/60 bg-rose-500/10"
                       : "border-zinc-800 bg-zinc-950/50"
@@ -489,21 +672,10 @@ export function CharacterSheet({
                         </span>
                       ) : null}
                     </span>
-                    {isCoins ? (
-                      <span className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-500">
-                        <input
-                          type="number"
-                          min={0}
-                          max={999999}
-                          value={item.qty ?? 0}
-                          disabled={!editing}
-                          onChange={(event) => setCoins(Number(event.target.value))}
-                          className="w-20 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-amber-200"
-                        />
-                        монет · 100 шт. = 1 слот
+                    {sources.length > 0 ? (
+                      <span className="block truncate text-[9px] text-zinc-600">
+                        набор: {sources.join(", ")}
                       </span>
-                    ) : item.source ? (
-                      <span className="block truncate text-[9px] text-zinc-600">набор: {item.source}</span>
                     ) : null}
                   </span>
                   {editing ? (
@@ -519,8 +691,7 @@ export function CharacterSheet({
                       <button
                         type="button"
                         onClick={() => removeItem(item.id)}
-                        disabled={isCoins}
-                        className="text-zinc-500 hover:text-rose-400 disabled:opacity-30"
+                        className="text-zinc-500 hover:text-rose-400"
                       >
                         ×
                       </button>
@@ -536,19 +707,53 @@ export function CharacterSheet({
   }
 
 
+  function renderCoins() {
+    return (
+      <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] uppercase tracking-wide text-zinc-500">Монеты в рюкзаке</h3>
+          <span className={`font-mono text-[10px] ${used > capacity ? "text-rose-300" : "text-zinc-600"}`}>
+            {coinQty} шт. · {Math.ceil(coinQty / 100)} сл. · {money.toFixed(2)} зм
+          </span>
+        </div>
+        <div className="grid gap-1 sm:grid-cols-2">
+          {COIN_TYPES.map((coin) => {
+            const entry = draft.inventory.find((item) => item.name === coin.name);
+            return (
+              <label key={coin.key} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
+                <span className="min-w-0 flex-1 text-[11px] text-zinc-300">
+                  {coin.name} <span className="text-zinc-600">({coin.short})</span>
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={999999}
+                  value={entry?.qty ?? 0}
+                  disabled={!editing}
+                  onChange={(event) => setCoin(coin.name, Number(event.target.value))}
+                  className="w-20 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-amber-200 disabled:opacity-60"
+                />
+              </label>
+            );
+          })}
+        </div>
+        <p className="text-[10px] leading-snug text-zinc-600">
+          Слоты считаются по общей сумме монет: каждые 100 монет любого металла — 1 слот.
+        </p>
+      </section>
+    );
+  }
+
+
   const filteredSkills = SKILLS.filter((skill) => {
     if (skill.kind === "knowledge") return false;
     if (skillKind !== "all" && skill.kind !== skillKind) return false;
-    const selected = selectedSkills.has(skill.name.toLowerCase());
-    if (!selected && !skillAvailable(skill.name, draft.stats)) return false;
     if (!skillQuery.trim()) return true;
     const query = skillQuery.trim().toLowerCase();
     return skill.name.toLowerCase().includes(query) || (SKILL_NOTES[skill.name] ?? "").toLowerCase().includes(query);
   });
   const filteredKnowledge = SKILLS.filter((skill) => {
     if (skill.kind !== "knowledge") return false;
-    const selected = selectedSkills.has(skill.name.toLowerCase());
-    if (!selected && !skillAvailable(skill.name, draft.stats)) return false;
     if (!knowledgeQuery.trim()) return true;
     const query = knowledgeQuery.trim().toLowerCase();
     return skill.name.toLowerCase().includes(query) || (SKILL_NOTES[skill.name] ?? "").toLowerCase().includes(query);
@@ -606,7 +811,7 @@ export function CharacterSheet({
                 Груз <span className="font-mono text-emerald-200">{used}/{capacity}</span>
               </span>
               <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                Деньги <span className="font-mono text-amber-200">{coins} зм</span>
+                Деньги <span className="font-mono text-amber-200">{money.toFixed(2)} зм</span>
               </span>
               <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
                 {origin?.name ?? "Происхождение не выбрано"}
@@ -618,6 +823,15 @@ export function CharacterSheet({
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {editing ? (
               <>
+                <button
+                  type="button"
+                  onClick={levelUp}
+                  disabled={busy || draft.level >= 10}
+                  title="Бросить d8 + модификатор Телосложения и добавить ОЗ"
+                  className="rounded-lg border border-amber-400/50 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-40"
+                >
+                  Повысить уровень
+                </button>
                 <button
                   type="button"
                   onClick={onSave}
@@ -656,19 +870,24 @@ export function CharacterSheet({
         </div>
 
         {editing ? (
-          <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-emerald-400/60 hover:text-emerald-200">
-            Загрузить портрет
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.currentTarget.value = "";
-                if (file) setPortraitFile(file);
-              }}
-            />
-          </label>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-emerald-400/60 hover:text-emerald-200">
+              Портрет: загрузить
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) setPortraitFile(file);
+                }}
+              />
+            </label>
+            <span className="text-[10px] text-zinc-600">
+              Нажмите, чтобы выбрать картинку; она обрежется в круг.
+            </span>
+          </div>
         ) : null}
       </header>
 
@@ -829,6 +1048,9 @@ export function CharacterSheet({
                       .join(" · ")}
                     {origin.languages.length ? ` · языки: ${origin.languages.join(", ")}` : ""}
                   </p>
+                  <p className="text-[10px] text-emerald-300/70">
+                    Модификаторы уже прибавлены к характеристикам; примеры имён: {origin.names.join(", ")}.
+                  </p>
                 </>
               ) : (
                 <p className="text-xs text-zinc-500">Народ даёт модификаторы, язык и культурный код: 1 навык + 2 знания.</p>
@@ -836,40 +1058,50 @@ export function CharacterSheet({
             </section>
 
             <section className="grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Особенность</span>
-                <select
-                  value={draft.trait}
-                  disabled={!editing}
-                  onChange={(event) => patch({ trait: event.target.value })}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
-                >
-                  <option value="">— нет —</option>
-                  {TRAITS.map((trait) => (
-                    <option key={trait} value={trait}>{trait}</option>
-                  ))}
-                </select>
+              <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Особенности</span>
+                {[0, 1].map((index) => (
+                  <select
+                    key={`trait-${index}`}
+                    value={draft.traits[index] ?? ""}
+                    disabled={!editing}
+                    onChange={(event) => setFeatureAt("traits", index, event.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
+                  >
+                    <option value="">— нет —</option>
+                    {TRAITS.map((trait) => (
+                      <option key={trait} value={trait}>{trait}</option>
+                    ))}
+                  </select>
+                ))}
                 <span className="block text-[11px] leading-snug text-zinc-500">
-                  {draft.trait ? TRAIT_NOTES[draft.trait] : "Одна особенность; вторая — только со вторым изъяном."}
+                  {draft.traits.length === 0
+                    ? "Одна особенность; вторая — только со вторым изъяном."
+                    : draft.traits.map((trait) => TRAIT_NOTES[trait]).filter(Boolean).join(" · ")}
                 </span>
-              </label>
-              <label className="block space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Изъян</span>
-                <select
-                  value={draft.flaw}
-                  disabled={!editing}
-                  onChange={(event) => patch({ flaw: event.target.value })}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-rose-200 outline-none focus:border-rose-400/70 disabled:opacity-70"
-                >
-                  <option value="">— нет —</option>
-                  {FLAWS.map((flaw) => (
-                    <option key={flaw} value={flaw}>{flaw}</option>
-                  ))}
-                </select>
+              </div>
+              <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Изъяны</span>
+                {[0, 1].map((index) => (
+                  <select
+                    key={`flaw-${index}`}
+                    value={draft.flaws[index] ?? ""}
+                    disabled={!editing}
+                    onChange={(event) => setFeatureAt("flaws", index, event.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-rose-200 outline-none focus:border-rose-400/70 disabled:opacity-70"
+                  >
+                    <option value="">— нет —</option>
+                    {FLAWS.map((flaw) => (
+                      <option key={flaw} value={flaw}>{flaw}</option>
+                    ))}
+                  </select>
+                ))}
                 <span className="block text-[11px] leading-snug text-zinc-500">
-                  {draft.flaw ? FLAW_NOTES[draft.flaw] : "Можно взять только изъян, отказавшись от особенности."}
+                  {draft.flaws.length === 0
+                    ? "Можно взять только изъян, отказавшись от особенности."
+                    : draft.flaws.map((flaw) => FLAW_NOTES[flaw]).filter(Boolean).join(" · ")}
                 </span>
-              </label>
+              </div>
             </section>
 
             <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
@@ -887,9 +1119,9 @@ export function CharacterSheet({
                 </div>
               </div>
               <p className="text-[11px] text-zinc-500">
-                Боевых: {draft.skills.filter((skill) => skill.kind === "combat").length} · небоевых:{" "}
-                {draft.skills.filter((skill) => skill.kind === "noncombat").length} · знаний:{" "}
-                {draft.skills.filter((skill) => skill.kind === "knowledge").length}
+                Боевых: <b>{slotUsage.combat}/{slotBudget.combat}</b> · небоевых:{" "}
+                <b>{slotUsage.noncombat}/{slotBudget.noncombat}</b> · знаний:{" "}
+                <b>{slotUsage.knowledge}/{slotBudget.knowledge}</b>
               </p>
               {draft.skills.length === 0 ? (
                 <p className="text-xs text-zinc-600">Пока ничего не выбрано.</p>
@@ -939,6 +1171,7 @@ export function CharacterSheet({
                 {renderInventory("hands", "В руках")}
                 {renderInventory("backpack", "В рюкзаке")}
               </div>
+              {renderCoins()}
               {used > capacity ? (
                 <p className="text-[11px] text-rose-300">Перегруз: красные предметы не помещаются в слоты Силы.</p>
               ) : null}
@@ -1168,8 +1401,9 @@ export function CharacterSheet({
                 Народ Кас-Хатара
               </h3>
               <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-                Происхождение даёт модификаторы характеристик, язык и культурный код: один конкретный
-                навык и два знания. При смене народа старые дары и их стартовое снаряжение снимаются.
+                Происхождение даёт модификаторы характеристик (они сразу прибавляются к значениям),
+                два языка и культурный код: один конкретный навык и два знания. При смене народа
+                старые дары и их стартовое снаряжение снимаются.
               </p>
               <button
                 type="button"
@@ -1204,12 +1438,16 @@ export function CharacterSheet({
                     </div>
                     <p className="mt-1 text-[11px] leading-snug text-zinc-400">{entry.description}</p>
                     <p className="mt-1 text-[10px] text-zinc-500">
+                      Модификаторы:{" "}
                       {RULES.stats
                         .filter((stat) => entry.mods[stat.key])
                         .map((stat) => `${formatMod(entry.mods[stat.key] ?? 0)} ${stat.short}`)
                         .join(" · ")}
                       {" · "}
-                      {entry.languages.join(", ")}
+                      языки: {entry.languages.join(", ")}
+                    </p>
+                    <p className="text-[10px] text-zinc-600">
+                      Модификаторы уже включены в характеристики. Примеры имён: {entry.names.join(", ")}.
                     </p>
                     <div className="mt-2 space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
                       <p className="text-[10px] uppercase tracking-wide text-zinc-600">Культурный код</p>
@@ -1227,27 +1465,34 @@ export function CharacterSheet({
         ) : null}
 
         {tab === "features" ? (
-          <div className="grid gap-4 lg:grid-cols-2">
-            <FeatureList
-              title="Особенность"
-              hint="Одна особенность. Второй изъян даёт вторую особенность — отметьте это в заметках."
-              items={RULES.traits}
-              notes={TRAIT_NOTES}
-              selected={draft.trait}
-              editing={editing}
-              accent="emerald"
-              onSelect={(name) => patch({ trait: name })}
-            />
-            <FeatureList
-              title="Изъян"
-              hint="Один изъян. Для фобии или аллергии уточните предмет страха в заметках."
-              items={RULES.flaws}
-              notes={FLAW_NOTES}
-              selected={draft.flaw}
-              editing={editing}
-              accent="rose"
-              onSelect={(name) => patch({ flaw: name })}
-            />
+          <div className="space-y-3">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <FeatureList
+                title="Особенности"
+                hint="Можно выбрать до двух. Вторая особенность требует второго изъяна."
+                items={RULES.traits}
+                notes={TRAIT_NOTES}
+                selected={draft.traits}
+                editing={editing}
+                accent="emerald"
+                onToggle={(name) => toggleFeature("traits", name)}
+              />
+              <FeatureList
+                title="Изъяны"
+                hint="Можно выбрать до двух. Изъян без особенности разрешён; особенность без изъяна — нет."
+                items={RULES.flaws}
+                notes={FLAW_NOTES}
+                selected={draft.flaws}
+                editing={editing}
+                accent="rose"
+                onToggle={(name) => toggleFeature("flaws", name)}
+              />
+            </div>
+            {draft.traits.length > draft.flaws.length ? (
+              <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
+                Для каждой особенности нужен изъян. Сейчас особенностей {draft.traits.length}, изъянов {draft.flaws.length}.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -1288,9 +1533,23 @@ export function CharacterSheet({
               </div>
             </div>
 
+            <div className="grid gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[11px] sm:grid-cols-3">
+              <span className={slotUsage.combat > slotBudget.combat ? "text-rose-300" : "text-zinc-400"}>
+                Боевые: <b>{slotUsage.combat}/{slotBudget.combat}</b>
+              </span>
+              <span className={slotUsage.noncombat > slotBudget.noncombat ? "text-rose-300" : "text-zinc-400"}>
+                Небоевые: <b>{slotUsage.noncombat}/{slotBudget.noncombat}</b>
+              </span>
+              <span className={slotUsage.knowledge > slotBudget.knowledge ? "text-rose-300" : "text-zinc-400"}>
+                Знания: <b>{slotUsage.knowledge}/{slotBudget.knowledge}</b>
+              </span>
+            </div>
             <p className="text-[11px] leading-relaxed text-zinc-600">
-              Отметьте навыки и поставьте ранг. Недоступные по минимуму характеристики скрыты.
-              Выбрано всего: {draft.skills.length}. Стартовый набор навыка кладётся в рюкзак.
+              На 1 уровне: <b>2</b> боевых, <b>3</b> небоевых + бонус Интеллекта и <b>1</b> знание.
+              Дальше — по таблице 6.1; ранг I–V стоит 1 слот за ранг. Навыки и знания от
+              происхождения бесплатны.{" "}
+              <span className="text-amber-300">★</span> — без ранга навык не работает; без ★
+              можно попробовать со штрафом −5. Недоступные по характеристике показаны серым.
             </p>
 
             <div className="scroll-thin max-h-[520px] space-y-1 overflow-y-auto pr-1">
@@ -1304,14 +1563,17 @@ export function CharacterSheet({
                     className={`flex items-start gap-2 rounded-lg border p-2 ${
                       selected
                         ? "border-emerald-400/40 bg-emerald-500/5"
-                        : "border-zinc-800 bg-zinc-950/40"
+                        : available
+                          ? "border-zinc-800 bg-zinc-950/40"
+                          : "border-zinc-800/70 bg-zinc-950/20 opacity-70"
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={Boolean(selected)}
-                      disabled={!editing || Boolean(selected?.source)}
+                      disabled={!editing || Boolean(selected?.source) || (!available && !selected)}
                       onChange={() => toggleSkill(def)}
+                      title={!available ? "Характеристика ниже минимума навыка" : undefined}
                       className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-emerald-400"
                     />
                     <div className="min-w-0 flex-1">
@@ -1469,28 +1731,45 @@ export function CharacterSheet({
               placeholder="Поиск знания…"
               className="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-100 outline-none focus:border-sky-400/70"
             />
+            <div className="grid gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[11px] sm:grid-cols-3">
+              <span className={slotUsage.combat > slotBudget.combat ? "text-rose-300" : "text-zinc-400"}>
+                Боевые: <b>{slotUsage.combat}/{slotBudget.combat}</b>
+              </span>
+              <span className={slotUsage.noncombat > slotBudget.noncombat ? "text-rose-300" : "text-zinc-400"}>
+                Небоевые: <b>{slotUsage.noncombat}/{slotBudget.noncombat}</b>
+              </span>
+              <span className={slotUsage.knowledge > slotBudget.knowledge ? "text-rose-300" : "text-zinc-400"}>
+                Знания: <b>{slotUsage.knowledge}/{slotBudget.knowledge}</b>
+              </span>
+            </div>
             <p className="text-[11px] leading-relaxed text-zinc-600">
-              Знания покупаются как навыки, но вынесены отдельно. Недоступные по минимуму скрыты.
-              Выбрано знаний: {draft.skills.filter((skill) => skill.kind === "knowledge").length}.
-              Каждое знание даёт стартовый набор в рюкзак.
+              Знания покупаются как навыки, но вынесены отдельно. Каждый ранг стоит 1 слот;
+              дары происхождения бесплатны. Недоступные по характеристике показаны серым.{" "}
+              <span className="text-amber-300">★</span> — без ранга знание не работает.
             </p>
 
             <div className="scroll-thin max-h-[560px] space-y-1 overflow-y-auto pr-1">
               {filteredKnowledge.map((def) => {
                 const selected = selectedSkills.get(def.name.toLowerCase());
+                const available = skillAvailable(def.name, draft.stats);
                 const stat = RULES.stats.find((entry) => entry.key === def.stat);
                 return (
                   <div
                     key={def.name}
                     className={`flex items-start gap-2 rounded-lg border p-2 ${
-                      selected ? "border-sky-400/40 bg-sky-500/5" : "border-zinc-800 bg-zinc-950/40"
+                      selected
+                        ? "border-sky-400/40 bg-sky-500/5"
+                        : available
+                          ? "border-zinc-800 bg-zinc-950/40"
+                          : "border-zinc-800/70 bg-zinc-950/20 opacity-70"
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={Boolean(selected)}
-                      disabled={!editing || Boolean(selected?.source)}
+                      disabled={!editing || Boolean(selected?.source) || (!available && !selected)}
                       onChange={() => toggleSkill(def)}
+                      title={!available ? "Характеристика ниже минимума знания" : undefined}
                       className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-400"
                     />
                     <div className="min-w-0 flex-1">
@@ -1609,6 +1888,68 @@ export function CharacterSheet({
                 </button>
               </div>
             ) : null}
+
+            <section className="space-y-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-300/80">
+                  Языки
+                </h3>
+                <span className="font-mono text-[10px] text-zinc-500">
+                  {draft.languages.length} / {2 + languageBudget}
+                </span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                Два языка даёт происхождение. Дополнительно за Интеллект:{" "}
+                <b className="text-zinc-300">{languageBudget}</b> (1 + модификатор Инт; у вас{" "}
+                {formatMod(abilityMod(draft.stats.int ?? 10))}). Древние языки обычно требуют Инт 12.
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(origin?.languages ?? []).map((language) => (
+                  <span key={language} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-200">
+                    {language}
+                  </span>
+                ))}
+                {!origin ? (
+                  <span className="text-[10px] text-zinc-600">Сначала выберите происхождение.</span>
+                ) : null}
+              </div>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {Array.from({ length: languageBudget }).map((_, index) => {
+                  const base = origin?.languages ?? [];
+                  const extras = draft.languages.filter((language) => !base.includes(language));
+                  const value = extras[index] ?? "";
+                  return (
+                    <label key={`lang-${index}`} className="flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
+                      <span className="w-5 shrink-0 font-mono text-[10px] text-zinc-600">+{index + 1}</span>
+                      <select
+                        value={value}
+                        disabled={!editing}
+                        onChange={(event) => setExtraLanguage(index, event.target.value)}
+                        className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[11px] text-sky-100 outline-none disabled:opacity-60"
+                      >
+                        <option value="">— выбрать язык —</option>
+                        {LANGUAGES.filter(
+                          (language) =>
+                            !base.includes(language.name) &&
+                            (!extras.includes(language.name) || language.name === value),
+                        ).map((language) => (
+                          <option
+                            key={language.name}
+                            value={language.name}
+                            disabled={Boolean(language.ancient) && (draft.stats.int ?? 10) < 12}
+                          >
+                            {language.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] leading-snug text-zinc-600">
+                Каждый язык — отдельное знание. Носители разных степных диалектов понимают друг друга лишь частично.
+              </p>
+            </section>
           </div>
         ) : null}
 
@@ -1633,8 +1974,8 @@ export function CharacterSheet({
               </div>
               <p className="text-[11px] leading-relaxed text-zinc-600">
                 Предел слотов равен Силе (7.2). В руках — 1 оружие + щит, 2 одноручных или 1 двуручное;
-                доспех один и не занимает руки. Не больше 4 предметов с 0 слотов. Монеты лежат в рюкзаке:
-                1 слот за каждые 100 монет.
+                доспех один и не занимает руки. Не больше 4 предметов с 0 слотов. Монеты четырёх
+                номиналов лежат в рюкзаке; 1 слот за каждые 100 монет суммы.
               </p>
             </section>
 
@@ -1642,6 +1983,7 @@ export function CharacterSheet({
               {renderInventory("hands", "В руках")}
               {renderInventory("backpack", "Рюкзак")}
             </div>
+            {renderCoins()}
 
             <section className="space-y-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ITEMS,
+  LANGUAGES,
   ORIGINS,
   RULES,
   SKILLS,
   STARTER_KITS,
   abilityMod,
   carryCapacity,
+  coinCount,
   coinsAmount,
   derive,
   findItem,
@@ -15,11 +17,14 @@ import {
   handsCount,
   inventoryBlockReason,
   inventorySlots,
+  languageSlots,
   overloadedIds,
   proficiencyBonus,
   rankBonus,
   rankLabel,
   rollAbilityScores,
+  skillSlotBudget,
+  skillsSlotUsage,
   zeroSlotCount,
 } from "../lib/rules.ts";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "../lib/notes.ts";
@@ -237,6 +242,46 @@ test("монеты лежат в рюкзаке: 1 слот за 100", () => {
   const coins = findItem("Монеты");
   assert.ok(coins);
   assert.match(inventoryBlockReason(inventory, stats, coins, "hands") ?? "", /только в рюкзаке/);
+});
+
+test("четыре номинала монет считаются одной суммой", () => {
+  const inventory = [
+    { id: "mm", name: "Медные марки", location: "backpack", qty: 40 },
+    { id: "sm", name: "Серебряные дирхемы", location: "backpack", qty: 30 },
+    { id: "zm", name: "Золотые денарии", location: "backpack", qty: 100 },
+    { id: "pm", name: "Платиновые диски", location: "backpack", qty: 1 },
+  ];
+  assert.equal(coinCount(inventory), 171);
+  assert.equal(inventorySlots(inventory), 2);
+  assert.equal(Math.round(coinsAmount(inventory) * 100) / 100, 113.4);
+  assert.equal(zeroSlotCount(inventory), 0);
+});
+
+test("языки: два от происхождения и бонус за Интеллект", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 14, wis: 10, cha: 10 };
+  assert.equal(languageSlots(stats), 3);
+  assert.ok(ORIGINS.every((origin) => origin.languages.length === 2));
+  assert.ok(ORIGINS.every((origin) => origin.languages.every((name) => LANGUAGES.some((language) => language.name === name))));
+  assert.ok(LANGUAGES.some((language) => language.name === "Степной диалект (ардаки)"));
+  assert.ok(LANGUAGES.some((language) => language.name === "Химеричный"));
+});
+
+test("слоты навыков растут по уровню и Интеллекту", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 17, wis: 10, cha: 10 };
+  const level1 = skillSlotBudget(1, stats);
+  assert.equal(level1.combat, 2);
+  assert.equal(level1.noncombat, 6);
+  assert.equal(level1.knowledge, 1);
+  const level4 = skillSlotBudget(4, stats);
+  assert.equal(level4.combat, 3);
+  assert.equal(level4.noncombat, 8);
+  assert.equal(level4.knowledge, 2);
+  const usage = skillsSlotUsage([
+    { name: "Луки", rank: 2, kind: "combat" },
+    { name: "Грамота", rank: 1, kind: "knowledge", source: "Лаоркандцы" },
+  ]);
+  assert.equal(usage.combat, 2);
+  assert.equal(usage.knowledge, 0);
 });
 
 test("руки: 1 оружие + щит, 2 одноручных, 1 двуручное, один доспех", () => {

@@ -58,6 +58,8 @@ export interface InventoryItem {
   qty?: number;
   /** Навык или знание, чей стартовый набор дал предмет. */
   source?: string;
+  /** Все дары, которые дали предмет; используется для снятия навыка без дублей. */
+  sources?: string[];
 }
 
 export interface Character {
@@ -75,8 +77,9 @@ export interface Character {
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
-  trait: string;
-  flaw: string;
+  traits: string[];
+  flaws: string[];
+  languages: string[];
   inventory: InventoryItem[];
   fields: Record<string, string>;
   createdAt: number;
@@ -92,8 +95,9 @@ export interface CharacterDraft {
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
-  trait: string;
-  flaw: string;
+  traits: string[];
+  flaws: string[];
+  languages: string[];
   inventory: InventoryItem[];
   fields: Record<string, string>;
 }
@@ -154,9 +158,20 @@ export interface MapCursor {
   updatedAt: number;
 }
 
+export interface MapPing {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  color: string;
+  createdAt: number;
+}
+
 export interface MapState {
   strokes: MapStroke[];
+  /** Старые курсоры оставлены для чтения старых комнат; больше не обновляются. */
   cursors: Record<string, MapCursor>;
+  pings: MapPing[];
   updatedAt: number;
 }
 

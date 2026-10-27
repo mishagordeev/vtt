@@ -7,7 +7,7 @@ import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
 import type {
   ChatMessage,
   Character,
-  MapCursor,
+  MapPing,
   MapPoint,
   MapState,
   MapStroke,
@@ -28,13 +28,14 @@ const MAX_MESSAGES = 600;
 const KEY_PREFIX = "poison-press:room:";
 const MAX_TEXT = 2000;
 const MAX_STROKES = 200;
-const MAX_CURSOR_AGE = 60_000;
+const MAX_PING_AGE = 6_000;
+const MAX_PINGS = 40;
 const MAX_MAP_POINTS = 600;
 const MAX_MUSIC_TRACKS = 20;
 const MAX_MUSIC_POSITION = 86_400;
 
 export function emptyMap(): MapState {
-  return { strokes: [], cursors: {}, updatedAt: Date.now() };
+  return { strokes: [], cursors: {}, pings: [], updatedAt: Date.now() };
 }
 
 export function emptyMusic(): MusicState {
@@ -44,8 +45,9 @@ export function emptyMusic(): MusicState {
 function ensureMap(doc: RoomState): RoomState {
   if (!doc.map || !Array.isArray(doc.map.strokes)) {
     doc.map = emptyMap();
-  } else if (!doc.map.cursors || typeof doc.map.cursors !== "object") {
-    doc.map.cursors = {};
+  } else {
+    if (!doc.map.cursors || typeof doc.map.cursors !== "object") doc.map.cursors = {};
+    if (!Array.isArray(doc.map.pings)) doc.map.pings = [];
   }
   return doc;
 }
@@ -55,6 +57,22 @@ function ensureMusic(doc: RoomState): RoomState {
     doc.music = emptyMusic();
   }
   return doc;
+}
+
+/** Убирает случайные копии одного и того же персонажа у одного владельца. */
+function dedupeCharacters(doc: RoomState): boolean {
+  const seen = new Set<string>();
+  const keep = new Set<string>();
+  const ordered = [...doc.characters].sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const character of ordered) {
+    const key = `${character.owner.toLowerCase()}\u0000${character.name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keep.add(character.id);
+  }
+  if (keep.size === doc.characters.length) return false;
+  doc.characters = doc.characters.filter((character) => keep.has(character.id));
+  return true;
 }
 
 type MemoryEntry = { doc: RoomState; expiresAt: number };
@@ -108,6 +126,27 @@ export async function probeStorage(): Promise<StorageHealth> {
 
 const storageKey = (code: string) => `${KEY_PREFIX}${code}`;
 
+function storageError(status: number, action: "read" | "write"): AppError {
+  if (status === 429) {
+    return new AppError(
+      429,
+      "Квота Upstash Redis исчерпана (HTTP 429). Проверьте Usage в Upstash Console: команды, трафик и объём; до этого уменьшите частоту опроса или включите pay-as-you-go.",
+    );
+  }
+  if (status === 401 || status === 403) {
+    return new AppError(
+      503,
+      `Хранилище отклонило ключ (HTTP ${status}). Проверьте UPSTASH_REDIS_REST_URL/TOKEN или KV_REST_API_URL/TOKEN.`,
+    );
+  }
+  return new AppError(
+    502,
+    action === "read"
+      ? `Хранилище недоступно (HTTP ${status}).`
+      : `Не удалось сохранить данные комнаты (HTTP ${status}).`,
+  );
+}
+
 async function readDoc(code: string): Promise<RoomState | null> {
   const kv = kvCredentials();
   if (kv) {
@@ -115,7 +154,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
       headers: { Authorization: `Bearer ${kv.token}` },
       cache: "no-store",
     });
-    if (!res.ok) throw new AppError(502, "Хранилище недоступно");
+    if (!res.ok) throw storageError(res.status, "read");
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
@@ -146,7 +185,7 @@ async function writeDoc(doc: RoomState): Promise<void> {
         cache: "no-store",
       },
     );
-    if (!res.ok) throw new AppError(502, "Не удалось сохранить данные комнаты");
+    if (!res.ok) throw storageError(res.status, "write");
     return;
   }
 
@@ -237,6 +276,13 @@ export async function createRoom(): Promise<RoomState> {
 export async function getRoomSnapshot(code: string, since: number): Promise<RoomSnapshot> {
   const doc = await readDoc(code);
   if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
+  if (dedupeCharacters(doc)) {
+    try {
+      await writeDoc(doc);
+    } catch {
+      // Если запись не удалась, состояние всё равно отдаём без дублей.
+    }
+  }
   const messages = since > 0 ? doc.messages.filter((message) => message.seq >= since) : doc.messages;
   return {
     code: doc.code,
@@ -332,10 +378,22 @@ export async function createCharacter(
 
   const draft = normalizeDraft(rawDraft);
   if (!draft.name) throw new AppError(400, "Укажите имя персонажа");
+  if (draft.traits.length > draft.flaws.length) {
+    throw new AppError(400, "Для каждой особенности нужен изъян");
+  }
 
   return withRoom(code, (doc) => {
     if (doc.characters.length >= 60) {
       throw new AppError(400, "В комнате уже слишком много персонажей");
+    }
+    if (
+      doc.characters.some(
+        (entry) =>
+          entry.owner.toLowerCase() === owner.toLowerCase() &&
+          entry.name.toLowerCase() === draft.name.toLowerCase(),
+      )
+    ) {
+      throw new AppError(409, "У вас уже есть персонаж с таким именем");
     }
     const now = Date.now();
     const character: Character = {
@@ -349,8 +407,9 @@ export async function createCharacter(
       stats: draft.stats,
       resources: draft.resources,
       skills: draft.skills,
-      trait: draft.trait,
-      flaw: draft.flaw,
+      traits: draft.traits,
+      flaws: draft.flaws,
+      languages: draft.languages,
       inventory: draft.inventory,
       fields: draft.fields,
       createdAt: now,
@@ -401,8 +460,9 @@ export async function updateCharacter(
       origin: patch.origin ?? current.origin,
       portrait: patch.portrait ?? current.portrait,
       portraitFull: patch.portraitFull ?? current.portraitFull,
-      trait: patch.trait ?? current.trait,
-      flaw: patch.flaw ?? current.flaw,
+      traits: Array.isArray(patch.traits) ? patch.traits : current.traits,
+      flaws: Array.isArray(patch.flaws) ? patch.flaws : current.flaws,
+      languages: Array.isArray(patch.languages) ? patch.languages : current.languages,
       stats: { ...current.stats, ...asRecord(patch.stats) },
       resources,
       skills: Array.isArray(patch.skills) ? patch.skills : current.skills,
@@ -410,14 +470,28 @@ export async function updateCharacter(
       fields: { ...current.fields, ...asRecord(patch.fields) },
     });
     if (!normalized.name) throw new AppError(400, "Укажите имя персонажа");
+    if (normalized.traits.length > normalized.flaws.length) {
+      throw new AppError(400, "Для каждой особенности нужен изъян");
+    }
+    if (
+      doc.characters.some(
+        (entry) =>
+          entry.id !== id &&
+          entry.owner.toLowerCase() === character.owner.toLowerCase() &&
+          entry.name.toLowerCase() === normalized.name.toLowerCase(),
+      )
+    ) {
+      throw new AppError(409, "У вас уже есть персонаж с таким именем");
+    }
 
     character.name = normalized.name;
     character.level = normalized.level;
     character.origin = normalized.origin;
     character.portrait = normalized.portrait;
     character.portraitFull = normalized.portraitFull;
-    character.trait = normalized.trait;
-    character.flaw = normalized.flaw;
+    character.traits = normalized.traits;
+    character.flaws = normalized.flaws;
+    character.languages = normalized.languages;
     character.stats = normalized.stats;
     character.resources = normalized.resources;
     character.skills = normalized.skills;
@@ -490,12 +564,18 @@ export async function updateMap(
     const kind = String(action.action ?? "");
     const now = Date.now();
 
-    if (kind === "cursor") {
+    if (kind === "ping") {
       const x = mapCoord(action.x);
       const y = mapCoord(action.y);
-      if (x === null || y === null) throw new AppError(400, "Некорректная позиция курсора");
-      const key = actor.toLowerCase();
-      map.cursors[key] = { name: actor, x, y, updatedAt: now } satisfies MapCursor;
+      if (x === null || y === null) throw new AppError(400, "Некорректная позиция метки");
+      const color = /^#[0-9a-f]{6}$/i.test(String(action.color ?? ""))
+        ? String(action.color)
+        : "#fb7185";
+      const ping: MapPing = { id: uid("png"), name: actor, x, y, color, createdAt: now };
+      map.pings.push(ping);
+      if (map.pings.length > MAX_PINGS) {
+        map.pings.splice(0, map.pings.length - MAX_PINGS);
+      }
     } else if (kind === "stroke") {
       const points = readMapPoints(action.points);
       if (points.length === 0) throw new AppError(400, "Пустая линия");
@@ -531,17 +611,7 @@ export async function updateMap(
       throw new AppError(400, "Неизвестное действие с картой");
     }
 
-    for (const [key, cursor] of Object.entries(map.cursors)) {
-      if (now - cursor.updatedAt > MAX_CURSOR_AGE) delete map.cursors[key];
-    }
-    const keys = Object.keys(map.cursors);
-    if (keys.length > 30) {
-      keys
-        .sort((a, b) => (map.cursors[a]?.updatedAt ?? 0) - (map.cursors[b]?.updatedAt ?? 0))
-        .slice(0, keys.length - 30)
-        .forEach((key) => delete map.cursors[key]);
-    }
-
+    map.pings = map.pings.filter((ping) => now - ping.createdAt <= MAX_PING_AGE);
     map.updatedAt = now;
     return map;
   });

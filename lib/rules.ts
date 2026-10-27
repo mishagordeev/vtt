@@ -106,6 +106,8 @@ export interface OriginDef {
   description: string;
   mods: Partial<Record<StatKey, number>>;
   languages: string[];
+  /** Примеры имён, чтобы игроку было от чего отталкиваться. */
+  names: string[];
   /** Культурный код: один конкретный навык и два знания. */
   skill: string;
   knowledge: [string, string];
@@ -117,6 +119,7 @@ export const ORIGINS: OriginDef[] = [
     description: "Наследники Империи: монументальная архитектура, законы Порядка, книжная грамота и суета царств-преемников.",
     mods: { int: 1, con: -1 },
     languages: ["Разговорный лаоркандский", "Высокий лаоркандский"],
+    names: ["Тейна", "Кассиан", "Ирса", "Валериан"],
     skill: "Грамота",
     knowledge: ["История Империи", "Древние наречия"],
   },
@@ -124,7 +127,8 @@ export const ORIGINS: OriginDef[] = [
     name: "Степники-кочевники",
     description: "Вольные племена сухих степей: коневодство, набеги, работорговля и жизнь в седле.",
     mods: { dex: 1, int: -1 },
-    languages: ["Разговорный лаоркандский", "Племенной степной диалект"],
+    languages: ["Разговорный лаоркандский", "Степной диалект (ардаки)"],
+    names: ["Ардак", "Рауса", "Шади", "Юсун"],
     skill: "Верховая езда",
     knowledge: ["География Пограничья", "Природа и звери"],
   },
@@ -133,6 +137,7 @@ export const ORIGINS: OriginDef[] = [
     description: "Воины высокогорий и приречных чащ, поклоняющиеся духам предков и не жалующие чужаков.",
     mods: { str: 1, cha: -1 },
     languages: ["Разговорный лаоркандский", "Горский диалект Горячеречья"],
+    names: ["Крига", "Кархан", "Урий", "Горай"],
     skill: "Скалолазание и такелаж",
     knowledge: ["Природа и звери", "Обычаи и запреты"],
   },
@@ -141,6 +146,7 @@ export const ORIGINS: OriginDef[] = [
     description: "Стражи Пограничья из северной крепости Зарахшад, веками живущие у Океана Хаоса.",
     mods: { con: 1, wis: -1 },
     languages: ["Разговорный лаоркандский", "Северный зарахшадский говор"],
+    names: ["Рахш", "Зара", "Север", "Ирсакта"],
     skill: "Подземное чутьё",
     knowledge: ["Архитектура руин", "Запреты и суеверия"],
   },
@@ -149,6 +155,7 @@ export const ORIGINS: OriginDef[] = [
     description: "Селяне Земли Пактов, связанные древним договором с падшей нимфой Наамой.",
     mods: { wis: 1, str: -1 },
     languages: ["Разговорный лаоркандский", "Сельский говор Земли Пактов"],
+    names: ["Дарма", "Гахра", "Нахар", "Селена"],
     skill: "Травничество",
     knowledge: ["Богословие и сферы", "Обычаи и запреты"],
   },
@@ -156,7 +163,8 @@ export const ORIGINS: OriginDef[] = [
     name: "Заморские мореходы",
     description: "Шуари и иншаджа — торговцы, пираты и странники с дальних берегов По ту сторону моря.",
     mods: { cha: 1, con: -1 },
-    languages: ["Разговорный лаоркандский", "Заморский язык шуари"],
+    languages: ["Разговорный лаоркандский", "Шуари"],
+    names: ["Казим", "Амира", "Шуари", "Иншад"],
     skill: "Плавание",
     knowledge: ["Морские пути", "Торговля и оценка"],
   },
@@ -165,6 +173,88 @@ export const ORIGINS: OriginDef[] = [
 export function findOrigin(name: string | undefined): OriginDef | undefined {
   return ORIGINS.find((origin) => origin.name === name);
 }
+
+export interface LanguageDef {
+  name: string;
+  description: string;
+  /** Древний/мёртвый язык: обычно требует Инт 12 и учителя. */
+  ancient?: boolean;
+}
+
+/** Список из путеводителя, V. Языки. */
+export const LANGUAGES: LanguageDef[] = [
+  { name: "Разговорный лаоркандский", description: "Главный язык торга, суда и договоров; его знает каждый герой." },
+  { name: "Высокий лаоркандский", description: "Архаичные свитки, указы и клейма Империи." },
+  { name: "Иламский", description: "Первый людской праязык; тексты почти нечитаемы." },
+  { name: "Хемити", description: "Язык «чёрной земли», алхимиков и демонологов." },
+  { name: "Степной диалект (ардаки)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (сулот)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (рауси)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (юшус)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (хиф)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (каюс)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (шад)", description: "Один из восьми диалектов степных племён." },
+  { name: "Степной диалект (шиом)", description: "Один из восьми диалектов степных племён." },
+  { name: "Ашшамский", description: "Язык южных княжеств." },
+  { name: "Шуари", description: "Язык мореходов по ту сторону моря." },
+  { name: "Иншаджа", description: "Язык южных пиратов и код тайных договоров." },
+  { name: "Ульборский", description: "Редкий язык северо-восточного субконтинента." },
+  { name: "Гедлинг", description: "Редкий язык северо-восточного субконтинента." },
+  { name: "Химеричный", description: "Язык древних созданий Хаоса; знать его открыто опасно.", ancient: true },
+  { name: "Сарнатские глифы", description: "Письмена погибшей цивилизации с Гиблого озера.", ancient: true },
+  { name: "Руны и знаки зодчих", description: "Не расшифрованы до конца; иногда читаются только магией.", ancient: true },
+  { name: "Горский диалект Горячеречья", description: "Наречие горцев Солнечного Дворца." },
+  { name: "Северный зарахшадский говор", description: "Говор суровой северной крепости." },
+  { name: "Сельский говор Земли Пактов", description: "Наречие селян Дармахана, Нахарджи и Гахры." },
+];
+
+export function languageLabel(name: string): string {
+  return name;
+}
+
+export function languageSlots(stats: Record<string, number>): number {
+  return Math.max(1, 1 + abilityMod(statValue(stats, "int")));
+}
+
+const COMBAT_SLOTS = [2, 2, 3, 3, 3, 4, 4, 4, 5, 5];
+const NONCOMBAT_SLOTS = [3, 4, 4, 5, 5, 6, 6, 7, 7, 8];
+const KNOWLEDGE_SLOTS = [1, 1, 1, 2, 2, 2, 3, 3, 3, 4];
+
+export interface SkillSlotBudget {
+  combat: number;
+  noncombat: number;
+  knowledge: number;
+  intBonus: number;
+}
+
+/** Слоты навыков и знаний по таблице 6.1 + бонус Интеллекта. */
+export function skillSlotBudget(
+  level: number,
+  stats: Record<string, number>,
+): SkillSlotBudget {
+  const index = Math.max(0, Math.min(9, Math.round(Number(level) || 1) - 1));
+  const int = statValue(stats, "int");
+  const intBonus = int >= 18 ? 4 : int >= 16 ? 3 : int >= 14 ? 2 : int >= 12 ? 1 : 0;
+  return {
+    combat: COMBAT_SLOTS[index],
+    noncombat: NONCOMBAT_SLOTS[index] + intBonus,
+    knowledge: KNOWLEDGE_SLOTS[index],
+    intBonus,
+  };
+}
+
+/** Сколько слотов занято навыками; дары происхождения бесплатны. */
+export function skillsSlotUsage(skills: Skill[]): SkillSlotBudget {
+  const used: SkillSlotBudget = { combat: 0, noncombat: 0, knowledge: 0, intBonus: 0 };
+  for (const skill of skills) {
+    if (skill.source) continue;
+    if (skill.kind === "combat") used.combat += skill.rank;
+    else if (skill.kind === "knowledge") used.knowledge += skill.rank;
+    else used.noncombat += skill.rank;
+  }
+  return used;
+}
+
 
 /** Каталог снаряжения (7.3–7.5): слоты, цена, короткое описание. */
 export const ITEMS: ItemDef[] = [
@@ -262,7 +352,11 @@ export const ITEMS: ItemDef[] = [
   { name: "Плащ от дождя", kind: "gear", slots: 1, price: "3 зм", description: "Погодное чутьё и сухая ночь." },
   { name: "Набор для ловкости рук", kind: "gear", slots: 0, price: "5 зм", description: "Напёрстки, фальшивая монета и тонкое лезвие." },
   { name: "Тетива", kind: "gear", slots: 0, price: "1 зм", description: "Запасная тетива для лука." },
-  { name: "Монеты", kind: "coins", slots: 0, price: "—", description: "1 слот за каждые 100 монет любого металла; лежат в рюкзаке." },
+  { name: "Медные марки", kind: "coins", slots: 0, price: "—", description: "Мелкая разменная монета, 1/100 золотого. 100 монет = 1 слот." },
+  { name: "Серебряные дирхемы", kind: "coins", slots: 0, price: "—", description: "Основная городская валюта, 1/10 золотого. 100 монет = 1 слот." },
+  { name: "Золотые денарии", kind: "coins", slots: 0, price: "—", description: "Базовая монета игры, 1 зм. 100 монет = 1 слот." },
+  { name: "Платиновые диски", kind: "coins", slots: 0, price: "—", description: "Древняя монета, 10 зм. 100 монет = 1 слот." },
+  { name: "Монеты", kind: "coins", slots: 0, price: "—", description: "Старое общее поле монет; при сохранении переводится в золотые денарии." },
   { name: "Письменные принадлежности", kind: "gear", slots: 1, price: "5 зм", description: "Перья, чернила, бумага; нужны для Грамоты и подделок." },
 ];
 
@@ -373,12 +467,12 @@ export function starterKit(name: string): string[] {
 export const COMBAT_SKILLS: SkillDef[] = [
   { name: "Мечи", kind: "combat", stat: "str", min: 8, hint: "Фехтовальное — Ловкость" },
   { name: "Топоры и секиры", kind: "combat", stat: "str", min: 8 },
-  { name: "Древковое", kind: "combat", stat: "str", min: 8, hint: "Копьё, глефа, алебарда" },
+  { name: "Древковое", kind: "combat", stat: "str", min: 8, hint: "Копьё, глефа, алебарда; отдельный «Копьё» не нужен" },
   { name: "Дробящее", kind: "combat", stat: "str", min: 8 },
   { name: "Луки", kind: "combat", stat: "dex", min: 8 },
   { name: "Арбалеты", kind: "combat", stat: "dex", min: 8 },
-  { name: "Метательное", kind: "combat", stat: "str", min: 8, hint: "Можно Ловкость" },
-  { name: "Кинжалы и ножи", kind: "combat", stat: "dex", min: 8 },
+  { name: "Метательное", kind: "combat", stat: "str", min: 8, hint: "Дротики, метательные ножи; можно Ловкость" },
+  { name: "Кинжалы и ножи", kind: "combat", stat: "dex", min: 8, hint: "Ближний бой; метание — через «Метательное»" },
   { name: "Щиты", kind: "combat", stat: "str", min: 8 },
   { name: "Кулачный бой и захваты", kind: "combat", stat: "str", min: 8 },
 ];
@@ -511,25 +605,66 @@ export function carryCapacity(stats: Record<string, number>): number {
 
 export const COINS_NAME = "Монеты";
 
+export interface CoinType {
+  key: "mm" | "sm" | "zm" | "pm";
+  name: string;
+  short: string;
+  /** Стоимость одной монеты в золотых денариях. */
+  value: number;
+}
+
+export const COIN_TYPES: CoinType[] = [
+  { key: "mm", name: "Медные марки", short: "мм", value: 0.01 },
+  { key: "sm", name: "Серебряные дирхемы", short: "см", value: 0.1 },
+  { key: "zm", name: "Золотые денарии", short: "зм", value: 1 },
+  { key: "pm", name: "Платиновые диски", short: "пм", value: 10 },
+];
+
+export function coinType(name: string): CoinType | undefined {
+  if (name === COINS_NAME) return COIN_TYPES[2];
+  return COIN_TYPES.find((coin) => coin.name === name);
+}
+
+export function isCoinItem(entry: InventoryItem): boolean {
+  return findItem(entry.name)?.kind === "coins";
+}
+
 export function coinsSlots(amount: number): number {
   return Math.ceil(Math.max(0, Number(amount) || 0) / 100);
 }
 
 export function itemSlots(entry: InventoryItem): number {
   const def = findItem(entry.name);
-  if (def?.kind === "coins") return coinsSlots(entry.qty ?? 0);
+  if (def?.kind === "coins") return 0;
   return def?.slots ?? 1;
 }
 
-/** Сколько слотов занимает инвентарь, включая монеты по 100 штук на слот. */
-export function inventorySlots(inventory: InventoryItem[] | undefined): number {
-  return (inventory ?? []).reduce((sum, item) => sum + itemSlots(item), 0);
+export function coinCount(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? [])
+    .filter((item) => findItem(item.name)?.kind === "coins")
+    .reduce((sum, item) => sum + Math.max(0, Math.round(Number(item.qty) || 0)), 0);
+}
+
+/** Стоимость всех монет в золотых денариях. */
+export function coinsGoldValue(inventory: InventoryItem[] | undefined): number {
+  return (inventory ?? []).reduce((sum, item) => {
+    const type = coinType(item.name);
+    if (!type) return sum;
+    return sum + Math.max(0, Number(item.qty) || 0) * type.value;
+  }, 0);
 }
 
 export function coinsAmount(inventory: InventoryItem[] | undefined): number {
-  return (inventory ?? [])
-    .filter((item) => findItem(item.name)?.kind === "coins")
-    .reduce((sum, item) => sum + Math.max(0, Number(item.qty) || 0), 0);
+  return coinsGoldValue(inventory);
+}
+
+/** Сколько слотов занимает инвентарь: монеты считаются по общей сумме. */
+export function inventorySlots(inventory: InventoryItem[] | undefined): number {
+  const list = inventory ?? [];
+  const nonCoins = list
+    .filter((item) => findItem(item.name)?.kind !== "coins")
+    .reduce((sum, item) => sum + itemSlots(item), 0);
+  return nonCoins + coinsSlots(coinCount(list));
 }
 
 export function zeroSlotCount(inventory: InventoryItem[] | undefined): number {
@@ -608,8 +743,15 @@ export function overloadedIds(
   let total = 0;
   const ids = new Set<string>();
   for (const item of ordered) {
+    if (findItem(item.name)?.kind === "coins") continue;
     total += itemSlots(item);
     if (total > capacity) ids.add(item.id);
+  }
+  total += coinsSlots(coinCount(inventory));
+  if (total > capacity) {
+    for (const item of inventory ?? []) {
+      if (findItem(item.name)?.kind === "coins") ids.add(item.id);
+    }
   }
   return ids;
 }

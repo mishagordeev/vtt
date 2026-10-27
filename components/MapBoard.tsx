@@ -10,9 +10,10 @@ interface MapBoardProps {
   onAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
 }
 
-const CURSOR_TTL = 15_000;
+const PING_TTL = 6_000;
 const MAX_POINTS = 600;
 const POINT_STEP = 0.0025;
+const CLICK_DISTANCE = 0.006;
 const COLORS = ["#fb7185", "#38bdf8", "#a3e635", "#facc15", "#e879f9", "#f8fafc"];
 const WIDTHS = [
   { label: "тонко", value: 0.002 },
@@ -66,7 +67,8 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
   const currentRef = useRef<MapPoint[]>([]);
-  const lastCursorRef = useRef(0);
+  const startRef = useRef<MapPoint | null>(null);
+  const movedRef = useRef(false);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [tool, setTool] = useState<"pen" | "erase">("pen");
@@ -75,6 +77,12 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
   const [current, setCurrent] = useState<MapPoint[]>([]);
   const [erasePoint, setErasePoint] = useState<MapPoint | null>(null);
   const [error, setError] = useState("");
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((value) => value + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
 
   const isGM = me.trim().toLowerCase() === gm.trim().toLowerCase();
 
@@ -140,15 +148,24 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
     if (event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointFrom(event);
+    startRef.current = point;
+    movedRef.current = false;
     drawingRef.current = true;
-    currentRef.current = [point];
-    if (tool === "pen") setCurrent([point]);
-    else setErasePoint(point);
+    currentRef.current = [];
+    setCurrent([]);
+    setErasePoint(null);
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const point = pointFrom(event);
     if (drawingRef.current) {
+      const start = startRef.current ?? point;
+      if (!movedRef.current) {
+        if (Math.hypot(point.x - start.x, point.y - start.y) < CLICK_DISTANCE) return;
+        movedRef.current = true;
+        currentRef.current = tool === "pen" ? [start, point] : [start];
+        if (tool === "pen") setCurrent([start, point]);
+      }
       const points = currentRef.current;
       const last = points[points.length - 1];
       if (!last || Math.hypot(point.x - last.x, point.y - last.y) > POINT_STEP) {
@@ -164,15 +181,22 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
       return;
     }
     if (tool === "erase") setErasePoint(point);
-    const now = Date.now();
-    if (now - lastCursorRef.current < 1200) return;
-    lastCursorRef.current = now;
-    void onAction({ action: "cursor", x: point.x, y: point.y });
   }
 
   function handlePointerUp() {
     if (!drawingRef.current) return;
     drawingRef.current = false;
+    const start = startRef.current;
+    startRef.current = null;
+    if (!movedRef.current && start) {
+      currentRef.current = [];
+      setCurrent([]);
+      setErasePoint(null);
+      void onAction({ action: "ping", x: start.x, y: start.y, color: colorFor(me) }).then((result) => {
+        setError(result ? "" : "Не удалось показать метку");
+      });
+      return;
+    }
     void commit();
   }
 
@@ -183,9 +207,7 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
     setError(result ? "" : "Очистить карту может только мастер");
   }
 
-  const cursors = Object.entries(map.cursors).filter(
-    ([, cursor]) => Date.now() - cursor.updatedAt < CURSOR_TTL,
-  );
+  const pings = (map.pings ?? []).filter((ping) => Date.now() - ping.createdAt < PING_TTL);
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -194,11 +216,11 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
             Карта Кас-Хатара
           </h2>
           <p className="text-[10px] text-zinc-600">
-            Курсоры игроков и мастера · рисуйте мышью или пальцем · ластик убирает линии
+            Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · ластик убирает линии
           </p>
         </div>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
-          курсоров: {cursors.length}
+          метки: {pings.length}
         </span>
       </div>
 
@@ -219,29 +241,32 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
           />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
-          {cursors.map(([key, cursor]) => {
-            const cursorColor = colorFor(cursor.name);
-            const isMaster = cursor.name.trim().toLowerCase() === gm.trim().toLowerCase();
-            return (
-              <div
-                key={key}
-                className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2"
-                style={{ left: `${cursor.x * 100}%`, top: `${cursor.y * 100}%` }}
+          {pings.map((ping) => (
+            <div
+              key={ping.id}
+              className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${ping.x * 100}%`, top: `${ping.y * 100}%` }}
+            >
+              <span
+                className="absolute -left-4 -top-4 block h-8 w-8 animate-ping rounded-full border-2 opacity-70"
+                style={{ borderColor: ping.color, animationDuration: "1.4s" }}
+              />
+              <span
+                className="absolute -left-4 -top-4 block h-8 w-8 animate-ping rounded-full border opacity-50"
+                style={{
+                  borderColor: ping.color,
+                  animationDuration: "1.4s",
+                  animationDelay: "350ms",
+                }}
+              />
+              <span
+                className="absolute left-4 top-2 whitespace-nowrap rounded bg-zinc-950/90 px-1 py-0.5 text-[9px] font-medium shadow"
+                style={{ color: ping.color }}
               >
-                <span
-                  className="block h-3 w-3 rounded-full border-2 border-zinc-950 shadow"
-                  style={{ backgroundColor: cursorColor }}
-                />
-                <span
-                  className="absolute left-3 top-0 whitespace-nowrap rounded bg-zinc-950/90 px-1 py-0.5 text-[9px] font-medium shadow"
-                  style={{ color: cursorColor }}
-                >
-                  {cursor.name}
-                  {isMaster ? " ♛" : ""}
-                </span>
-              </div>
-            );
-          })}
+                {ping.name}
+              </span>
+            </div>
+          ))}
 
           {erasePoint ? (
             <div

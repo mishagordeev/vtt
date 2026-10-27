@@ -1,11 +1,14 @@
 import {
-  COINS_NAME,
+  COIN_TYPES,
   FIELDS,
   FLAWS,
+  LANGUAGES,
   ORIGINS,
   RULES,
+  STARTER_KITS,
   STATS,
   TRAITS,
+  coinType,
   derive,
   findItem,
   findSkill,
@@ -18,6 +21,9 @@ const KINDS: SkillKind[] = ["combat", "noncombat", "knowledge"];
 const LOCATIONS: ItemLocation[] = ["hands", "backpack"];
 const MAX_PORTRAIT = 280_000;
 const MAX_PORTRAIT_FULL = 560_000;
+const MAX_NAMES = 2;
+const LANGUAGE_NAMES = new Set(LANGUAGES.map((language) => language.name));
+const KIT_ITEM_NAMES = new Set(Object.values(STARTER_KITS).flat());
 
 function defaultFieldValue(field: (typeof FIELDS)[number]): string {
   return field.options?.[0] ?? "";
@@ -28,6 +34,44 @@ function cleanImage(value: unknown, maxLength: number): string {
   if (!value.startsWith("data:image/")) return "";
   if (value.length > maxLength) return "";
   return value;
+}
+
+function cleanList(value: unknown, allowed: string[], max: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const name = entry.trim();
+    if (!name || seen.has(name)) continue;
+    if (allowed.length > 0 && !allowed.includes(name)) continue;
+    seen.add(name);
+    list.push(name);
+    if (list.length >= max) break;
+  }
+  return list;
+}
+
+function coinInventory(amounts: Record<string, number> = {}): InventoryItem[] {
+  return COIN_TYPES.map((coin) => ({
+    id: `itm-coin-${coin.key}`,
+    name: coin.name,
+    location: "backpack" as const,
+    qty: Math.max(0, Math.round(Number(amounts[coin.key]) || 0)),
+  }));
+}
+
+function entrySources(entry: Partial<InventoryItem>): string[] {
+  const raw = Array.isArray(entry.sources) ? entry.sources : entry.source ? [entry.source] : [];
+  return Array.from(
+    new Set(
+      raw
+        .filter((source): source is string => typeof source === "string")
+        .map((source) => source.trim())
+        .filter(Boolean)
+        .map((source) => source.slice(0, 60)),
+    ),
+  );
 }
 
 export function emptyDraft(): CharacterDraft {
@@ -51,9 +95,10 @@ export function emptyDraft(): CharacterDraft {
     stats,
     resources,
     skills: [],
-    trait: "",
-    flaw: "",
-    inventory: [{ id: "itm-coins", name: COINS_NAME, location: "backpack", qty: DEFAULT_COINS }],
+    traits: [],
+    flaws: [],
+    languages: [],
+    inventory: coinInventory({ zm: DEFAULT_COINS }),
     fields,
   };
 }
@@ -81,28 +126,31 @@ export function draftFromCharacter(character: Character): CharacterDraft {
   }));
 
   const inventory: InventoryItem[] = [];
+  const coinAmounts: Record<string, number> = {};
+  const origin = ORIGINS.find((entry) => entry.name === character.origin);
   for (const entry of character.inventory ?? []) {
     const item = findItem(entry.name);
     if (!item) continue;
-    const isCoins = item.kind === "coins";
+    const type = coinType(item.name);
+    if (type) {
+      coinAmounts[type.key] = (coinAmounts[type.key] ?? 0) + Math.max(0, Math.round(Number(entry.qty) || 0));
+      continue;
+    }
+    const sources = entrySources(entry);
     inventory.push({
       id: entry.id || `itm-${inventory.length}-${item.name}`,
       name: item.name,
-      location: isCoins ? "backpack" : LOCATIONS.includes(entry.location) ? entry.location : "backpack",
-      ...(isCoins ? { qty: Math.max(0, Math.round(Number(entry.qty) || 0)) } : {}),
-      ...(entry.source ? { source: entry.source.slice(0, 60) } : {}),
+      location: LOCATIONS.includes(entry.location) ? entry.location : "backpack",
+      ...(sources.length > 0 ? { sources, source: sources[0] } : {}),
     });
   }
 
-  if (!inventory.some((entry) => findItem(entry.name)?.kind === "coins")) {
+  if (Object.keys(coinAmounts).length === 0) {
     const legacyMoney = Number((character as { money?: number }).money);
-    inventory.push({
-      id: "itm-coins",
-      name: COINS_NAME,
-      location: "backpack",
-      qty: Number.isFinite(legacyMoney) && legacyMoney >= 0 ? Math.round(legacyMoney) : DEFAULT_COINS,
-    });
+    coinAmounts.zm =
+      Number.isFinite(legacyMoney) && legacyMoney >= 0 ? Math.round(legacyMoney) : DEFAULT_COINS;
   }
+  inventory.push(...coinInventory(coinAmounts));
 
   if (!inventory.some((entry) => findItem(entry.name)?.kind === "armor")) {
     const legacyArmor = character.fields?.armor;
@@ -117,23 +165,57 @@ export function draftFromCharacter(character: Character): CharacterDraft {
     }
   }
 
+  const mergedInventory: InventoryItem[] = [];
+  for (const item of inventory) {
+    if (findItem(item.name)?.kind === "coins") {
+      mergedInventory.push(item);
+      continue;
+    }
+    const existing = mergedInventory.find(
+      (candidate) =>
+        candidate.name === item.name &&
+        (KIT_ITEM_NAMES.has(item.name) ||
+          ((candidate.sources?.length ?? 0) > 0 && (item.sources?.length ?? 0) > 0)),
+    );
+    if (existing) {
+      existing.sources = Array.from(new Set([...(existing.sources ?? []), ...(item.sources ?? [])]));
+      existing.source = existing.sources[0];
+      if (item.location === "hands") existing.location = "hands";
+      continue;
+    }
+    mergedInventory.push(item);
+  }
+  inventory.length = 0;
+  inventory.push(...mergedInventory);
+
   let notes = character.fields?.notes ?? "";
   const legacyGear = character.fields?.gear;
   if (legacyGear && legacyGear.trim()) {
     notes = notes ? `${notes}\n\nСнаряжение: ${legacyGear}` : `Снаряжение: ${legacyGear}`;
   }
 
+  const legacy = character as { trait?: string; flaw?: string };
+  const traits = cleanList(character.traits ?? (legacy.trait ? [legacy.trait] : []), TRAITS, MAX_NAMES);
+  const flaws = cleanList(character.flaws ?? (legacy.flaw ? [legacy.flaw] : []), FLAWS, MAX_NAMES);
+  const languages = cleanList(character.languages, LANGUAGES.map((language) => language.name), 12);
+  if (origin) {
+    for (const language of origin.languages) {
+      if (!languages.includes(language) && LANGUAGE_NAMES.has(language)) languages.push(language);
+    }
+  }
+
   return {
     name: character.name,
     level,
-    origin: ORIGINS.some((origin) => origin.name === character.origin) ? character.origin : "",
+    origin: origin?.name ?? "",
     portrait: cleanImage(character.portrait, MAX_PORTRAIT),
     portraitFull: cleanImage(character.portraitFull, MAX_PORTRAIT_FULL),
     stats,
     resources: { hp: { current: Math.max(0, hpCurrent), max: Math.max(1, hpMax) } },
     skills,
-    trait: TRAITS.includes(character.trait) ? character.trait : "",
-    flaw: FLAWS.includes(character.flaw) ? character.flaw : "",
+    traits,
+    flaws,
+    languages,
     inventory,
     fields: { notes },
   };
@@ -159,10 +241,19 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   draft.level = clamp(Number(raw.level ?? 1), 1, 10);
   draft.origin = ORIGINS.some((origin) => origin.name === raw.origin) ? String(raw.origin) : "";
 
-  const trait = cleanText(raw.trait, 60);
-  draft.trait = TRAITS.includes(trait) ? trait : "";
-  const flaw = cleanText(raw.flaw, 60);
-  draft.flaw = FLAWS.includes(flaw) ? flaw : "";
+  const rawTraits = Array.isArray(raw.traits) ? raw.traits : raw.trait ? [raw.trait] : [];
+  draft.traits = cleanList(rawTraits, TRAITS, MAX_NAMES);
+  const rawFlaws = Array.isArray(raw.flaws) ? raw.flaws : raw.flaw ? [raw.flaw] : [];
+  draft.flaws = cleanList(rawFlaws, FLAWS, MAX_NAMES);
+  draft.languages = cleanList(raw.languages, LANGUAGES.map((language) => language.name), 12);
+  const chosenOrigin = ORIGINS.find((entry) => entry.name === draft.origin);
+  if (chosenOrigin) {
+    for (const language of chosenOrigin.languages) {
+      if (!draft.languages.includes(language) && LANGUAGE_NAMES.has(language)) {
+        draft.languages.push(language);
+      }
+    }
+  }
 
   draft.portrait = cleanImage(raw.portrait, MAX_PORTRAIT);
   draft.portraitFull = cleanImage(raw.portraitFull, MAX_PORTRAIT_FULL) || draft.portrait;
@@ -215,30 +306,61 @@ export function normalizeDraft(input: unknown): CharacterDraft {
 
   const rawInventory = Array.isArray(raw.inventory) ? raw.inventory : [];
   draft.inventory = [];
-  let coins = 0;
-  let hasCoins = false;
+  const coinAmounts: Record<string, number> = {};
+  let hasCoinEntry = false;
   for (const entry of rawInventory) {
     if (!entry || typeof entry !== "object") continue;
     const item = findItem(cleanText((entry as { name?: unknown }).name, 60));
     if (!item) continue;
-    if (item.kind === "coins") {
-      hasCoins = true;
-      coins += clamp(Number((entry as { qty?: unknown }).qty), 0, 999999);
+    const type = coinType(item.name);
+    if (type) {
+      hasCoinEntry = true;
+      coinAmounts[type.key] =
+        (coinAmounts[type.key] ?? 0) + clamp(Number((entry as { qty?: unknown }).qty), 0, 999999);
       continue;
     }
     const location = LOCATIONS.includes((entry as { location?: ItemLocation }).location as ItemLocation)
       ? (entry as { location: ItemLocation }).location
       : "backpack";
     const id = cleanText((entry as { id?: unknown }).id, 60) || `itm-${draft.inventory.length}-${item.name}`;
-    const source = cleanText((entry as { source?: unknown }).source, 60);
-    draft.inventory.push({ id, name: item.name, location, ...(source ? { source } : {}) });
+    const sources = entrySources(entry as Partial<InventoryItem>);
+    draft.inventory.push({
+      id,
+      name: item.name,
+      location,
+      ...(sources.length > 0 ? { sources, source: sources[0] } : {}),
+    });
     if (draft.inventory.length >= 60) break;
   }
-  if (!hasCoins) {
-    coins = clamp(Number(raw.money), 0, 999999);
-    if (!Number.isFinite(Number(raw.money))) coins = DEFAULT_COINS;
+  if (!hasCoinEntry) {
+    const legacyMoney = Number(raw.money);
+    coinAmounts.zm = Number.isFinite(legacyMoney) && legacyMoney >= 0 ? clamp(legacyMoney, 0, 999999) : DEFAULT_COINS;
   }
-  draft.inventory.push({ id: "itm-coins", name: COINS_NAME, location: "backpack", qty: coins });
+  draft.inventory.push(...coinInventory(coinAmounts));
+
+  // Старые стартовые наборы могли дать один и тот же предмет дважды: сливаем
+  // только записи с источниками, ручные дубликаты не трогаем.
+  const merged: InventoryItem[] = [];
+  for (const item of draft.inventory) {
+    if (findItem(item.name)?.kind === "coins") {
+      merged.push(item);
+      continue;
+    }
+    const existing = merged.find(
+      (candidate) =>
+        candidate.name === item.name &&
+        (KIT_ITEM_NAMES.has(item.name) ||
+          ((candidate.sources?.length ?? 0) > 0 && (item.sources?.length ?? 0) > 0)),
+    );
+    if (existing) {
+      existing.sources = Array.from(new Set([...(existing.sources ?? []), ...(item.sources ?? [])]));
+      existing.source = existing.sources[0];
+      if (item.location === "hands") existing.location = "hands";
+      continue;
+    }
+    merged.push(item);
+  }
+  draft.inventory = merged;
 
   const rawFields = (raw.fields ?? {}) as Record<string, unknown>;
   for (const field of FIELDS) {

@@ -53,11 +53,14 @@ export function CharactersPanel({
       ? characters.find((entry) => entry.id === mode.id)
       : undefined;
 
-  const open = useCallback((character: Character) => {
-    setMode({ kind: "view", id: character.id });
-    setDraft(draftFromCharacter(character));
-    setError(null);
-  }, []);
+  const open = useCallback(
+    (character: Character) => {
+      setMode({ kind: canEditCharacter(character) ? "edit" : "view", id: character.id });
+      setDraft(draftFromCharacter(character));
+      setError(null);
+    },
+    [canEditCharacter],
+  );
 
   useEffect(() => {
     if (mode.kind === "empty" && characters.length > 0) open(characters[0]);
@@ -103,6 +106,14 @@ export function CharactersPanel({
 
   async function save() {
     if (!draft || busy) return;
+    if (draft.traits.length > draft.flaws.length) {
+      setError("Для каждой особенности нужен изъян: добавьте второй изъян или уберите особенность.");
+      return;
+    }
+    if (draft.traits.length > 2 || draft.flaws.length > 2) {
+      setError("Можно выбрать не больше двух особенностей и двух изъянов.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -113,7 +124,7 @@ export function CharactersPanel({
             ? await onUpdate(mode.id, draft)
             : null;
       if (saved) {
-        setMode({ kind: "view", id: saved.id });
+        setMode({ kind: canEditCharacter(saved) ? "edit" : "view", id: saved.id });
         setDraft(draftFromCharacter(saved));
       }
     } catch (err) {
@@ -253,7 +264,8 @@ export function CharactersPanel({
         </div>
 
         <div className="border-t border-zinc-800 px-3 py-2 text-[10px] text-zinc-600">
-          Править чужие листы может только мастер. Остальные видят их только для чтения.
+          Нажмите на персонажа — свой лист сразу открывается на редактирование, без кнопки «Правка».
+          Чужие листы доступны только для чтения.
         </div>
       </aside>
     </div>
