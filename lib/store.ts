@@ -82,17 +82,79 @@ const globalStore = globalThis as typeof globalThis & {
 };
 const memoryRooms: Map<string, MemoryEntry> = (globalStore.__poisonPressRooms ??= new Map());
 
+interface RedisCredentials {
+  url: string;
+  token: string;
+  source: "upstash" | "vercel-kv";
+}
+
 /**
- * Хранилище выбирается автоматически:
- *  - KV_REST_API_URL / KV_REST_API_TOKEN (Vercel KV, Upstash через Marketplace);
- *  - UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (нативный Upstash);
- *  - иначе — in-memory (локальная разработка, данные живут до перезапуска процесса).
+ * Хранилище выбирается автоматически.
+ *
+ * Нативный Upstash имеет приоритет: в старых проектах Vercel могли остаться
+ * KV_REST_API_* от выведенного Vercel KV, и именно они дают 403 на новой базе.
+ * URL и токен берём только одной парой, чтобы не смешать разные базы.
  */
-function kvCredentials(): { url: string; token: string } | null {
-  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+function envValue(name: string): string | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const value = raw
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+  return value || null;
+}
+
+function credentialsPair(
+  urlName: string,
+  tokenName: string,
+  source: RedisCredentials["source"],
+): RedisCredentials | null {
+  const url = envValue(urlName);
+  const token = envValue(tokenName);
   if (!url || !token) return null;
-  return { url: url.replace(/\/+$/, ""), token };
+  const withProtocol = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  return { url: withProtocol.replace(/\/+$/, ""), token, source };
+}
+
+function kvCredentials(): RedisCredentials | null {
+  const native = credentialsPair(
+    "UPSTASH_REDIS_REST_URL",
+    "UPSTASH_REDIS_REST_TOKEN",
+    "upstash",
+  );
+  const vercelKv = credentialsPair("KV_REST_API_URL", "KV_REST_API_TOKEN", "vercel-kv");
+  const isUpstashHost = (credentials: RedisCredentials | null): boolean => {
+    if (!credentials) return false;
+    try {
+      return /\.upstash\.io$/i.test(new URL(credentials.url).host);
+    } catch {
+      return false;
+    }
+  };
+  // Старый KV_REST_API_URL от выведенного Vercel KV не должен перебивать
+  // нормальную базу Upstash.
+  if (isUpstashHost(native)) return native;
+  if (isUpstashHost(vercelKv)) return vercelKv;
+  return native ?? vercelKv;
+}
+
+function redisHost(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
+async function responseSnippet(res: Response): Promise<string | null> {
+  try {
+    const text = (await res.text()).replace(/\s+/g, " ").trim();
+    return text ? text.slice(0, 180) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function storageMode(): StorageMode {
@@ -100,14 +162,26 @@ export function storageMode(): StorageMode {
 }
 
 /**
- * Проверка хранилища для /api/health: пингует Redis через REST и замеряет задержку.
- * В memory-режиме пинговать нечего — хранилище считается доступным.
+ * Проверка хранилища для /api/health. При `deep` дополнительно делает
+ * SET+DEL тестового ключа, чтобы отличить readonly-токен от полного.
  */
-export async function probeStorage(): Promise<StorageHealth> {
+export async function probeStorage(deep = false): Promise<StorageHealth> {
   const kv = kvCredentials();
-  if (!kv) return { mode: "memory", reachable: true, latencyMs: null };
+  if (!kv) {
+    return {
+      mode: "memory",
+      reachable: true,
+      latencyMs: null,
+      source: "memory",
+      host: null,
+      canWrite: null,
+      status: null,
+      error: null,
+    };
+  }
 
   const startedAt = Date.now();
+  const host = redisHost(kv.url);
   try {
     const res = await fetch(`${kv.url}/ping`, {
       method: "POST",
@@ -115,12 +189,70 @@ export async function probeStorage(): Promise<StorageHealth> {
       cache: "no-store",
     });
     const latencyMs = Date.now() - startedAt;
-    if (!res.ok) return { mode: "redis", reachable: false, latencyMs };
+    if (!res.ok) {
+      return {
+        mode: "redis",
+        reachable: false,
+        latencyMs,
+        source: kv.source,
+        host,
+        canWrite: null,
+        status: res.status,
+        error: await responseSnippet(res),
+      };
+    }
 
     const payload = (await res.json()) as { result?: string };
-    return { mode: "redis", reachable: payload.result === "PONG", latencyMs };
+    const reachable = payload.result === "PONG";
+    let canWrite: boolean | null = null;
+    let writeStatus: number | null = null;
+    let writeError: string | null = null;
+
+    if (deep && reachable) {
+      const testKey = `poison-press:health:${Date.now().toString(36)}:${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const write = await fetch(
+        `${kv.url}/set/${encodeURIComponent(testKey)}/1/EX/30`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${kv.token}` },
+          cache: "no-store",
+        },
+      );
+      canWrite = write.ok;
+      writeStatus = write.status;
+      if (!write.ok) writeError = await responseSnippet(write);
+      else {
+        await fetch(`${kv.url}/del/${encodeURIComponent(testKey)}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${kv.token}` },
+          cache: "no-store",
+        }).catch(() => undefined);
+      }
+    }
+
+    return {
+      mode: "redis",
+      reachable,
+      latencyMs,
+      source: kv.source,
+      host,
+      canWrite,
+      status: writeStatus ?? res.status,
+      error: writeError,
+    };
   } catch {
-    return { mode: "redis", reachable: false, latencyMs: Date.now() - startedAt };
+    return {
+      mode: "redis",
+      reachable: false,
+      latencyMs: Date.now() - startedAt,
+      source: kv.source,
+      host,
+      canWrite: null,
+      status: null,
+      error: "Сетевая ошибка при обращении к Redis",
+    };
   }
 }
 
@@ -133,10 +265,28 @@ function storageError(status: number, action: "read" | "write"): AppError {
       "Квота Upstash Redis исчерпана (HTTP 429). Проверьте Usage в Upstash Console: команды, трафик и объём; до этого уменьшите частоту опроса или включите pay-as-you-go.",
     );
   }
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return new AppError(
       503,
-      `Хранилище отклонило ключ (HTTP ${status}). Проверьте UPSTASH_REDIS_REST_URL/TOKEN или KV_REST_API_URL/TOKEN.`,
+      "Redis не принял токен (HTTP 401). Скопируйте REST Token заново из Upstash Console → Database → REST API и обновите переменную окружения. Токен должен быть от той же базы, что и URL.",
+    );
+  }
+  if (status === 403) {
+    if (action === "write") {
+      return new AppError(
+        503,
+        "Ключ Redis не имеет права записи (HTTP 403). Обычно это Readonly Token: нужен полный REST Token, а не Readonly. Если в проекте остались старые KV_REST_API_*, удалите их или обновите на ту же базу. Проверка: /api/health?deep=1.",
+      );
+    }
+    return new AppError(
+      503,
+      "Доступ к Redis запрещён (HTTP 403). URL и токен, скорее всего, от разных баз, либо KV_REST_API_* ведут на старый Vercel KV. Оставьте одну пару UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN. Проверка: /api/health?deep=1.",
+    );
+  }
+  if (status === 404) {
+    return new AppError(
+      502,
+      "База Redis не найдена по указанному URL (HTTP 404). Проверьте, что база не удалена, а URL скопирован из Upstash Console → REST API.",
     );
   }
   return new AppError(

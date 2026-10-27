@@ -201,5 +201,15 @@ export interface StorageHealth {
   reachable: boolean;
   /** Задержка PING в мс; null в memory-режиме. */
   latencyMs: number | null;
+  /** Какая пара переменных выбрана. */
+  source?: "upstash" | "vercel-kv" | "memory";
+  /** Хост Redis без токена — полезно для диагностики. */
+  host?: string | null;
+  /** Результат глубокой проверки записи (`?deep=1`); null — не проверяли. */
+  canWrite?: boolean | null;
+  /** HTTP-статус последней проверки. */
+  status?: number | null;
+  /** Текст ошибки от Redis без секретов. */
+  error?: string | null;
 }
 

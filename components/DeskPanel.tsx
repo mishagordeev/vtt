@@ -40,17 +40,31 @@ function describeStorage(storage: StorageHealth | null): {
     };
   }
   if (!storage.reachable) {
+    const where = storage.host ? ` (${storage.host})` : "";
     return {
       label: "Redis не отвечает",
       dot: "bg-rose-500",
-      hint: "Проверьте KV_REST_API_URL и KV_REST_API_TOKEN в переменных окружения",
+      hint: `Проверьте URL и токен${where}; полная диагностика: /api/health?deep=1`,
+    };
+  }
+  if (storage.canWrite === false) {
+    return {
+      label: "Redis: только чтение",
+      dot: "bg-rose-500",
+      hint: "SET отклонён: нужен полный REST Token, а не Readonly. Проверьте переменные окружения.",
     };
   }
   const latency = storage.latencyMs === null ? "" : ` · ${storage.latencyMs} мс`;
+  const where =
+    storage.source === "upstash"
+      ? "UPSTASH_*"
+      : storage.source === "vercel-kv"
+        ? "KV_REST_API_*"
+        : "Redis";
   return {
     label: `Redis${latency}`,
     dot: "bg-emerald-400",
-    hint: "Комнаты хранятся в Upstash Redis и переживают перезапуск функций",
+    hint: `${where}${storage.host ? ` · ${storage.host}` : ""}. Комнаты переживают перезапуск; проверка записи: /api/health?deep=1`,
   };
 }
 
@@ -81,7 +95,7 @@ export function DeskPanel({
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/health", { cache: "no-store" })
+    fetch("/api/health?deep=1", { cache: "no-store" })
       .then((res) => res.json() as Promise<{ storage?: StorageHealth }>)
       .then((payload) => {
         if (alive && payload.storage) setStorage(payload.storage);
