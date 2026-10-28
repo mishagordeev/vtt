@@ -14,6 +14,7 @@ import { JoinGate } from "./JoinGate";
 import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 import { MusicPlaylist } from "./MusicPlaylist";
+import { PlayerProfile } from "./PlayerProfile";
 
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
@@ -50,6 +51,7 @@ export default function RoomScreen({ code }: { code: string }) {
   const [musicVolume, setMusicVolume] = useState(DEFAULT_MUSIC_VOLUME);
   const [lastSyncAt, setLastSyncAt] = useState(0);
   const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
+  const [profileFor, setProfileFor] = useState<string | null>(null);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
@@ -63,6 +65,17 @@ export default function RoomScreen({ code }: { code: string }) {
   const sinceRef = useRef(0);
   const meRef = useRef("");
   const animatedRollsRef = useRef<Set<string> | null>(null);
+
+  /** Цвет моего профиля — для метки на карте. */
+  const myColor = useMemo(
+    () =>
+      players.find((player) => player.name.trim().toLowerCase() === me.trim().toLowerCase())?.color ??
+      "",
+    [players, me],
+  );
+  const profilePlayer = profileFor
+    ? players.find((player) => player.name === profileFor)
+    : undefined;
 
   /** Сколько данных сейчас в комнате — для дебаг-панели мастера. */
   const roomBytes = useMemo(
@@ -90,11 +103,15 @@ export default function RoomScreen({ code }: { code: string }) {
       if (Number.isFinite(snapshot.serverNow)) {
         setClockOffset(snapshot.serverNow - Date.now());
       }
+      const deleted = new Set(snapshot.deletedMessages ?? []);
       setMessages((prev) => {
-        if (snapshot.messages.length === 0) return prev;
-        const seen = new Set(prev.map((message) => message.id));
-        const fresh = snapshot.messages.filter((message) => !seen.has(message.id));
-        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        const kept = deleted.size > 0 ? prev.filter((message) => !deleted.has(message.id)) : prev;
+        if (snapshot.messages.length === 0) return kept;
+        const seen = new Set(kept.map((message) => message.id));
+        const fresh = snapshot.messages.filter(
+          (message) => !seen.has(message.id) && !deleted.has(message.id),
+        );
+        return fresh.length > 0 ? [...kept, ...fresh] : kept;
       });
       setConnected(true);
       setLoadError(null);
@@ -309,6 +326,71 @@ export default function RoomScreen({ code }: { code: string }) {
     [musicAction, me, gm],
   );
 
+  /** Удаление сообщения: своё — автору, любое — мастеру. */
+  const deleteChatMessage = useCallback(
+    async (id: string) => {
+      try {
+        const result = await api<{ deletedMessages: string[] }>(
+          `/api/rooms/${code}/messages/${encodeURIComponent(id)}?actor=${encodeURIComponent(meRef.current)}`,
+          { method: "DELETE" },
+        );
+        const gone = new Set(result.deletedMessages ?? []);
+        setMessages((prev) => prev.filter((message) => !gone.has(message.id)));
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : "Не удалось удалить сообщение");
+      }
+    },
+    [code],
+  );
+
+  /** Полная перечитка ленты — нужна после переименования игрока. */
+  const reloadMessages = useCallback(async () => {
+    sinceRef.current = 0;
+    animatedRollsRef.current = null;
+    setMessages([]);
+    await load();
+  }, [load]);
+
+  /** Профиль игрока: имя, цвет, привязанные листы. */
+  const saveProfile = useCallback(
+    async (target: string, patch: { name: string; color: string; characterIds: string[] }) => {
+      const result = await api<{
+        players: Player[];
+        gm: string;
+        characters: Character[];
+        renamedTo: string;
+      }>(`/api/rooms/${code}/players`, {
+        method: "PATCH",
+        body: JSON.stringify({ actor: meRef.current, target, ...patch }),
+      });
+      setPlayers(result.players);
+      setGm(result.gm);
+      setCharacters(result.characters);
+      const wasMe = target.trim().toLowerCase() === meRef.current.trim().toLowerCase();
+      if (wasMe && result.renamedTo !== meRef.current) {
+        meRef.current = result.renamedTo;
+        setMe(result.renamedTo);
+        window.localStorage.setItem(nameKey(code), result.renamedTo);
+        window.localStorage.setItem("pp:name", result.renamedTo);
+      }
+      await reloadMessages();
+    },
+    [code, reloadMessages],
+  );
+
+  /** Мастер убирает игрока из-за стола. */
+  const kickPlayer = useCallback(
+    async (target: string) => {
+      const result = await api<{ players: Player[] }>(
+        `/api/rooms/${code}/players?actor=${encodeURIComponent(meRef.current)}&target=${encodeURIComponent(target)}`,
+        { method: "DELETE" },
+      );
+      setPlayers(result.players);
+      setProfileFor(null);
+    },
+    [code],
+  );
+
   useEffect(() => {
     window.localStorage.setItem(MUSIC_VOLUME_KEY, String(musicVolume));
   }, [musicVolume]);
@@ -455,8 +537,10 @@ export default function RoomScreen({ code }: { code: string }) {
               players={players}
               characters={characters}
               map={map}
+              myColor={myColor}
               onMapAction={mapAction}
               onOpenCharacters={() => setTab("characters")}
+              onOpenProfile={(name) => setProfileFor(name)}
             />
           ) : tab === "music" ? (
             <MusicPanel
@@ -493,7 +577,14 @@ export default function RoomScreen({ code }: { code: string }) {
             onVolume={(value) => setMusicVolume(value)}
             onAction={musicAction}
           />
-          <ChatPanel messages={messages} me={me} connected={connected} onSend={send} />
+          <ChatPanel
+            messages={messages}
+            me={me}
+            gm={gm}
+            connected={connected}
+            onSend={send}
+            onDelete={deleteChatMessage}
+          />
         </section>
       </div>
 
@@ -501,6 +592,18 @@ export default function RoomScreen({ code }: { code: string }) {
         <DiceOverlay
           entry={diceQueue[0]}
           onDone={() => setDiceQueue((prev) => prev.slice(1))}
+        />
+      ) : null}
+
+      {profilePlayer ? (
+        <PlayerProfile
+          me={me}
+          gm={gm}
+          player={profilePlayer}
+          characters={characters}
+          onSave={(patch) => saveProfile(profilePlayer.name, patch)}
+          onDelete={() => kickPlayer(profilePlayer.name)}
+          onClose={() => setProfileFor(null)}
         />
       ) : null}
 

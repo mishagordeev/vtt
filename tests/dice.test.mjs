@@ -23,6 +23,12 @@ test("extractFormula вытаскивает броски из текста", () 
   assert.equal(extractFormula("1д20"), null);
 });
 
+test("extractFormula складывает разные кубики и модификаторы", () => {
+  assert.equal(extractFormula("сумма 1d20+1d6+3"), "1d20+1d6+3");
+  assert.equal(extractFormula("1d20+2+1d8-1"), "1d20+2+1d8-1");
+  assert.equal(extractFormula("бросаю 2d6+1d4+5"), "2d6+1d4+5");
+});
+
 test("rollFormula считает сумму и учитывает kh/kl", () => {
   const roll = rollFormula("2d6+3");
   assert.ok(roll);

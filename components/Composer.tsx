@@ -17,18 +17,33 @@ export function Composer({ disabled, onSend }: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const preview = useMemo(() => extractFormula(text), [text]);
 
+  function replaceRange(start: number, end: number, chunk: string) {
+    const next = `${text.slice(0, start)}${chunk}${text.slice(end)}`;
+    setText(next);
+    const caret = start + chunk.length;
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  }
+
+  /** Разделитель между группами: несколько разных кубиков пишутся как сумма. */
+  function separatorFor(head: string, chunk: string): string {
+    if (chunk.startsWith("+") || chunk.startsWith("-")) return "";
+    if (head.length === 0) return "";
+    return /[\s(+]$/.test(head) ? "" : "+";
+  }
+
   function insert(chunk: string) {
     const el = ref.current;
     const start = el?.selectionStart ?? text.length;
     const end = el?.selectionEnd ?? text.length;
-    setText(`${text.slice(0, start)}${chunk}${text.slice(end)}`);
-    requestAnimationFrame(() => {
-      const position = start + chunk.length;
-      el?.focus();
-      el?.setSelectionRange(position, position);
-    });
+    const head = text.slice(0, start);
+    replaceRange(start, end, `${separatorFor(head, chunk)}${chunk}`);
   }
 
+  /** ЛКМ по кубику: 1d6 → 2d6, разные кубики складываются через «+». */
   function addDie(sides: number) {
     const el = ref.current;
     const caret = el?.selectionStart ?? text.length;
@@ -37,15 +52,60 @@ export function Composer({ disabled, onSend }: ComposerProps) {
     if (match) {
       const start = caret - match[0].length;
       const next = Math.min(20, Number(match[1]) + 1);
-      setText(`${text.slice(0, start)}${next}d${sides}${text.slice(caret)}`);
-      requestAnimationFrame(() => {
-        const position = start + `${next}d${sides}`.length;
-        el?.focus();
-        el?.setSelectionRange(position, position);
-      });
+      replaceRange(start, caret, `${next}d${sides}`);
       return;
     }
-    insert(`${head.length > 0 && !/\s$/.test(head) ? " " : ""}1d${sides}`);
+    insert(`1d${sides}`);
+  }
+
+  /** ПКМ по кубику: убрать одну кость (2d6 → 1d6 → ничего). */
+  function removeDie(sides: number) {
+    const el = ref.current;
+    const caret = el?.selectionStart ?? text.length;
+    const pattern = new RegExp(`(\\d{1,2})d${sides}`, "gi");
+    const scan = (source: string, limit: number): RegExpExecArray | null => {
+      pattern.lastIndex = 0;
+      let last: RegExpExecArray | null = null;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(source)) !== null && match.index < limit) {
+        last = match;
+      }
+      return last;
+    };
+    const target = scan(text, caret) ?? scan(text, text.length);
+    if (!target) return;
+    const start = target.index;
+    const end = start + target[0].length;
+    const count = Number(target[1]);
+    if (count > 1) {
+      replaceRange(start, end, `${count - 1}d${sides}`);
+      return;
+    }
+    // Убираем вместе с плюсом, чтобы не оставалось «1d20++».
+    replaceRange(text[start - 1] === "+" ? start - 1 : start, end, "");
+  }
+
+  /**
+   * Модификаторы складываются в один: несколько кликов по «+1» дают «+3»,
+   * а «−1» рядом с «+2» превращает его в «+1».
+   */
+  function adjustModifier(delta: number) {
+    const el = ref.current;
+    const caret = el?.selectionStart ?? text.length;
+    const head = text.slice(0, caret);
+    const match = head.match(/([+-])\s*(\d{1,3})$/);
+    if (!match) {
+      insert(delta > 0 ? `+${delta}` : `${delta}`);
+      return;
+    }
+    const current = (match[1] === "-" ? -1 : 1) * Number(match[2]);
+    const next = current + delta;
+    const start = caret - match[0].length;
+    if (next === 0) {
+      replaceRange(start, caret, "");
+      return;
+    }
+    replaceRange(start, caret, next > 0 ? `+${next}` : `${next}`);
   }
 
   async function submit() {
@@ -104,7 +164,12 @@ export function Composer({ disabled, onSend }: ComposerProps) {
             key={sides}
             type="button"
             onClick={() => addDie(sides)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              removeDie(sides);
+            }}
             className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:bg-emerald-500/10 hover:text-emerald-200"
+            title={`d${sides}: ЛКМ — добавить, ПКМ — убрать`}
           >
             d{sides}
           </button>
@@ -112,15 +177,25 @@ export function Composer({ disabled, onSend }: ComposerProps) {
         <span className="mx-1 h-4 w-px bg-zinc-800" aria-hidden />
         <button
           type="button"
-          onClick={() => insert("+1")}
+          onClick={() => adjustModifier(1)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            adjustModifier(-1);
+          }}
           className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+          title="+1 к броску · ПКМ — −1"
         >
           +1
         </button>
         <button
           type="button"
-          onClick={() => insert("-1")}
+          onClick={() => adjustModifier(-1)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            adjustModifier(1);
+          }}
           className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+          title="−1 к броску · ПКМ — +1"
         >
           −1
         </button>

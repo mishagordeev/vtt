@@ -1,0 +1,23 @@
+# VTT на своём сервере: один контейнер с приложением + внешний Redis (Upstash по REST).
+#
+#   cp .env.example .env   # вписать UPSTASH_REDIS_REST_URL и UPSTASH_REDIS_REST_TOKEN
+#   docker compose up -d --build
+#
+# Порт открыт только на localhost: снаружи — через Nginx с HTTPS (см. HOSTING.md).
+
+services:
+  vtt:
+    build: .
+    container_name: poison-press-vtt
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL:-}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

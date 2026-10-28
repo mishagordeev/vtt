@@ -13,8 +13,12 @@ interface DeskPanelProps {
   players: Player[];
   characters: Character[];
   map: MapState;
+  /** Цвет профиля игрока — им рисуется метка на карте. */
+  myColor?: string;
   onMapAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
   onOpenCharacters: () => void;
+  /** Открыть профиль игрока: цвет и привязанные персонажи. */
+  onOpenProfile: (name: string) => void;
 }
 
 const ONLINE_WINDOW = 60_000;
@@ -82,8 +86,10 @@ export function DeskPanel({
   players,
   characters,
   map,
+  myColor,
   onMapAction,
   onOpenCharacters,
+  onOpenProfile,
 }: DeskPanelProps) {
   const [now, setNow] = useState<number>(() => Date.now());
   const [copied, setCopied] = useState(false);
@@ -137,7 +143,7 @@ export function DeskPanel({
   return (
     <div className="scroll-thin h-full overflow-y-auto px-4 py-4">
       <div className="space-y-5">
-        <MapBoard me={me} gm={gm} map={map} onAction={onMapAction} />
+        <MapBoard me={me} gm={gm} map={map} pingColor={myColor} onAction={onMapAction} />
 
         <section className="space-y-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
@@ -174,26 +180,56 @@ export function DeskPanel({
           <ul className="space-y-1.5">
             {players.map((player) => {
               const online = now - player.lastSeen < ONLINE_WINDOW;
+              const isGM = player.name.toLowerCase() === gm.toLowerCase();
+              const isMe = player.name.toLowerCase() === me.toLowerCase();
+              const linked = (player.characterIds ?? [])
+                .map((id) => characters.find((character) => character.id === id)?.name)
+                .filter(Boolean);
               return (
-                <li
-                  key={player.name}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-2.5 py-1.5"
-                >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-semibold text-zinc-300">
-                    {initials(player.name)}
-                  </span>
-                  <span className="truncate text-sm text-zinc-200">{player.name}</span>
-                  {player.name.toLowerCase() === gm.toLowerCase() ? (
-                    <span className="rounded bg-amber-500/15 px-1 text-[10px] uppercase text-amber-300">
-                      м
-                    </span>
-                  ) : null}
-                  <span
-                    className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${
-                      online ? "bg-emerald-400" : "bg-zinc-700"
+                <li key={player.name}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenProfile(player.name)}
+                    className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition hover:border-emerald-400/50 ${
+                      isMe
+                        ? "border-emerald-500/40 bg-emerald-500/5"
+                        : "border-zinc-800/70 bg-zinc-900/40"
                     }`}
-                    title={online ? "в сети" : "офлайн"}
-                  />
+                    title="Открыть профиль игрока"
+                  >
+                    <span
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-zinc-950"
+                      style={{ backgroundColor: player.color || "#8a6a2f" }}
+                    >
+                      {initials(player.name)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-zinc-200">{player.name}</span>
+                        {isGM ? (
+                          <span className="rounded bg-amber-500/15 px-1 text-[10px] uppercase text-amber-300">
+                            м
+                          </span>
+                        ) : null}
+                        {isMe ? (
+                          <span className="rounded bg-emerald-500/15 px-1 text-[10px] uppercase text-emerald-200">
+                            вы
+                          </span>
+                        ) : null}
+                      </span>
+                      {linked.length > 0 ? (
+                        <span className="block truncate text-[10px] text-zinc-500">
+                          {linked.join(" · ")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        online ? "bg-emerald-400" : "bg-zinc-700"
+                      }`}
+                      title={online ? "в сети" : "офлайн"}
+                    />
+                  </button>
                 </li>
               );
             })}

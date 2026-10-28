@@ -107,7 +107,7 @@ export function MusicTrackRow({
             loading="lazy"
             className="h-full w-full object-cover"
           />
-          <span className="absolute inset-0 flex items-center justify-center bg-zinc-950/25 text-xs text-white drop-shadow">
+          <span className="absolute inset-0 flex items-center justify-center bg-black/35 text-xs text-white drop-shadow">
             {track.playing ? "♪" : "▶"}
           </span>
         </a>

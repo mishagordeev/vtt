@@ -1,16 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { HEX_SCALE, MAP_LABELS } from "@/lib/mapLabels";
 import type { MapPoint, MapState, MapStroke } from "@/lib/types";
 
 interface MapBoardProps {
   me: string;
   gm: string;
   map: MapState;
+  /** Личный цвет игрока: им рисуется метка-круг. */
+  pingColor?: string;
   onAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
 }
 
-const PING_TTL = 6_000;
+const PING_TTL = 3_000;
+const LABELS_KEY = "pp:map:labels";
 const MAX_POINTS = 600;
 const POINT_STEP = 0.0025;
 const CLICK_DISTANCE = 0.006;
@@ -62,7 +66,7 @@ function drawStroke(
   });
   context.stroke();
 }
-export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
+export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
@@ -77,7 +81,22 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
   const [current, setCurrent] = useState<MapPoint[]>([]);
   const [erasePoint, setErasePoint] = useState<MapPoint | null>(null);
   const [error, setError] = useState("");
+  const [showLabels, setShowLabels] = useState(true);
   const [, setTick] = useState(0);
+
+  useEffect(() => {
+    setShowLabels(window.localStorage.getItem(LABELS_KEY) !== "0");
+  }, []);
+
+  function toggleLabels() {
+    const next = !showLabels;
+    setShowLabels(next);
+    try {
+      window.localStorage.setItem(LABELS_KEY, next ? "1" : "0");
+    } catch {
+      // localStorage может быть недоступен — просто не запомним выбор.
+    }
+  }
 
   useEffect(() => {
     const id = setInterval(() => setTick((value) => value + 1), 1_000);
@@ -192,7 +211,7 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
       currentRef.current = [];
       setCurrent([]);
       setErasePoint(null);
-      void onAction({ action: "ping", x: start.x, y: start.y, color: colorFor(me) }).then((result) => {
+      void onAction({ action: "ping", x: start.x, y: start.y, color: pingColor || colorFor(me) }).then((result) => {
         setError(result ? "" : "Не удалось показать метку");
       });
       return;
@@ -231,7 +250,7 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          className={`relative touch-none select-none ${tool === "pen" ? "cursor-crosshair" : "cursor-cell"}`}
+          className={`map-frame relative touch-none select-none ${tool === "pen" ? "cursor-crosshair" : "cursor-cell"}`}
         >
           <img
             src="/map/kas-khatar.jpg"
@@ -241,23 +260,36 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
           />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
+          {showLabels ? (
+            <div className="pointer-events-none absolute inset-0 z-[5]">
+              {MAP_LABELS.map((label, index) => (
+                <span
+                  key={`${label.text}-${index}`}
+                  className="map-label"
+                  style={{
+                    left: `${label.left}%`,
+                    top: `${label.top}%`,
+                    width: `${label.width}%`,
+                    height: `${label.height}%`,
+                    fontSize: `${label.size}cqw`,
+                  }}
+                >
+                  {label.text}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
           {pings.map((ping) => (
             <div
               key={ping.id}
               className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2"
               style={{ left: `${ping.x * 100}%`, top: `${ping.y * 100}%` }}
             >
+              <span className="map-ping" style={{ borderColor: ping.color }} />
               <span
-                className="absolute -left-4 -top-4 block h-8 w-8 animate-ping rounded-full border-2 opacity-70"
-                style={{ borderColor: ping.color, animationDuration: "1.4s" }}
-              />
-              <span
-                className="absolute -left-4 -top-4 block h-8 w-8 animate-ping rounded-full border opacity-50"
-                style={{
-                  borderColor: ping.color,
-                  animationDuration: "1.4s",
-                  animationDelay: "350ms",
-                }}
+                className="map-ping map-ping--late"
+                style={{ borderColor: ping.color }}
               />
               <span
                 className="absolute left-4 top-2 whitespace-nowrap rounded bg-zinc-950/90 px-1 py-0.5 text-[9px] font-medium shadow"
@@ -322,6 +354,18 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
                 <option key={entry.value} value={entry.value}>{entry.label}</option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={toggleLabels}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                showLabels
+                  ? "bg-emerald-500/20 text-emerald-200"
+                  : "text-zinc-400 hover:text-emerald-200"
+              }`}
+              title="Русские подписи поверх карты"
+            >
+              Подписи
+            </button>
             {isGM ? (
               <button
                 type="button"
@@ -334,7 +378,7 @@ export function MapBoard({ me, gm, map, onAction }: MapBoardProps) {
           </div>
 
           <span className="pointer-events-none absolute bottom-1 right-2 rounded bg-zinc-950/70 px-1.5 py-0.5 text-[9px] text-zinc-400">
-            Кас-Хатар · 2200×1555
+            1 гекс ≈ {HEX_SCALE.miles} миль (≈{HEX_SCALE.km} км) · 2200×1555
           </span>
         </div>
       </div>

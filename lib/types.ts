@@ -28,6 +28,10 @@ export interface Player {
   name: string;
   joinedAt: number;
   lastSeen: number;
+  /** Личный цвет: точка в списке и метка на карте. Пусто — цвет по имени. */
+  color?: string;
+  /** Привязанные к профилю персонажи (id листов). */
+  characterIds?: string[];
 }
 
 export interface ResourceState {
@@ -135,6 +139,8 @@ export interface RoomState {
   characters: Character[];
   map: MapState;
   music: MusicState;
+  /** id удалённых сообщений: клиент вычищает их из своей ленты. */
+  deletedMessages: string[];
   seq: number;
 }
 
@@ -189,6 +195,8 @@ export interface RoomSnapshot {
   messages: ChatMessage[];
   map: MapState;
   music: MusicState;
+  /** id удалённых сообщений — чтобы убрать их из уже загруженной ленты. */
+  deletedMessages: string[];
   /** Время сервера на момент ответа — для синхронизации музыки. */
   serverNow: number;
   seq: number;

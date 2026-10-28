@@ -8,8 +8,11 @@ import { Composer } from "./Composer";
 interface ChatPanelProps {
   messages: ChatMessage[];
   me: string;
+  gm: string;
   connected: boolean;
   onSend: (text: string) => Promise<void>;
+  /** Удалить сообщение: своё — автору, любое — мастеру. */
+  onDelete: (id: string) => Promise<void>;
 }
 
 function RollCard({ roll }: { roll: RollResult }) {
@@ -47,18 +50,50 @@ function RollCard({ roll }: { roll: RollResult }) {
   );
 }
 
-function MessageRow({ message, mine }: { message: ChatMessage; mine: boolean }) {
+function MessageRow({
+  message,
+  mine,
+  canDelete,
+  onDelete,
+}: {
+  message: ChatMessage;
+  mine: boolean;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
   if (message.kind === "system") {
     return (
-      <p className="text-center text-[11px] leading-relaxed text-zinc-500">{message.text}</p>
+      <p className="group flex items-center justify-center gap-2 text-center text-[11px] leading-relaxed text-zinc-500">
+        <span>{message.text}</span>
+        {canDelete ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-[10px] text-zinc-700 opacity-50 transition hover:text-rose-300 hover:opacity-100"
+            title="Удалить сообщение (мастер)"
+          >
+            ×
+          </button>
+        ) : null}
+      </p>
     );
   }
 
   return (
-    <div className="space-y-1">
+    <div className="group space-y-1">
       <div className="flex items-baseline gap-2">
         <span className={`text-xs font-semibold ${nameColor(message.author)}`}>{message.author}</span>
         <span className="text-[10px] text-zinc-600">{formatTime(message.createdAt)}</span>
+        {canDelete ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="ml-auto text-[10px] text-zinc-700 opacity-50 transition hover:text-rose-300 hover:opacity-100"
+            title={mine ? "Удалить своё сообщение" : "Удалить сообщение (мастер)"}
+          >
+            ×
+          </button>
+        ) : null}
       </div>
       <div
         className={`rounded-xl border px-3 py-2 text-sm text-zinc-100 ${
@@ -72,9 +107,10 @@ function MessageRow({ message, mine }: { message: ChatMessage; mine: boolean }) 
   );
 }
 
-export function ChatPanel({ messages, me, connected, onSend }: ChatPanelProps) {
+export function ChatPanel({ messages, me, gm, connected, onSend, onDelete }: ChatPanelProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
+  const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
 
   useEffect(() => {
     const el = listRef.current;
@@ -110,7 +146,15 @@ export function ChatPanel({ messages, me, connected, onSend }: ChatPanelProps) {
           </p>
         ) : (
           messages.map((message) => (
-            <MessageRow key={message.id} message={message} mine={message.author === me} />
+            <MessageRow
+              key={message.id}
+              message={message}
+              mine={message.author === me}
+              canDelete={
+                isGM || message.author.trim().toLowerCase() === me.trim().toLowerCase()
+              }
+              onDelete={() => void onDelete(message.id)}
+            />
           ))
         )}
       </div>

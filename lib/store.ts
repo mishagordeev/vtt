@@ -28,11 +28,14 @@ const MAX_MESSAGES = 600;
 const KEY_PREFIX = "poison-press:room:";
 const MAX_TEXT = 2000;
 const MAX_STROKES = 200;
-const MAX_PING_AGE = 6_000;
+const MAX_PING_AGE = 3_500;
 const MAX_PINGS = 40;
 const MAX_MAP_POINTS = 600;
 const MAX_MUSIC_TRACKS = 20;
 const MAX_MUSIC_POSITION = 86_400;
+const MAX_DELETED_MESSAGES = 400;
+/** Цвет игрока — только #rrggbb, чтобы не протащить произвольную строку в стили. */
+const PLAYER_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 export function emptyMap(): MapState {
   return { strokes: [], cursors: {}, pings: [], updatedAt: Date.now() };
@@ -49,6 +52,23 @@ function ensureMap(doc: RoomState): RoomState {
     if (!doc.map.cursors || typeof doc.map.cursors !== "object") doc.map.cursors = {};
     if (!Array.isArray(doc.map.pings)) doc.map.pings = [];
   }
+  return doc;
+}
+
+/**
+ * Профиль игрока: личный цвет и привязанные персонажи.
+ * Старые комнаты этих полей не знали — подставляем значения по умолчанию.
+ */
+function ensurePlayers(doc: RoomState): RoomState {
+  if (!Array.isArray(doc.players)) doc.players = [];
+  for (const player of doc.players) {
+    if (typeof player.name !== "string") player.name = String(player.name ?? "");
+    if (!Array.isArray(player.characterIds)) player.characterIds = [];
+    if (typeof player.color !== "string" || !PLAYER_COLOR_RE.test(player.color)) {
+      player.color = "";
+    }
+  }
+  if (!Array.isArray(doc.deletedMessages)) doc.deletedMessages = [];
   return doc;
 }
 
@@ -325,7 +345,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
-      return ensureMusic(ensureMap(JSON.parse(payload.result) as RoomState));
+      return ensurePlayers(ensureMusic(ensureMap(JSON.parse(payload.result) as RoomState)));
     } catch {
       return null;
     }
@@ -337,7 +357,7 @@ async function readDoc(code: string): Promise<RoomState | null> {
     memoryRooms.delete(code);
     return null;
   }
-  return ensureMusic(ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState));
+  return ensurePlayers(ensureMusic(ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState)));
 }
 
 async function writeDoc(doc: RoomState): Promise<void> {
@@ -438,6 +458,7 @@ export async function createRoom(): Promise<RoomState> {
       characters: [],
       map: emptyMap(),
       music: emptyMusic(),
+      deletedMessages: [],
       seq: 1,
     };
     appendMessage(doc, {
@@ -479,6 +500,7 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     messages,
     map: doc.map,
     music: doc.music,
+    deletedMessages: doc.deletedMessages ?? [],
     serverNow: Date.now(),
     seq: doc.seq,
   };
@@ -497,7 +519,7 @@ export async function joinRoom(
     if (existing) {
       existing.lastSeen = now;
     } else {
-      doc.players.push({ name, joinedAt: now, lastSeen: now });
+      doc.players.push({ name, joinedAt: now, lastSeen: now, color: "", characterIds: [] });
       appendMessage(doc, {
         kind: "system",
         author: "system",
@@ -541,7 +563,7 @@ export async function postMessage(
   return withRoom(code, (doc) => {
     const now = Date.now();
     if (!findPlayer(doc, author)) {
-      doc.players.push({ name: author, joinedAt: now, lastSeen: now });
+      doc.players.push({ name: author, joinedAt: now, lastSeen: now, color: "", characterIds: [] });
     } else {
       touchPlayer(doc, author);
     }
@@ -757,9 +779,11 @@ export async function updateMap(
       const x = mapCoord(action.x);
       const y = mapCoord(action.y);
       if (x === null || y === null) throw new AppError(400, "Некорректная позиция метки");
-      const color = /^#[0-9a-f]{6}$/i.test(String(action.color ?? ""))
+      const profile = findPlayer(doc, actor);
+      const ownColor = profile?.color && PLAYER_COLOR_RE.test(profile.color) ? profile.color : "";
+      const color = ownColor || (/^#[0-9a-f]{6}$/i.test(String(action.color ?? ""))
         ? String(action.color)
-        : "#fb7185";
+        : "#fb7185");
       const ping: MapPing = { id: uid("png"), name: actor, x, y, color, createdAt: now };
       map.pings.push(ping);
       if (map.pings.length > MAX_PINGS) {
@@ -921,5 +945,148 @@ export async function updateMusic(
 
     music.updatedAt = now;
     return { music, serverNow: now };
+  });
+}
+
+/** Мастер — тот, кто создал стол (первый вошедший). */
+function isGm(doc: RoomState, name: string): boolean {
+  return Boolean(doc.gm) && doc.gm.trim().toLowerCase() === name.trim().toLowerCase();
+}
+
+/** Переносит имя игрока во все места комнаты: листы, чат, музыка, рисунки. */
+function renameReferences(doc: RoomState, from: string, to: string): void {
+  const target = from.trim().toLowerCase();
+  const same = (value: string | undefined): boolean => (value ?? "").trim().toLowerCase() === target;
+  for (const character of doc.characters) if (same(character.owner)) character.owner = to;
+  for (const message of doc.messages) if (same(message.author)) message.author = to;
+  for (const track of doc.music?.tracks ?? []) if (same(track.addedBy)) track.addedBy = to;
+  for (const stroke of doc.map?.strokes ?? []) if (same(stroke.author)) stroke.author = to;
+  for (const ping of doc.map?.pings ?? []) if (same(ping.name)) ping.name = to;
+  if (same(doc.gm)) doc.gm = to;
+}
+
+export interface PlayerPatch {
+  name?: unknown;
+  color?: unknown;
+  characterIds?: unknown;
+}
+
+/**
+ * Профиль игрока: имя, цвет, привязанные персонажи.
+ * Игрок правит только себя, мастер — любого. Переименование тянет за собой
+ * все ссылки на имя: листы, сообщения, музыку, рисунки и роль мастера.
+ */
+export async function updatePlayer(
+  code: string,
+  rawActor: unknown,
+  rawTarget: unknown,
+  patch: PlayerPatch,
+): Promise<{ players: Player[]; gm: string; characters: Character[]; renamedTo: string }> {
+  const actor = normalizeName(rawActor);
+  const target = normalizeName(rawTarget);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  if (!target) throw new AppError(400, "Не указан игрок");
+
+  return withRoom(code, (doc) => {
+    const player = findPlayer(doc, target);
+    if (!player) throw new AppError(404, "Игрок не найден");
+    const gm = isGm(doc, actor);
+    if (!gm && player.name.toLowerCase() !== actor.toLowerCase()) {
+      throw new AppError(403, "Менять чужой профиль может только мастер");
+    }
+
+    if (patch.name !== undefined) {
+      const nextName = normalizeName(patch.name);
+      if (!nextName) throw new AppError(400, "Имя не может быть пустым");
+      if (nextName.toLowerCase() !== player.name.toLowerCase()) {
+        const clash = doc.players.some(
+          (entry) => entry !== player && entry.name.toLowerCase() === nextName.toLowerCase(),
+        );
+        if (clash) throw new AppError(400, "Это имя уже занято за столом");
+        renameReferences(doc, player.name, nextName);
+        player.name = nextName;
+      }
+    }
+
+    if (patch.color !== undefined) {
+      const raw = typeof patch.color === "string" ? patch.color.trim() : "";
+      player.color = PLAYER_COLOR_RE.test(raw) ? raw.toLowerCase() : "";
+    }
+
+    if (patch.characterIds !== undefined) {
+      const known = new Map(doc.characters.map((character) => [character.id, character]));
+      const requested = Array.isArray(patch.characterIds) ? patch.characterIds : [];
+      const ids: string[] = [];
+      for (const rawId of requested) {
+        if (typeof rawId !== "string") continue;
+        const character = known.get(rawId);
+        if (!character) continue;
+        const mine = character.owner.trim().toLowerCase() === player.name.trim().toLowerCase();
+        if (!gm && !mine) continue;
+        if (!ids.includes(rawId)) ids.push(rawId);
+      }
+      player.characterIds = ids.slice(0, 12);
+    }
+
+    player.lastSeen = Date.now();
+    return {
+      players: doc.players,
+      gm: doc.gm,
+      characters: doc.characters,
+      renamedTo: player.name,
+    };
+  });
+}
+
+/** Мастер убирает игрока из-за стола. Листы и сообщения остаются. */
+export async function removePlayer(
+  code: string,
+  rawActor: unknown,
+  rawTarget: unknown,
+): Promise<{ players: Player[] }> {
+  const actor = normalizeName(rawActor);
+  const target = normalizeName(rawTarget);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  if (!target) throw new AppError(400, "Не указан игрок");
+
+  return withRoom(code, (doc) => {
+    if (!isGm(doc, actor)) throw new AppError(403, "Удалять игроков может только мастер");
+    const player = findPlayer(doc, target);
+    if (!player) throw new AppError(404, "Игрок не найден");
+    if (isGm(doc, player.name)) throw new AppError(400, "Мастер не может удалить себя");
+    const now = Date.now();
+    doc.players = doc.players.filter((entry) => entry !== player);
+    appendMessage(doc, {
+      kind: "system",
+      author: "system",
+      text: `${player.name} больше не за столом.`,
+      createdAt: now,
+    });
+    return { players: doc.players };
+  });
+}
+
+/** Удаление сообщения: своё — автору, любое — мастеру. */
+export async function deleteMessage(
+  code: string,
+  rawActor: unknown,
+  rawId: unknown,
+): Promise<{ id: string; deletedMessages: string[] }> {
+  const actor = normalizeName(rawActor);
+  const id = typeof rawId === "string" ? rawId.trim() : "";
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  if (!id) throw new AppError(400, "Не указано сообщение");
+
+  return withRoom(code, (doc) => {
+    const message = doc.messages.find((entry) => entry.id === id);
+    if (!message) throw new AppError(404, "Сообщение не найдено");
+    if (!isGm(doc, actor) && message.author.trim().toLowerCase() !== actor.toLowerCase()) {
+      throw new AppError(403, "Удалять чужие сообщения может только мастер");
+    }
+    doc.messages = doc.messages.filter((entry) => entry.id !== id);
+    const deleted = [...(doc.deletedMessages ?? []), id].slice(-MAX_DELETED_MESSAGES);
+    doc.deletedMessages = deleted;
+    touchPlayer(doc, actor);
+    return { id, deletedMessages: deleted };
   });
 }

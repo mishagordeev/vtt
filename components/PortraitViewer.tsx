@@ -30,7 +30,7 @@ export function PortraitViewer({ src, onClose }: PortraitViewerProps) {
       <button
         type="button"
         onClick={onClose}
-        className="absolute right-4 top-4 rounded-lg border border-zinc-600 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 hover:text-white"
+        className="absolute right-4 top-4 rounded-lg border border-zinc-600 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 hover:text-zinc-100"
       >
         Закрыть
       </button>
