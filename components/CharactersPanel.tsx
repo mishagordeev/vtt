@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { exportCharacter } from "@/lib/characterExport";
 import { canEdit, draftFromCharacter, emptyDraft } from "@/lib/characters";
 import { carryCapacity, coinsAmount, derive, inventorySlots } from "@/lib/rules";
@@ -27,6 +27,22 @@ type Mode =
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
+/** Время последнего автосохранения для шапки листа. */
+function clockNow(): string {
+  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Проверки листа, которые не дают сохранить черновик. */
+function draftProblem(draft: CharacterDraft): string | null {
+  if (draft.traits.length > draft.flaws.length) {
+    return "Для каждой особенности нужен изъян: добавьте второй изъян или уберите особенность.";
+  }
+  if (draft.traits.length > 2 || draft.flaws.length > 2) {
+    return "Можно выбрать не больше двух особенностей и двух изъянов.";
+  }
+  return null;
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -51,6 +67,16 @@ export function CharactersPanel({
   const [assignFor, setAssignFor] = useState<Character | null>(null);
   const [assignNames, setAssignNames] = useState<string[]>([]);
   const [assignBusy, setAssignBusy] = useState(false);
+  /** «ЧЧ:ММ» последнего автосохранения — показывается в шапке листа. */
+  const [savedAt, setSavedAt] = useState<string>("");
+  /** Снимок последнего сохранённого черновика: по нему видно, есть ли что сохранять. */
+  const lastSaved = useRef<string>("");
+  /** Очередь сохранений: автосохранение и «Готово» не обгоняют друг друга. */
+  const saving = useRef<Promise<void>>(Promise.resolve());
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const draftRef = useRef<CharacterDraft | null>(draft);
+  draftRef.current = draft;
 
   const isGM = sameName(gm, me);
   const canEditCharacter = useCallback(
@@ -64,10 +90,13 @@ export function CharactersPanel({
 
   const open = useCallback(
     (character: Character) => {
-      // Открываем лист как обычный лист: поля у владельца и мастера редактируются сразу,
-      // навыки и знания — только при создании и на подъёме уровня.
+      // Лист открывается как обычный лист. Кнопка «Править» включает правку,
+      // дальше всё сохраняется само: кнопки «Сохранить» нет.
+      const next = draftFromCharacter(character);
+      lastSaved.current = JSON.stringify(next);
+      setSavedAt("");
       setMode({ kind: "view", id: character.id });
-      setDraft(draftFromCharacter(character));
+      setDraft(next);
       setError(null);
     },
     [],
@@ -89,55 +118,118 @@ export function CharactersPanel({
   }, [mode.kind, selected]);
 
   function startCreate() {
-    if (mode.kind === "edit" || mode.kind === "create") {
+    if (mode.kind === "create") {
       if (!window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
     }
+    // Правленый лист сохраняем перед уходом к новому.
+    if (mode.kind === "edit") void enqueueSave();
+    const next = emptyDraft();
+    lastSaved.current = JSON.stringify(next);
+    setSavedAt("");
     setMode({ kind: "create" });
-    setDraft(emptyDraft());
+    setDraft(next);
     setError(null);
   }
 
   function startEdit() {
     if (!selected) return;
-    setDraft(draftFromCharacter(selected));
+    const next = draftFromCharacter(selected);
+    lastSaved.current = JSON.stringify(next);
+    setSavedAt("");
+    setDraft(next);
     setMode({ kind: "edit", id: selected.id });
     setError(null);
   }
 
-  function cancelEdit() {
-    if (mode.kind === "edit" && selected) {
-      setDraft(draftFromCharacter(selected));
-      setMode({ kind: "view", id: selected.id });
-    } else if (mode.kind === "create") {
-      setMode({ kind: "empty" });
-      setDraft(null);
-    }
-    setError(null);
-  }
-
-  async function save() {
-    if (!draft || busy) return;
-    if (draft.traits.length > draft.flaws.length) {
-      setError("Для каждой особенности нужен изъян: добавьте второй изъян или уберите особенность.");
+  /** «Готово»: досохраняем хвост правки (если он есть) и возвращаемся к чтению. */
+  function finishEdit() {
+    if (mode.kind === "edit") {
+      void enqueueSave({ close: true });
       return;
     }
-    if (draft.traits.length > 2 || draft.flaws.length > 2) {
-      setError("Можно выбрать не больше двух особенностей и двух изъянов.");
+    if (mode.kind === "create") {
+      setMode({ kind: "empty" });
+      setDraft(null);
+      setSavedAt("");
+      setError(null);
+    }
+  }
+
+  /**
+   * Сохранение через очередь. Вызывается автосохранением после ввода, кнопкой
+   * «Готово» и переходом к другому листу; повторный вызов не плодит запросы.
+   */
+  function enqueueSave(options: { close?: boolean } = {}): Promise<void> {
+    const current = draft;
+    const currentMode = mode;
+    if (!current || currentMode.kind !== "edit") return saving.current;
+    const id = currentMode.id;
+    const snapshot = JSON.stringify(current);
+    if (snapshot === lastSaved.current) {
+      if (options.close) setMode({ kind: "view", id });
+      return saving.current;
+    }
+    const problem = draftProblem(current);
+    if (problem) {
+      setError(problem);
+      return saving.current;
+    }
+    if (!current.name.trim()) return saving.current;
+    const task = saving.current.then(async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const saved = await onUpdate(id, current);
+        const next = draftFromCharacter(saved);
+        lastSaved.current = JSON.stringify(next);
+        setSavedAt(clockNow());
+        if (options.close) {
+          setMode({ kind: "view", id: saved.id });
+        } else {
+          // Если за время запроса игрок успел напечатать ещё, его ввод не затираем.
+          const active = modeRef.current;
+          const latest = draftRef.current ? JSON.stringify(draftRef.current) : "";
+          if (active.kind === "edit" && active.id === saved.id && latest === snapshot) {
+            setDraft(next);
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Не удалось сохранить персонажа");
+      } finally {
+        setBusy(false);
+      }
+    });
+    saving.current = task.catch(() => undefined);
+    return saving.current;
+  }
+
+  // Автосохранение: как только поля изменены и пауза в вводе — пишем на сервер.
+  useEffect(() => {
+    if (mode.kind !== "edit" || !draft) return;
+    if (JSON.stringify(draft) === lastSaved.current) return;
+    const timer = window.setTimeout(() => {
+      void enqueueSave();
+    }, 900);
+    return () => window.clearTimeout(timer);
+    // enqueueSave завязан на актуальные draft и mode, поэтому список зависимостей короткий.
+  }, [draft, mode]);
+
+  async function createSheet() {
+    if (!draft || busy) return;
+    const problem = draftProblem(draft);
+    if (problem) {
+      setError(problem);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const saved =
-        mode.kind === "create"
-          ? await onCreate(draft)
-          : mode.kind === "edit"
-            ? await onUpdate(mode.id, draft)
-            : null;
-      if (saved) {
-        setMode({ kind: canEditCharacter(saved) ? "edit" : "view", id: saved.id });
-        setDraft(draftFromCharacter(saved));
-      }
+      const saved = await onCreate(draft);
+      const next = draftFromCharacter(saved);
+      lastSaved.current = JSON.stringify(next);
+      setSavedAt(clockNow());
+      setMode({ kind: "edit", id: saved.id });
+      setDraft(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сохранить персонажа");
     } finally {
@@ -194,9 +286,10 @@ export function CharactersPanel({
                 ? (selected.players ?? []).join(", ")
                 : (selected?.owner ?? me)
             }
+            savedAt={savedAt}
             onChange={setDraft}
-            onSave={() => void save()}
-            onCancel={cancelEdit}
+            onSave={() => void createSheet()}
+            onCancel={finishEdit}
             onEdit={startEdit}
             onDelete={() => void remove()}
             onExport={(format) => {
@@ -254,12 +347,14 @@ export function CharactersPanel({
                 <button
                   type="button"
                   onClick={() => {
+                    // Правка сохраняется сама: перед переходом только досохраняем хвост.
                     if (
-                      (mode.kind === "edit" || mode.kind === "create") &&
-                      !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")
+                      mode.kind === "create" &&
+                      !window.confirm("Новый лист ещё не создан — заполненное пропадёт. Продолжить?")
                     ) {
                       return;
                     }
+                    if (mode.kind === "edit") void enqueueSave();
                     open(character);
                   }}
                   className={`flex w-full items-center gap-2 rounded-xl border p-2 pr-8 text-left transition ${
@@ -316,8 +411,8 @@ export function CharactersPanel({
         </div>
 
         <div className="border-t border-zinc-800 px-3 py-2 text-[10px] text-zinc-600">
-          Нажмите на персонажа — свой лист сразу открывается на редактирование, без кнопки «Правка».
-          Чужие листы доступны только для чтения.
+          Нажмите на персонажа, чтобы открыть лист. Свой лист правится кнопкой «Править» — внутри
+          всё сохраняется само, кнопки «Сохранить» нет. Чужие листы доступны только для чтения.
         </div>
       </aside>
 

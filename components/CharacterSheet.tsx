@@ -16,6 +16,7 @@ import {
   carryCapacity,
   coinCount,
   coinsGoldValue,
+  coinsInventorySlots,
   derive,
   findItem,
   findOrigin,
@@ -57,6 +58,8 @@ interface CharacterSheetProps {
   error: string | null;
   /** Имена игроков листа — показываются в шапке без подписи «владелец». */
   owner: string;
+  /** Время последнего автосохранения, «ЧЧ:ММ»; пусто — ещё не сохраняли. */
+  savedAt?: string;
   onChange: (draft: CharacterDraft) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -175,6 +178,7 @@ export function CharacterSheet({
   busy,
   error,
   owner,
+  savedAt,
   onChange,
   onSave,
   onCancel,
@@ -200,8 +204,9 @@ export function CharacterSheet({
   /** Навыки и знания выбираются только при создании и на подъёме уровня. */
   const [levelUpOpen, setLevelUpOpen] = useState(false);
 
-  // Поля заполняются всегда: у владельца листа и мастера нет отдельного «режима правки».
-  const editing = canEdit || mode === "create";
+  // Постоянной кнопки «Сохранить» нет: в режим правки входим кнопкой «Править»,
+  // а все поля внутри сохраняются сами — по вводу, с паузой.
+  const editing = mode === "create" || (canEdit && mode === "edit");
   const skillEditing = editing && (mode === "create" || levelUpOpen);
   // Пока не идёт создание или подъём уровня, каталоги навыков и знаний скрыты.
   const visibleTabs = TABS.filter(
@@ -729,21 +734,26 @@ export function CharacterSheet({
 
 
   function renderCoins() {
+    const coinSlotUsage = coinsInventorySlots(draft.inventory);
     return (
       <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[11px] uppercase tracking-wide text-zinc-500">Монеты в рюкзаке</h3>
           <span className={`font-mono text-[10px] ${used > capacity ? "text-rose-300" : "text-zinc-600"}`}>
-            {coinQty} шт. · {Math.ceil(coinQty / 100)} сл. · {money.toFixed(2)} зм
+            {coinQty} шт. · {coinSlotUsage} сл. · {money.toFixed(2)} зм
           </span>
         </div>
         <div className="grid gap-1 sm:grid-cols-2">
           {COIN_TYPES.map((coin) => {
             const entry = draft.inventory.find((item) => item.name === coin.name);
+            const def = findItem(coin.name);
             return (
-              <label key={coin.key} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
+              <label key={coin.key} className="flex items-start gap-2 rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
                 <span className="min-w-0 flex-1 text-[11px] text-zinc-300">
                   {coin.name} <span className="text-zinc-600">({coin.short})</span>
+                  <span className="block text-[10px] leading-snug text-zinc-600">
+                    {def?.description ?? `1 слот = ${def?.coinsPerSlot ?? 100} монет.`}
+                  </span>
                 </span>
                 <input
                   type="number"
@@ -758,9 +768,6 @@ export function CharacterSheet({
             );
           })}
         </div>
-        <p className="text-[10px] leading-snug text-zinc-600">
-          Слоты считаются по общей сумме монет: каждые 100 монет любого металла — 1 слот.
-        </p>
       </section>
     );
   }
@@ -842,6 +849,34 @@ export function CharacterSheet({
 
 
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {mode !== "create" ? (
+              <select
+                value=""
+                disabled={busy}
+                onChange={(event) => {
+                  const format = event.target.value;
+                  event.currentTarget.value = "";
+                  if (format) onExport(format as ExportFormat);
+                }}
+                title="Экспорт листа: JSON, HTML или PDF"
+                className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-300 disabled:opacity-40"
+              >
+                <option value="">Экспорт</option>
+                <option value="json">JSON</option>
+                <option value="html">HTML</option>
+                <option value="pdf">PDF (печать)</option>
+              </select>
+            ) : null}
+            {canEdit && mode === "view" ? (
+              <button
+                type="button"
+                onClick={onEdit}
+                title="Открыть лист на правку"
+                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
+              >
+                Править
+              </button>
+            ) : null}
             {editing ? (
               <>
                 <button
@@ -849,40 +884,33 @@ export function CharacterSheet({
                   onClick={levelUp}
                   disabled={busy || draft.level >= 10}
                   title="Бросить d8 + модификатор Телосложения, добавить ОЗ и выбрать новый навык"
-                  className="rounded-lg border border-amber-400/50 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-40"
+                  className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-400 disabled:opacity-40"
                 >
                   Повысить уровень
                 </button>
-                <select
-                  value=""
-                  disabled={busy}
-                  onChange={(event) => {
-                    const format = event.target.value;
-                    event.currentTarget.value = "";
-                    if (format) onExport(format as ExportFormat);
-                  }}
-                  title="Экспорт листа: JSON, HTML или PDF"
-                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-300 disabled:opacity-40"
-                >
-                  <option value="">Экспорт</option>
-                  <option value="json">JSON</option>
-                  <option value="html">HTML</option>
-                  <option value="pdf">PDF (печать)</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={onSave}
-                  disabled={busy || !draft.name.trim()}
-                  className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-40"
-                >
-                  {busy ? "Сохраняем…" : "Сохранить"}
-                </button>
+                {mode === "create" ? (
+                  <button
+                    type="button"
+                    onClick={onSave}
+                    disabled={busy || !draft.name.trim()}
+                    className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-40"
+                  >
+                    {busy ? "Создаём…" : "Создать лист"}
+                  </button>
+                ) : (
+                  <span
+                    title="Поля сохраняются сами — кнопка «Сохранить» больше не нужна"
+                    className="text-[11px] text-zinc-500"
+                  >
+                    {busy ? "Сохраняю…" : savedAt ? `Сохранено в ${savedAt}` : "Изменения сохраняются сами"}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={onCancel}
                   className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:text-zinc-100"
                 >
-                  Отмена
+                  {mode === "create" ? "Отмена" : "Готово"}
                 </button>
               </>
             ) : null}
@@ -2018,7 +2046,8 @@ export function CharacterSheet({
               <p className="text-[11px] leading-relaxed text-zinc-600">
                 Предел слотов равен Силе (7.2). В руках — 1 оружие + щит, 2 одноручных или 1 двуручное;
                 доспех один и не занимает руки. Не больше 4 предметов с 0 слотов. Монеты четырёх
-                номиналов лежат в рюкзаке; 1 слот за каждые 100 монет суммы.
+                номиналов лежат в рюкзаке, вес у каждого металла свой: медь — 200 монет на слот,
+                серебро — 150, золото — 100, платина — 50.
               </p>
             </section>
 
