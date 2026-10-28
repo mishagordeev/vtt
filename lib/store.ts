@@ -55,9 +55,16 @@ function ensureMap(doc: RoomState): RoomState {
 function ensureMusic(doc: RoomState): RoomState {
   if (!doc.music || !Array.isArray(doc.music.tracks)) {
     doc.music = emptyMusic();
+  } else {
+    for (const track of doc.music.tracks) {
+      // Старые комнаты не знали про громкость трека — считаем её полной.
+      const volume = Number(track.volume);
+      track.volume = Number.isFinite(volume) ? Math.max(0, Math.min(100, Math.round(volume))) : 100;
+    }
   }
   return doc;
 }
+
 
 /** Убирает случайные копии одного и того же персонажа у одного владельца. */
 function dedupeCharacters(doc: RoomState): boolean {
@@ -403,6 +410,18 @@ function findPlayer(doc: RoomState, name: string): Player | undefined {
   return doc.players.find((player) => player.name.toLowerCase() === target);
 }
 
+/**
+ * Присутствие обновляем действиями, а не таймером: клиент больше не шлёт
+ * heartbeat каждую минуту, поэтому «кто за столом» видно по последним ходам.
+ */
+function touchPlayer(doc: RoomState, name: string): Player | undefined {
+  const player = findPlayer(doc, name);
+  if (!player) return undefined;
+  player.lastSeen = Date.now();
+  return player;
+}
+
+
 export async function createRoom(): Promise<RoomState> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const code = roomCode();
@@ -523,6 +542,8 @@ export async function postMessage(
     const now = Date.now();
     if (!findPlayer(doc, author)) {
       doc.players.push({ name: author, joinedAt: now, lastSeen: now });
+    } else {
+      touchPlayer(doc, author);
     }
     return appendMessage(doc, {
       kind: roll ? "roll" : "text",
@@ -664,6 +685,7 @@ export async function updateCharacter(
     character.inventory = normalized.inventory;
     character.fields = normalized.fields;
     character.updatedAt = Date.now();
+    touchPlayer(doc, actor);
     return character;
   });
 }
@@ -726,6 +748,7 @@ export async function updateMap(
   return withRoom(code, (doc) => {
     ensureMap(doc);
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    touchPlayer(doc, actor);
     const map = doc.map;
     const kind = String(action.action ?? "");
     const now = Date.now();
@@ -829,9 +852,11 @@ export async function updateMusic(
   return withRoom(code, (doc) => {
     ensureMusic(doc);
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    touchPlayer(doc, actor);
     const now = Date.now();
     const music = doc.music;
     const trackId = String(action.id ?? "");
+    const isGM = doc.gm.trim().toLowerCase() === actor.toLowerCase();
 
     if (kind === "add" && pending) {
       if (music.tracks.length >= MAX_MUSIC_TRACKS) {
@@ -850,8 +875,10 @@ export async function updateMusic(
         playing: false,
         position: 0,
         startedAt: 0,
+        volume: 100,
       });
     } else if (kind === "play" || kind === "pause") {
+      if (!isGM) throw new AppError(403, "Запускать и останавливать треки может только мастер");
       const track = music.tracks.find((entry) => entry.id === trackId);
       if (!track) throw new AppError(404, "Трек не найден");
       const fallback = computedMusicPosition(track, now);
@@ -859,18 +886,23 @@ export async function updateMusic(
       track.position = position;
       track.playing = kind === "play";
       track.startedAt = kind === "play" ? now : 0;
+    } else if (kind === "volume") {
+      if (!isGM) throw new AppError(403, "Громкость трека задаёт мастер");
+      const track = music.tracks.find((entry) => entry.id === trackId);
+      if (!track) throw new AppError(404, "Трек не найден");
+      track.volume = Math.max(
+        0,
+        Math.min(100, Math.round(Number(musicPosition(action.volume, track.volume)))),
+      );
     } else if (kind === "remove") {
       const track = music.tracks.find((entry) => entry.id === trackId);
       if (!track) throw new AppError(404, "Трек не найден");
-      const isGM = doc.gm.trim().toLowerCase() === actor.toLowerCase();
       if (!isGM && track.addedBy.toLowerCase() !== actor.toLowerCase()) {
         throw new AppError(403, "Удалить трек может автор или мастер");
       }
       music.tracks = music.tracks.filter((entry) => entry.id !== trackId);
     } else if (kind === "stopAll") {
-      if (doc.gm.trim().toLowerCase() !== actor.toLowerCase()) {
-        throw new AppError(403, "Остановить всё может только мастер");
-      }
+      if (!isGM) throw new AppError(403, "Остановить всё может только мастер");
       const positions =
         action.positions && typeof action.positions === "object"
           ? (action.positions as Record<string, unknown>)

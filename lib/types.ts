@@ -115,7 +115,10 @@ export interface MusicTrack {
   position: number;
   /** Время сервера, когда началось воспроизведение; 0 на паузе. */
   startedAt: number;
+  /** Громкость трека 0–100. Ставит мастер, действует на всех; у каждого ещё свой общий уровень. */
+  volume: number;
 }
+
 
 export interface MusicState {
   tracks: MusicTrack[];

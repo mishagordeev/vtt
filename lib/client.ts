@@ -1,7 +1,18 @@
 import { AppError } from "./errors";
+import { recordRequest, utf8Size } from "./metrics";
 
-/** Небольшой клиент API: JSON + нормальные ошибки. */
+/**
+ * Небольшой клиент API: JSON + нормальные ошибки.
+ *
+ * Каждый запрос измеряется (размер ответа и время) и попадает в счётчики
+ * дебаг-панели мастера — второй раз данные никуда не отправляются.
+ */
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
+  const startedAt =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
+  const bytesOut = typeof init?.body === "string" ? utf8Size(init.body) : 0;
+
   const res = await fetch(url, {
     ...init,
     cache: "no-store",
@@ -11,9 +22,28 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  const payload = (await res.json().catch(() => null)) as
-    | (T & { error?: string })
-    | null;
+  // Читаем текст, чтобы посчитать реальный объём ответа до разбора JSON.
+  const raw = await res.text().catch(() => "");
+  const bytesIn = utf8Size(raw);
+  const elapsed =
+    (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
+
+  let payload: (T & { error?: string }) | null = null;
+  try {
+    payload = raw ? (JSON.parse(raw) as T & { error?: string }) : null;
+  } catch {
+    payload = null;
+  }
+
+  recordRequest({
+    url,
+    method,
+    status: res.status,
+    bytesIn,
+    bytesOut,
+    ms: elapsed,
+    ok: res.ok,
+  });
 
   if (!res.ok) {
     throw new AppError(res.status, payload?.error ?? "Не удалось выполнить запрос");
@@ -21,6 +51,7 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
   return payload as T;
 }
+
 
 export function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString("ru-RU", {

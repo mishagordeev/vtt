@@ -170,6 +170,8 @@ function TrackAudio({ track, volume, clockOffset, onEnded }: TrackAudioProps) {
 /**
  * Невидимые плееры живут вне вкладок, поэтому музыка не останавливается,
  * когда игрок уходит с «Музыки» в чат или на карту.
+ *
+ * Итоговая громкость = личный уровень игрока × громкость трека, которую задал мастер.
  */
 export function MusicHost({ tracks, volume, clockOffset, onEnded }: MusicHostProps) {
   return (
@@ -181,7 +183,7 @@ export function MusicHost({ tracks, volume, clockOffset, onEnded }: MusicHostPro
         <TrackAudio
           key={track.id}
           track={track}
-          volume={volume}
+          volume={Math.round((volume * Math.max(0, Math.min(100, track.volume ?? 100))) / 100)}
           clockOffset={clockOffset}
           onEnded={onEnded}
         />

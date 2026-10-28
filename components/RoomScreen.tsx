@@ -1,23 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { AppError } from "@/lib/errors";
 import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
 import { CharactersPanel } from "./CharactersPanel";
+import { DebugPanel } from "./DebugPanel";
 import { DeskPanel } from "./DeskPanel";
+import { DiceOverlay, type DiceRollShow } from "./DiceOverlay";
 import { JoinGate } from "./JoinGate";
 import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
+import { MusicPlaylist } from "./MusicPlaylist";
 
-const POLL_INTERVAL = 8000;
-const TABLE_POLL_INTERVAL = 5000;
-const BEAT_INTERVAL = 60000;
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
 const MUSIC_VOLUME_KEY = "pp:music:volume";
+const DEFAULT_MUSIC_VOLUME = 50;
 
 type Tab = "table" | "characters" | "music";
 type Phase = "boot" | "join" | "room" | "missing";
@@ -46,7 +47,9 @@ export default function RoomScreen({ code }: { code: string }) {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [musicVolume, setMusicVolume] = useState(60);
+  const [musicVolume, setMusicVolume] = useState(DEFAULT_MUSIC_VOLUME);
+  const [lastSyncAt, setLastSyncAt] = useState(0);
+  const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
@@ -59,6 +62,19 @@ export default function RoomScreen({ code }: { code: string }) {
 
   const sinceRef = useRef(0);
   const meRef = useRef("");
+  const animatedRollsRef = useRef<Set<string> | null>(null);
+
+  /** Сколько данных сейчас в комнате — для дебаг-панели мастера. */
+  const roomBytes = useMemo(
+    () =>
+      typeof TextEncoder === "undefined"
+        ? 0
+        : new TextEncoder().encode(
+            JSON.stringify({ players, messages, characters, map, music }),
+          ).length,
+    [players, messages, characters, map, music],
+  );
+
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +98,7 @@ export default function RoomScreen({ code }: { code: string }) {
       });
       setConnected(true);
       setLoadError(null);
+      setLastSyncAt(Date.now());
     } catch (error) {
       if (error instanceof AppError && error.status === 404) {
         setPhase("missing");
@@ -139,36 +156,61 @@ export default function RoomScreen({ code }: { code: string }) {
     }
   }, [code, join]);
 
+  // Запросы в базу — только по действиям. Фонового опроса по таймеру нет:
+  // читаем комнату после своих правок, при возврате на вкладку и по кнопке «⟳».
   useEffect(() => {
     if (phase !== "room") return;
-    let alive = true;
-    const pollMs = tab === "table" || tab === "music" ? TABLE_POLL_INTERVAL : POLL_INTERVAL;
-
-    const pollId = window.setInterval(() => {
-      if (!alive || document.visibilityState !== "visible") return;
-      void load();
-    }, pollMs);
-
-    const beatId = window.setInterval(() => {
-      if (document.visibilityState !== "visible" || !meRef.current) return;
-      void api(`/api/rooms/${code}/heartbeat`, {
-        method: "POST",
-        body: JSON.stringify({ name: meRef.current }),
-      }).catch(() => undefined);
-    }, BEAT_INTERVAL);
-
     const onVisibility = () => {
       if (document.visibilityState === "visible") void load();
     };
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      alive = false;
-      window.clearInterval(pollId);
-      window.clearInterval(beatId);
-      document.removeEventListener("visibilitychange", onVisibility);
+    const onFocus = () => {
+      void load();
     };
-  }, [phase, code, load, tab]);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [phase, load]);
+
+  // Переключение вкладки — тоже действие игрока: обновляем данные один раз.
+  const tabFirstRef = useRef(true);
+  useEffect(() => {
+    if (tabFirstRef.current) {
+      tabFirstRef.current = false;
+      return;
+    }
+    if (phase !== "room") return;
+    void load();
+  }, [tab, phase, load]);
+
+  // При первом снимке старые броски не анимируем — 3d-кубики показываем только на новые.
+  useEffect(() => {
+    // Ждём, пока комната реально прочитана: до этого messages пустые.
+    if (!lastSyncAt) return;
+    if (animatedRollsRef.current === null) {
+      animatedRollsRef.current = new Set(
+        messages.filter((message) => message.roll).map((message) => message.id),
+      );
+      return;
+    }
+    const seen = animatedRollsRef.current;
+    const fresh = messages.filter(
+      (message) => message.roll && !seen.has(message.id),
+    );
+    if (fresh.length === 0) return;
+    for (const message of fresh) seen.add(message.id);
+    setDiceQueue((prev) => [
+      ...prev,
+      ...fresh.map((message) => ({
+        id: message.id,
+        author: message.author,
+        roll: message.roll!,
+        mine: message.author.trim().toLowerCase() === meRef.current.trim().toLowerCase(),
+      })),
+    ]);
+  }, [messages, lastSyncAt]);
 
   const send = useCallback(
     async (text: string) => {
@@ -260,9 +302,11 @@ export default function RoomScreen({ code }: { code: string }) {
 
   const musicEnded = useCallback(
     (id: string) => {
+      // Состояние ведёт мастер: у остальных трек просто закончился локально.
+      if (!me || me.trim().toLowerCase() !== gm.trim().toLowerCase()) return;
       void musicAction({ action: "pause", id, position: 0 });
     },
-    [musicAction],
+    [musicAction, me, gm],
   );
 
   useEffect(() => {
@@ -274,6 +318,9 @@ export default function RoomScreen({ code }: { code: string }) {
     window.localStorage.removeItem("pp:name");
     meRef.current = "";
     sinceRef.current = 0;
+    animatedRollsRef.current = null;
+    setLastSyncAt(0);
+    setDiceQueue([]);
     setMessages([]);
     setMe("");
     setTab("table");
@@ -370,6 +417,14 @@ export default function RoomScreen({ code }: { code: string }) {
           </nav>
 
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-emerald-400/50 hover:text-emerald-200"
+              title="Прочитать комнату из базы (обновление по действиям, без таймера)"
+            >
+              ⟳
+            </button>
             <span className="hidden max-w-24 truncate text-xs text-zinc-400 sm:inline">{me}</span>
             <button
               type="button"
@@ -409,7 +464,6 @@ export default function RoomScreen({ code }: { code: string }) {
               gm={gm}
               music={music}
               volume={musicVolume}
-              clockOffset={clockOffset}
               onVolume={(value) => setMusicVolume(value)}
               onAction={musicAction}
             />
@@ -430,9 +484,38 @@ export default function RoomScreen({ code }: { code: string }) {
             tab === "table" ? "flex flex-1" : "hidden"
           }`}
         >
+          <MusicPlaylist
+            me={me}
+            gm={gm}
+            music={music}
+            volume={musicVolume}
+            clockOffset={clockOffset}
+            onVolume={(value) => setMusicVolume(value)}
+            onAction={musicAction}
+          />
           <ChatPanel messages={messages} me={me} connected={connected} onSend={send} />
         </section>
       </div>
+
+      {diceQueue.length > 0 ? (
+        <DiceOverlay
+          entry={diceQueue[0]}
+          onDone={() => setDiceQueue((prev) => prev.slice(1))}
+        />
+      ) : null}
+
+      <DebugPanel
+        code={code}
+        me={me}
+        gm={gm}
+        messages={messages.length}
+        characters={characters.length}
+        tracks={music.tracks.length}
+        strokes={map.strokes.length}
+        roomBytes={roomBytes}
+        lastSyncAt={lastSyncAt}
+        onSync={() => void load()}
+      />
 
       <MusicHost
         tracks={music.tracks}
