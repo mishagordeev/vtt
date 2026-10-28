@@ -372,11 +372,14 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   return draft;
 }
 
-/** Проверяет, что персонаж принадлежит игроку или мастеру комнаты. */
+/** Проверяет, может ли игрок править лист: владелец, привязанный игрок или мастер. */
 export function canEdit(character: Character, actor: string, gm: string): boolean {
   const normalizedActor = actor.trim().toLowerCase();
-  return (
-    normalizedActor === character.owner.toLowerCase() || normalizedActor === gm.toLowerCase()
+  if (!normalizedActor) return false;
+  if (normalizedActor === gm.trim().toLowerCase()) return true;
+  if (normalizedActor === character.owner.trim().toLowerCase()) return true;
+  return (character.players ?? []).some(
+    (name) => name.trim().toLowerCase() === normalizedActor,
   );
 }
 

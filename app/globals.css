@@ -68,11 +68,7 @@ body {
   background-image:
     radial-gradient(circle at 15% -10%, rgba(154, 116, 54, 0.16), transparent 45%),
     radial-gradient(circle at 88% 0%, rgba(122, 84, 40, 0.12), transparent 40%),
-    repeating-linear-gradient(
-      0deg,
-      rgba(120, 90, 45, 0.035) 0 1px,
-      transparent 1px 4px
-    );
+    repeating-linear-gradient(0deg, rgba(120, 90, 45, 0.035) 0 1px, transparent 1px 4px);
   background-attachment: fixed;
 }
 
@@ -110,98 +106,44 @@ textarea {
   background: rgba(153, 114, 42, 0.3);
 }
 
-/* ---------- кубики: пергаментные кости с коричневыми точками ---------- */
+/* ---------- кубики: гранёные 3d-тела в цвете игрока ---------- */
 
-.dice-stage {
-  perspective: 900px;
-}
-
-.dice-cube {
-  position: relative;
-  width: 56px;
-  height: 56px;
-  transform-style: preserve-3d;
-  transition: transform 620ms cubic-bezier(0.22, 1.2, 0.36, 1);
-}
-
-.dice-cube--rolling {
-  animation: dice-tumble 900ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
-}
-
-.dice-face {
+.die-3d {
   position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  gap: 3px;
-  padding: 6px;
-  border-radius: 8px;
-  border: 1px solid #b08d52;
-  background: linear-gradient(145deg, #fbf3e0, #e4d3ab 72%);
-  box-shadow: inset 0 0 10px rgba(150, 110, 50, 0.28);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translate(-50%, -50%);
+  perspective: 800px;
 }
 
-.dice-pip {
-  display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #6b4a22;
-  box-shadow: 0 0 4px rgba(107, 74, 34, 0.5);
-  justify-self: center;
-  align-self: center;
-}
-
-.dice-face--kept {
-  border-color: #8a6a2f;
-}
-
-.dice-face--dropped {
-  border-color: #b7a684;
-  background: linear-gradient(145deg, #e9dfc8, #cdbf9f 72%);
-}
-
-.dice-face--dropped .dice-pip {
-  background: #9c8c6d;
-  box-shadow: none;
-}
-
-/* ---------- полёт кубиков по столу ---------- */
-
-.die-slot {
-  animation: die-fly 1150ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+/* Обёртка отвечает за влёт с края стола, тело — за вращение. */
+.die-spin {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  transform-style: preserve-3d;
+  animation: die-fly 1250ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
   animation-delay: var(--fd, 0ms);
   will-change: transform;
 }
 
-.die-slot--settled {
+.die-spin--settled {
   animation: none;
 }
 
 @keyframes die-fly {
   0% {
-    transform: translate3d(var(--fx, 0px), var(--fy, 0px), 0) rotate(var(--fr, 0deg)) scale(0.55);
+    transform: translate3d(var(--fx, 0px), var(--fy, 0px), 0) rotate(-30deg) scale(0.4);
     opacity: 0;
   }
-  12% {
+  14% {
     opacity: 1;
   }
-  55% {
-    transform: translate3d(
-        calc(var(--fx, 0px) * -0.28),
-        calc(var(--fy, 0px) * -0.34),
-        0
-      )
-      rotate(calc(var(--fr, 0deg) + 240deg)) scale(1.08);
-  }
-  78% {
-    transform: translate3d(
-        calc(var(--fx, 0px) * 0.1),
-        calc(var(--fy, 0px) * 0.12),
-        0
-      )
-      rotate(calc(var(--fr, 0deg) + 330deg)) scale(0.98);
+  60% {
+    transform: translate3d(calc(var(--fx, 0px) * -0.18), calc(var(--fy, 0px) * -0.2), 0)
+      rotate(200deg) scale(1.06);
   }
   100% {
     transform: translate3d(0, 0, 0) rotate(360deg) scale(1);
@@ -209,61 +151,118 @@ textarea {
   }
 }
 
-/* Кубик не на 6 граней: правильный многоугольник с числом вершин по типу. */
-.die-shape {
-  width: 64px;
-  height: 64px;
+/* Пирамида из N треугольных граней: так у любого кубика видно «сколько граней». */
+.die-body {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: die-rotate 1500ms linear infinite;
+}
+
+.die-spin--settled .die-body,
+.die-spin--settled .die-cube {
+  animation: none;
+}
+
+.die-face {
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  transform-origin: 50% 100%;
+  background: linear-gradient(
+    165deg,
+    var(--die-color, #8a6a2f) 0%,
+    color-mix(in srgb, var(--die-color, #8a6a2f) 45%, #2a1d0c) 100%
+  );
+  opacity: 0.94;
+  backface-visibility: hidden;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.25);
+}
+
+/* Куб d6: пергаментные грани с точками в цвете игрока. */
+.die-cube {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  margin: 13px;
+  transform-style: preserve-3d;
+  transition: transform 600ms cubic-bezier(0.22, 1.2, 0.36, 1);
+  animation: die-rotate 1500ms linear infinite;
+}
+
+.die-face--square {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  padding: 6px;
+  border-radius: 7px;
+  border: 1px solid #b08d52;
+  clip-path: none;
+  transform-origin: center;
+  background: linear-gradient(145deg, #fbf3e0, #e4d3ab 72%);
+  box-shadow: inset 0 0 10px rgba(150, 110, 50, 0.28);
+}
+
+.die-pip {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--die-color, #6b4a22);
+  justify-self: center;
+  align-self: center;
+}
+
+/* Значение всегда поверх граней. */
+.die-value {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translateZ(70px);
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(150deg, #fbf3e0, #dcc79a 70%);
-  filter: drop-shadow(0 2px 4px rgba(70, 48, 18, 0.35));
-}
-
-.die-shape--dropped {
-  background: linear-gradient(150deg, #e9dfc8, #c3b394 70%);
-  filter: drop-shadow(0 1px 2px rgba(70, 48, 18, 0.2));
-}
-
-.die-value {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 2px solid var(--die-color, #8a6a2f);
+  background: #fbf3e0;
+  color: #2a2216;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
+  box-shadow: 0 3px 10px rgba(60, 40, 10, 0.35);
+}
+
+.die-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #6f5a3b;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+
+.dice-total {
+  border-radius: 999px;
+  border: 1px solid rgba(150, 112, 52, 0.75);
+  background: rgba(248, 238, 214, 0.92);
+  padding: 3px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
   color: #3a2a12;
+  box-shadow: 0 3px 12px rgba(60, 40, 10, 0.25);
 }
 
-.die-shape--dropped .die-value {
-  color: #7c6d52;
-}
-
-@keyframes dice-tumble {
+@keyframes die-rotate {
   0% {
-    transform: rotateX(-20deg) rotateY(0deg) rotateZ(0deg) scale(0.7);
-  }
-  35% {
-    transform: rotateX(220deg) rotateY(160deg) rotateZ(60deg) scale(1.05);
-  }
-  65% {
-    transform: rotateX(420deg) rotateY(320deg) rotateZ(-40deg) scale(0.98);
+    transform: rotateX(-12deg) rotateY(0deg);
   }
   100% {
-    transform: rotateX(540deg) rotateY(460deg) rotateZ(0deg) scale(1);
+    transform: rotateX(-12deg) rotateY(360deg);
   }
-}
-
-@keyframes dice-pop {
-  0% {
-    opacity: 0;
-    transform: translateY(18px) scale(0.92);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.dice-pop {
-  animation: dice-pop 220ms ease-out both;
 }
 
 /* ---------- карта: русские подписи и метки ---------- */

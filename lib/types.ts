@@ -69,6 +69,8 @@ export interface InventoryItem {
 export interface Character {
   id: string;
   owner: string;
+  /** Игроки (имена), которым назначен лист: обратная сторона `player.characterIds`. */
+  players?: string[];
   name: string;
   /** Уровень 1–10. */
   level: number;

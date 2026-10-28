@@ -12,21 +12,41 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const startedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
   const bytesOut = typeof init?.body === "string" ? utf8Size(init.body) : 0;
+  const elapsed = () =>
+    (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
 
-  const res = await fetch(url, {
-    ...init,
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    // fetch падает, когда запрос вообще не дошёл: нет сети, сервер выключен,
+    // блокировщик режет запрос или страница открыта по http, а API — по https.
+    recordRequest({
+      url,
+      method,
+      status: 0,
+      bytesIn: 0,
+      bytesOut,
+      ms: elapsed(),
+      ok: false,
+    });
+    throw new AppError(
+      0,
+      "Нет связи с сервером (Failed to fetch). Проверьте интернет и нажмите ⟳. " +
+        "Если стол на своём сервере — убедитесь, что он запущен и доступен по HTTPS.",
+    );
+  }
 
   // Читаем текст, чтобы посчитать реальный объём ответа до разбора JSON.
   const raw = await res.text().catch(() => "");
   const bytesIn = utf8Size(raw);
-  const elapsed =
-    (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
 
   let payload: (T & { error?: string }) | null = null;
   try {
@@ -41,7 +61,7 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     status: res.status,
     bytesIn,
     bytesOut,
-    ms: elapsed,
+    ms: elapsed(),
     ok: res.ok,
   });
 

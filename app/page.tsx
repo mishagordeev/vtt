@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/client";
+import { APP_VERSION } from "@/lib/version";
 
 export default function HomePage() {
   const router = useRouter();
@@ -46,6 +47,7 @@ export default function HomePage() {
           Чат с бросками, кубики под рукой и листы персонажей. Создайте комнату и отправьте ссылку
           игрокам — при первом входе каждый назовётся, дальше вход по этому же имени.
         </p>
+        <p className="font-mono text-[11px] text-zinc-600">версия v{APP_VERSION}</p>
       </header>
 
       <div className="grid gap-4 md:grid-cols-2">

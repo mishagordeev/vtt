@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
+import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
 import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
@@ -64,7 +65,8 @@ export default function RoomScreen({ code }: { code: string }) {
 
   const sinceRef = useRef(0);
   const meRef = useRef("");
-  const animatedRollsRef = useRef<Set<string> | null>(null);
+  /** id уже показанных бросков: старые не анимируем, даже после полной перечитки ленты. */
+  const animatedRollsRef = useRef<Set<string>>(new Set());
 
   /** Цвет моего профиля — для метки на карте. */
   const myColor = useMemo(
@@ -91,10 +93,18 @@ export default function RoomScreen({ code }: { code: string }) {
 
   const load = useCallback(async () => {
     try {
+      // Полная перечитка (since=0) приносит всю историю: её броски не показываем заново.
+      const fullReload = sinceRef.current === 0;
       const snapshot = await api<RoomSnapshot>(
         `/api/rooms/${code}/state?since=${sinceRef.current}`,
       );
       sinceRef.current = snapshot.seq;
+      if (fullReload) {
+        const seen = animatedRollsRef.current;
+        for (const message of snapshot.messages) {
+          if (message.roll) seen.add(message.id);
+        }
+      }
       setPlayers(snapshot.players);
       setGm(snapshot.gm);
       setCharacters(snapshot.characters);
@@ -202,20 +212,11 @@ export default function RoomScreen({ code }: { code: string }) {
     void load();
   }, [tab, phase, load]);
 
-  // При первом снимке старые броски не анимируем — 3d-кубики показываем только на новые.
+  // Показываем 3d-кубики только для новых бросков: старые помечены как просмотренные.
   useEffect(() => {
-    // Ждём, пока комната реально прочитана: до этого messages пустые.
     if (!lastSyncAt) return;
-    if (animatedRollsRef.current === null) {
-      animatedRollsRef.current = new Set(
-        messages.filter((message) => message.roll).map((message) => message.id),
-      );
-      return;
-    }
     const seen = animatedRollsRef.current;
-    const fresh = messages.filter(
-      (message) => message.roll && !seen.has(message.id),
-    );
+    const fresh = messages.filter((message) => message.roll && !seen.has(message.id));
     if (fresh.length === 0) return;
     for (const message of fresh) seen.add(message.id);
     setDiceQueue((prev) => [
@@ -225,9 +226,13 @@ export default function RoomScreen({ code }: { code: string }) {
         author: message.author,
         roll: message.roll!,
         mine: message.author.trim().toLowerCase() === meRef.current.trim().toLowerCase(),
+        color:
+          players.find(
+            (player) => player.name.trim().toLowerCase() === message.author.trim().toLowerCase(),
+          )?.color ?? "",
       })),
     ]);
-  }, [messages, lastSyncAt]);
+  }, [messages, lastSyncAt, players]);
 
   const send = useCallback(
     async (text: string) => {
@@ -346,7 +351,6 @@ export default function RoomScreen({ code }: { code: string }) {
   /** Полная перечитка ленты — нужна после переименования игрока. */
   const reloadMessages = useCallback(async () => {
     sinceRef.current = 0;
-    animatedRollsRef.current = null;
     setMessages([]);
     await load();
   }, [load]);
@@ -378,6 +382,23 @@ export default function RoomScreen({ code }: { code: string }) {
     [code, reloadMessages],
   );
 
+  /** Назначение листа игрокам: привязка синхронна с профилями. */
+  const assignCharacterPlayers = useCallback(
+    async (id: string, names: string[]) => {
+      const result = await api<{ character: Character; players: Player[] }>(
+        `/api/rooms/${code}/characters/${id}/players`,
+        { method: "PATCH", body: JSON.stringify({ actor: meRef.current, players: names }) },
+      );
+      setPlayers(result.players);
+      setCharacters((prev) =>
+        prev.map((entry) =>
+          entry.id === id ? { ...entry, players: result.character.players ?? [] } : entry,
+        ),
+      );
+    },
+    [code],
+  );
+
   /** Мастер убирает игрока из-за стола. */
   const kickPlayer = useCallback(
     async (target: string) => {
@@ -400,7 +421,7 @@ export default function RoomScreen({ code }: { code: string }) {
     window.localStorage.removeItem("pp:name");
     meRef.current = "";
     sinceRef.current = 0;
-    animatedRollsRef.current = null;
+    animatedRollsRef.current = new Set();
     setLastSyncAt(0);
     setDiceQueue([]);
     setMessages([]);
@@ -462,6 +483,12 @@ export default function RoomScreen({ code }: { code: string }) {
           <Link href="/" className="text-sm font-semibold tracking-tight text-zinc-50">
             Poison Press
           </Link>
+          <span
+            className="rounded border border-zinc-800 px-1 py-0.5 font-mono text-[9px] text-zinc-500"
+            title="Версия сборки VTT"
+          >
+            v{APP_VERSION}
+          </span>
           <button
             type="button"
             onClick={() => void copyInvite()}
@@ -539,7 +566,6 @@ export default function RoomScreen({ code }: { code: string }) {
               map={map}
               myColor={myColor}
               onMapAction={mapAction}
-              onOpenCharacters={() => setTab("characters")}
               onOpenProfile={(name) => setProfileFor(name)}
             />
           ) : tab === "music" ? (
@@ -556,9 +582,11 @@ export default function RoomScreen({ code }: { code: string }) {
               me={me}
               gm={gm}
               characters={characters}
+              players={players}
               onCreate={createCharacter}
               onUpdate={updateCharacter}
               onDelete={removeCharacter}
+              onAssignPlayers={assignCharacterPlayers}
             />
           )}
         </section>

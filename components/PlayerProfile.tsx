@@ -171,7 +171,10 @@ export function PlayerProfile({
               <div className="scroll-thin mt-1 max-h-48 space-y-1 overflow-y-auto pr-1">
                 {[...mine, ...others].map((character) => {
                   const allowed =
-                    canEdit && (isGM || mine.some((item) => item.id === character.id));
+                    canEdit &&
+                    (isGM ||
+                      mine.some((item) => item.id === character.id) ||
+                      (player.characterIds ?? []).includes(character.id));
                   return (
                     <label
                       key={character.id}

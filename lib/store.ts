@@ -68,8 +68,32 @@ function ensurePlayers(doc: RoomState): RoomState {
       player.color = "";
     }
   }
+  if (!Array.isArray(doc.characters)) doc.characters = [];
+  for (const character of doc.characters) {
+    if (!Array.isArray(character.players)) character.players = [];
+  }
+  rebuildCharacterPlayers(doc);
   if (!Array.isArray(doc.deletedMessages)) doc.deletedMessages = [];
   return doc;
+}
+
+/**
+ * Одна правда — `player.characterIds`: из неё собираем обратную сторону,
+ * `character.players`. Так привязка игрока и персонажа всегда синхронна,
+ * а один лист может быть у нескольких игроков.
+ */
+function rebuildCharacterPlayers(doc: RoomState): void {
+  const byCharacter = new Map<string, string[]>();
+  for (const character of doc.characters) byCharacter.set(character.id, []);
+  for (const player of doc.players) {
+    for (const id of player.characterIds ?? []) {
+      const list = byCharacter.get(id);
+      if (list && !list.includes(player.name)) list.push(player.name);
+    }
+  }
+  for (const character of doc.characters) {
+    character.players = byCharacter.get(character.id) ?? [];
+  }
 }
 
 function ensureMusic(doc: RoomState): RoomState {
@@ -608,6 +632,7 @@ export async function createCharacter(
     const character: Character = {
       id: uid("chr"),
       owner,
+      players: [owner],
       name: draft.name,
       level: draft.level,
       origin: draft.origin,
@@ -625,6 +650,12 @@ export async function createCharacter(
       updatedAt: now,
     };
     doc.characters.push(character);
+    // Автор листа сразу привязан к нему — с обеих сторон.
+    const ownerAccount = findPlayer(doc, owner);
+    if (ownerAccount) {
+      ownerAccount.characterIds = [...(ownerAccount.characterIds ?? []), character.id];
+    }
+    rebuildCharacterPlayers(doc);
     return character;
   });
 }
@@ -721,6 +752,58 @@ export async function deleteCharacter(code: string, id: string, rawActor: unknow
     if (!character) throw new AppError(404, "Персонаж не найден");
     if (!canEdit(character, actor, doc.gm)) throw new AppError(403, "Это чужой персонаж");
     doc.characters = doc.characters.filter((entry) => entry.id !== id);
+    for (const player of doc.players) {
+      player.characterIds = (player.characterIds ?? []).filter((entry) => entry !== id);
+    }
+    rebuildCharacterPlayers(doc);
+  });
+}
+
+/**
+ * Назначение листа игрокам со стороны персонажа: имена игроков заменяют
+ * привязки целиком, обратная сторона (`player.characterIds`) обновляется сама.
+ */
+export async function setCharacterPlayers(
+  code: string,
+  id: string,
+  rawActor: unknown,
+  rawPlayers: unknown,
+): Promise<{ character: Character; players: Player[] }> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+
+  return withRoom(code, (doc) => {
+    const character = doc.characters.find((entry) => entry.id === id);
+    if (!character) throw new AppError(404, "Персонаж не найден");
+    const isGM = isGm(doc, actor);
+    const isOwner = character.owner.trim().toLowerCase() === actor.toLowerCase();
+    if (!isGM && !isOwner) {
+      throw new AppError(403, "Назначать игроков может владелец листа или мастер");
+    }
+
+    const requested = Array.isArray(rawPlayers) ? rawPlayers : [];
+    const wanted: string[] = [];
+    for (const rawName of requested) {
+      if (typeof rawName !== "string") continue;
+      const player = findPlayer(doc, rawName);
+      if (!player) continue;
+      if (!wanted.includes(player.name)) wanted.push(player.name);
+    }
+
+    for (const player of doc.players) {
+      const ids = new Set(player.characterIds ?? []);
+      const shouldHave = wanted.some(
+        (name) => name.toLowerCase() === player.name.toLowerCase(),
+      );
+      if (shouldHave) ids.add(character.id);
+      else ids.delete(character.id);
+      player.characterIds = [...ids];
+    }
+
+    rebuildCharacterPlayers(doc);
+    touchPlayer(doc, actor);
+    character.updatedAt = Date.now();
+    return { character, players: doc.players };
   });
 }
 
@@ -1021,11 +1104,17 @@ export async function updatePlayer(
         if (typeof rawId !== "string") continue;
         const character = known.get(rawId);
         if (!character) continue;
-        const mine = character.owner.trim().toLowerCase() === player.name.trim().toLowerCase();
-        if (!gm && !mine) continue;
+        const ownerMatch =
+          character.owner.trim().toLowerCase() === player.name.trim().toLowerCase();
+        const alreadyLinked = (character.players ?? []).some(
+          (name) => name.trim().toLowerCase() === player.name.trim().toLowerCase(),
+        );
+        if (!gm && !ownerMatch && !alreadyLinked) continue;
         if (!ids.includes(rawId)) ids.push(rawId);
       }
       player.characterIds = ids.slice(0, 12);
+      // Обратная сторона: у листа появляется этот игрок (или исчезает).
+      rebuildCharacterPlayers(doc);
     }
 
     player.lastSeen = Date.now();
