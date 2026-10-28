@@ -43,6 +43,7 @@ import {
   type SkillDef,
 } from "@/lib/rules";
 import type { CharacterDraft, InventoryItem, ItemLocation, Skill, SkillKind } from "@/lib/types";
+import type { ExportFormat } from "@/lib/characterExport";
 import { PortraitCrop } from "./PortraitCrop";
 import { PortraitViewer } from "./PortraitViewer";
 
@@ -54,12 +55,14 @@ interface CharacterSheetProps {
   canEdit: boolean;
   busy: boolean;
   error: string | null;
+  /** Имена игроков листа — показываются в шапке без подписи «владелец». */
   owner: string;
   onChange: (draft: CharacterDraft) => void;
   onSave: () => void;
   onCancel: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onExport: (format: ExportFormat) => void;
 }
 
 type Tab = "main" | "stats" | "origin" | "features" | "skills" | "knowledge" | "gear" | "notes";
@@ -91,9 +94,12 @@ const ITEM_KIND_LABEL: Record<ItemKind, string> = {
   weapon: "Оружие",
   armor: "Доспех",
   shield: "Щит",
+  clothing: "Одежда",
   gear: "Снаряжение",
   light: "Свет",
   coins: "Монеты",
+  animal: "Животное",
+  transport: "Транспорт",
 };
 
 const ITEM_KINDS: (ItemKind | "all")[] = ["all", "weapon", "armor", "shield", "gear", "light"];
@@ -174,6 +180,7 @@ export function CharacterSheet({
   onCancel,
   onEdit,
   onDelete,
+  onExport,
 }: CharacterSheetProps) {
   const [tab, setTab] = useState<Tab>("main");
   const [portraitFile, setPortraitFile] = useState<File | null>(null);
@@ -190,10 +197,22 @@ export function CharacterSheet({
   const [assignment, setAssignment] = useState<Record<string, number | null>>({});
   const [lastDetails, setLastDetails] = useState<number[][] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Навыки и знания выбираются только при создании и на подъёме уровня. */
+  const [levelUpOpen, setLevelUpOpen] = useState(false);
 
-  const editing = mode !== "view";
+  // Поля заполняются всегда: у владельца листа и мастера нет отдельного «режима правки».
+  const editing = canEdit || mode === "create";
+  const skillEditing = editing && (mode === "create" || levelUpOpen);
+  // Пока не идёт создание или подъём уровня, каталоги навыков и знаний скрыты.
+  const visibleTabs = TABS.filter(
+    (entry) => skillEditing || (entry.id !== "skills" && entry.id !== "knowledge"),
+  );
+  useEffect(() => {
+    if (!skillEditing && (tab === "skills" || tab === "knowledge")) setTab("main");
+  }, [skillEditing, tab]);
   useEffect(() => {
     setConfirmDelete(false);
+    setLevelUpOpen(false);
   }, [mode]);
   useEffect(() => {
     if (!notice) return;
@@ -561,6 +580,8 @@ export function CharacterSheet({
       setNotice("Уровень 10 — максимум.");
       return;
     }
+    setLevelUpOpen(true);
+    setTab("skills");
     const nextLevel = draft.level + 1;
     const conMod = abilityMod(draft.stats.con ?? 10);
     const roll = nextLevel === 10 ? 3 : Math.floor(Math.random() * 8) + 1;
@@ -795,7 +816,7 @@ export function CharacterSheet({
               {draft.name || "Без имени"}
             </h2>
             <p className="text-xs text-zinc-500">
-              Владелец: <span className="text-zinc-300">{owner}</span>
+              <span className="text-zinc-300">{owner}</span>
             </p>
             <div className="flex flex-wrap gap-1.5 text-[10px] text-zinc-400">
               <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
@@ -827,11 +848,27 @@ export function CharacterSheet({
                   type="button"
                   onClick={levelUp}
                   disabled={busy || draft.level >= 10}
-                  title="Бросить d8 + модификатор Телосложения и добавить ОЗ"
+                  title="Бросить d8 + модификатор Телосложения, добавить ОЗ и выбрать новый навык"
                   className="rounded-lg border border-amber-400/50 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-40"
                 >
                   Повысить уровень
                 </button>
+                <select
+                  value=""
+                  disabled={busy}
+                  onChange={(event) => {
+                    const format = event.target.value;
+                    event.currentTarget.value = "";
+                    if (format) onExport(format as ExportFormat);
+                  }}
+                  title="Экспорт листа: JSON, HTML или PDF"
+                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-300 disabled:opacity-40"
+                >
+                  <option value="">Экспорт</option>
+                  <option value="json">JSON</option>
+                  <option value="html">HTML</option>
+                  <option value="pdf">PDF (печать)</option>
+                </select>
                 <button
                   type="button"
                   onClick={onSave}
@@ -848,14 +885,6 @@ export function CharacterSheet({
                   Отмена
                 </button>
               </>
-            ) : canEdit ? (
-              <button
-                type="button"
-                onClick={onEdit}
-                className="rounded-lg border border-emerald-400/50 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-500/10"
-              >
-                Правка
-              </button>
             ) : null}
             {canEdit && mode !== "create" ? (
               <button
@@ -898,7 +927,7 @@ export function CharacterSheet({
       ) : null}
 
       <nav className="scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 px-3 py-2">
-        {TABS.map((entry) => (
+        {visibleTabs.map((entry) => (
           <button
             key={entry.id}
             type="button"
@@ -996,20 +1025,25 @@ export function CharacterSheet({
                   </div>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-2 text-[11px] text-zinc-400">
-                <span className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5">
-                  Стойкость <span className="font-mono text-zinc-200">{formatMod(derived.saves.fortitude)}</span>
-                </span>
-                <span className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5">
-                  Реакция <span className="font-mono text-zinc-200">{formatMod(derived.saves.reflexes)}</span>
-                </span>
-                <span className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5">
-                  Воля <span className="font-mono text-zinc-200">{formatMod(derived.saves.will)}</span>
-                </span>
-                <span className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5">
-                  Скорость <span className="font-mono text-zinc-200">{derived.speed}</span>
-                </span>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "Стойкость", value: derived.saves.fortitude, hint: "Телосложение" },
+                  { label: "Реакция", value: derived.saves.reflexes, hint: "Ловкость" },
+                  { label: "Воля", value: derived.saves.will, hint: "Мудрость" },
+                ].map((save) => (
+                  <div
+                    key={save.label}
+                    className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-2 py-2 text-center"
+                  >
+                    <p className="text-[9px] uppercase tracking-wide text-amber-200/80">{save.label}</p>
+                    <p className="font-mono text-2xl text-zinc-50">{save.value}</p>
+                    <p className="text-[9px] text-zinc-500">10 + {save.hint}</p>
+                  </div>
+                ))}
               </div>
+              <p className="text-[11px] text-zinc-400">
+                Скорость <span className="font-mono text-zinc-200">{derived.speed}</span>
+              </p>
             </section>
 
             <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
@@ -1023,7 +1057,7 @@ export function CharacterSheet({
               </div>
               <select
                 value={draft.origin}
-                disabled={!editing}
+                disabled={mode !== "create"}
                 onChange={(event) => applyOrigin(event.target.value)}
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-emerald-400/70 disabled:opacity-70"
               >
@@ -1034,6 +1068,11 @@ export function CharacterSheet({
                   </option>
                 ))}
               </select>
+              {mode !== "create" ? (
+                <p className="text-[10px] leading-snug text-zinc-600">
+                  Происхождение выбирается один раз при создании листа; дальше его не меняют.
+                </p>
+              ) : null}
               {origin ? (
                 <>
                   <p className="text-xs leading-snug text-zinc-400">{origin.description}</p>
@@ -1059,48 +1098,52 @@ export function CharacterSheet({
 
             <section className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Особенности</span>
-                {[0, 1].map((index) => (
-                  <select
-                    key={`trait-${index}`}
-                    value={draft.traits[index] ?? ""}
-                    disabled={!editing}
-                    onChange={(event) => setFeatureAt("traits", index, event.target.value)}
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">Особенности</span>
+                  <button
+                    type="button"
+                    onClick={() => setTab("features")}
+                    className="text-[11px] text-emerald-300/80 hover:text-emerald-200"
                   >
-                    <option value="">— нет —</option>
-                    {TRAITS.map((trait) => (
-                      <option key={trait} value={trait}>{trait}</option>
-                    ))}
-                  </select>
-                ))}
-                <span className="block text-[11px] leading-snug text-zinc-500">
-                  {draft.traits.length === 0
-                    ? "Одна особенность; вторая — только со вторым изъяном."
-                    : draft.traits.map((trait) => TRAIT_NOTES[trait]).filter(Boolean).join(" · ")}
-                </span>
+                    выбрать
+                  </button>
+                </div>
+                {draft.traits.length === 0 ? (
+                  <p className="text-[11px] text-zinc-600">Одна особенность; вторая — только со вторым изъяном.</p>
+                ) : (
+                  draft.traits.map((trait) => (
+                    <p key={trait} className="text-xs leading-snug text-emerald-200">
+                      {trait}
+                      {TRAIT_NOTES[trait] ? (
+                        <span className="block text-[11px] text-zinc-500">{TRAIT_NOTES[trait]}</span>
+                      ) : null}
+                    </p>
+                  ))
+                )}
               </div>
               <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <span className="text-[11px] uppercase tracking-wide text-zinc-500">Изъяны</span>
-                {[0, 1].map((index) => (
-                  <select
-                    key={`flaw-${index}`}
-                    value={draft.flaws[index] ?? ""}
-                    disabled={!editing}
-                    onChange={(event) => setFeatureAt("flaws", index, event.target.value)}
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-rose-200 outline-none focus:border-rose-400/70 disabled:opacity-70"
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">Изъяны</span>
+                  <button
+                    type="button"
+                    onClick={() => setTab("features")}
+                    className="text-[11px] text-rose-300/80 hover:text-rose-200"
                   >
-                    <option value="">— нет —</option>
-                    {FLAWS.map((flaw) => (
-                      <option key={flaw} value={flaw}>{flaw}</option>
-                    ))}
-                  </select>
-                ))}
-                <span className="block text-[11px] leading-snug text-zinc-500">
-                  {draft.flaws.length === 0
-                    ? "Можно взять только изъян, отказавшись от особенности."
-                    : draft.flaws.map((flaw) => FLAW_NOTES[flaw]).filter(Boolean).join(" · ")}
-                </span>
+                    выбрать
+                  </button>
+                </div>
+                {draft.flaws.length === 0 ? (
+                  <p className="text-[11px] text-zinc-600">Можно взять только изъян, отказавшись от особенности.</p>
+                ) : (
+                  draft.flaws.map((flaw) => (
+                    <p key={flaw} className="text-xs leading-snug text-rose-200">
+                      {flaw}
+                      {FLAW_NOTES[flaw] ? (
+                        <span className="block text-[11px] text-zinc-500">{FLAW_NOTES[flaw]}</span>
+                      ) : null}
+                    </p>
+                  ))
+                )}
               </div>
             </section>
 

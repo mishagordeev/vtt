@@ -497,6 +497,15 @@ export async function createRoom(): Promise<RoomState> {
   throw new AppError(500, "Не удалось создать комнату, попробуйте ещё раз");
 }
 
+/** Имена за столом — для экрана входа и списка игроков в комнате. */
+export async function getRoomPlayers(
+  code: string,
+): Promise<{ gm: string; players: Player[] }> {
+  const doc = await readDoc(code);
+  if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
+  return { gm: doc.gm, players: doc.players };
+}
+
 export async function getRoomSnapshot(code: string, since: number): Promise<RoomSnapshot> {
   const doc = await readDoc(code);
   if (!doc) throw new AppError(404, ROOM_NOT_FOUND);

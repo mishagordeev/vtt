@@ -1,8 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { errorResponse, NO_STORE, readJson } from "@/lib/http";
-import { removePlayer, updatePlayer } from "@/lib/store";
+import { getRoomPlayers, removePlayer, updatePlayer } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
+
+/** GET — кто уже за столом: для экрана входа и подсказки имён. */
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ code: string }> },
+) {
+  try {
+    const { code } = await context.params;
+    const result = await getRoomPlayers(code.toUpperCase());
+    return NextResponse.json(result, { headers: NO_STORE });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
 
 /** PATCH — имя, цвет и привязанные персонажи; игрок правит себя, мастер — любого. */
 export async function PATCH(

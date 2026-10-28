@@ -44,26 +44,52 @@ export interface TextFieldDef {
   options?: string[];
 }
 
-export type ItemKind = "weapon" | "armor" | "shield" | "gear" | "light" | "coins";
+export type ItemKind =
+  | "weapon"
+  | "armor"
+  | "shield"
+  | "clothing"
+  | "gear"
+  | "light"
+  | "coins"
+  | "animal"
+  | "transport";
 
 export interface ItemDef {
   name: string;
   kind: ItemKind;
-  /** Занятые слоты инвентаря. */
+  /**
+   * Занятые слоты. Бывает дробным: 0.1 — мелочь в кармане, 0.25 — горсть,
+   * 0.5 — половина слота, 0.75 — почти слот.
+   */
   slots: number;
   /** Цена для справки, как в книге. */
   price: string;
+  /** Аренда за день — для животных, повозок, лодок и шатров. */
+  rent?: string;
   /** Короткое описание для каталога. */
   description: string;
   damage?: string;
   /** Двуручное оружие: занимает обе руки. */
   twoHanded?: boolean;
+  /** Категория оружия: кинжалы, мечи, топоры, древковое, дробящее, луки, арбалеты, метательное. */
+  weaponType?: string;
+  /** Тип урона: колющий, рубящий, режущий, дробящий. */
+  damageType?: string;
   /** КБ доспеха без бонуса Ловкости. */
   ac?: number;
   /** Предел бонуса Ловкости; null — без ограничений. */
   maxDex?: number | null;
   /** Бонус щита к КБ. */
   shieldBonus?: number;
+  /** Тяжесть доспеха: лёгкий, средний, тяжёлый. */
+  armorType?: "light" | "medium" | "heavy";
+  /** Грузоподъёмность животного или повозки в слотах. */
+  capacity?: number;
+  /** Скорость похода. */
+  speed?: string;
+  /** Сколько монет этого номинала помещается в один слот. */
+  coinsPerSlot?: number;
 }
 
 export interface SkillDef {
@@ -258,46 +284,48 @@ export function skillsSlotUsage(skills: Skill[]): SkillSlotBudget {
 
 /** Каталог снаряжения (7.3–7.5): слоты, цена, короткое описание. */
 export const ITEMS: ItemDef[] = [
-  { name: "Кожаный доспех", kind: "armor", slots: 1, price: "5 зм", ac: 12, maxDex: null, description: "Мягкая кожа: КБ 12, Ловкость без предела." },
-  { name: "Шкуры гадов / стеганка", kind: "armor", slots: 1, price: "15 зм", ac: 13, maxDex: 4, description: "КБ 13, Ловкость не выше +4." },
-  { name: "Клепаная кожа", kind: "armor", slots: 1, price: "25 зм", ac: 13, maxDex: 3, description: "КБ 13, Ловкость не выше +3, −1 к скрытности." },
-  { name: "Кольчужная рубаха", kind: "armor", slots: 2, price: "50 зм", ac: 14, maxDex: 3, description: "КБ 14, Ловкость не выше +3, −2 к скрытности." },
-  { name: "Кольчужный хауберк", kind: "armor", slots: 2, price: "75 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности." },
-  { name: "Чешуйчатый доспех", kind: "armor", slots: 2, price: "60 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности." },
-  { name: "Пластинчатый панцирь", kind: "armor", slots: 3, price: "120 зм", ac: 16, maxDex: 1, description: "КБ 16, Ловкость не выше +1, −4 к скрытности." },
-  { name: "Лаоркандский полулатый", kind: "armor", slots: 3, price: "250 зм", ac: 17, maxDex: 1, description: "КБ 17, Ловкость не выше +1, −5 к скрытности." },
-  { name: "Полный рыцарский латный", kind: "armor", slots: 4, price: "500 зм", ac: 18, maxDex: 0, description: "КБ 18, Ловкость не добавляется, −6 к скрытности." },
+  { name: "Кожаный доспех", kind: "armor", slots: 1, price: "5 зм", ac: 12, maxDex: null, description: "Мягкая кожа: КБ 12, Ловкость без предела.", armorType: "light" },
+  { name: "Шкуры гадов / стеганка", kind: "armor", slots: 1, price: "15 зм", ac: 13, maxDex: 4, description: "КБ 13, Ловкость не выше +4.", armorType: "light" },
+  { name: "Клепаная кожа", kind: "armor", slots: 1, price: "25 зм", ac: 13, maxDex: 3, description: "КБ 13, Ловкость не выше +3, −1 к скрытности.", armorType: "light" },
+  { name: "Кольчужная рубаха", kind: "armor", slots: 2, price: "50 зм", ac: 14, maxDex: 3, description: "КБ 14, Ловкость не выше +3, −2 к скрытности.", armorType: "medium" },
+  { name: "Кольчужный хауберк", kind: "armor", slots: 2, price: "75 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности.", armorType: "medium" },
+  { name: "Чешуйчатый доспех", kind: "armor", slots: 2, price: "60 зм", ac: 15, maxDex: 2, description: "КБ 15, Ловкость не выше +2, −3 к скрытности.", armorType: "medium" },
+  { name: "Пластинчатый панцирь", kind: "armor", slots: 3, price: "120 зм", ac: 16, maxDex: 1, description: "КБ 16, Ловкость не выше +1, −4 к скрытности.", armorType: "heavy" },
+  { name: "Лаоркандский полулатый", kind: "armor", slots: 3, price: "250 зм", ac: 17, maxDex: 1, description: "КБ 17, Ловкость не выше +1, −5 к скрытности.", armorType: "heavy" },
+  { name: "Полный рыцарский латный", kind: "armor", slots: 4, price: "500 зм", ac: 18, maxDex: 0, description: "КБ 18, Ловкость не добавляется, −6 к скрытности.", armorType: "heavy" },
   { name: "Баклер", kind: "shield", slots: 1, price: "3 зм", shieldBonus: 1, description: "+1 к КБ; от стрел не защищает, рука почти свободна." },
-  { name: "Круглый пехотный щит", kind: "shield", slots: 1, price: "7 зм", shieldBonus: 1, description: "+1 к КБ; защищает от стрел, позволяет парировать." },
-  { name: "Тяжёлый ростовой щит", kind: "shield", slots: 2, price: "15 зм", shieldBonus: 2, description: "+2 к КБ и укрытие; скорость −5 фт." },
-  { name: "Боевой посох", kind: "weapon", slots: 1, price: "2 см", damage: "1d6", twoHanded: true, description: "Двуручное хрупкое оружие." },
-  { name: "Булава лёгкая", kind: "weapon", slots: 1, price: "5 зм", damage: "1d6", description: "Простое дробящее оружие." },
-  { name: "Булава тяжёлая", kind: "weapon", slots: 1, price: "10 зм", damage: "1d8", description: "Тяжёлое дробящее оружие." },
-  { name: "Боевой молот", kind: "weapon", slots: 1, price: "6 зм", damage: "1d6+1", description: "Пробивает чешую." },
-  { name: "Кинжал походный", kind: "weapon", slots: 1, price: "2 зм", damage: "1d4", description: "Метательное 10/20/30; до 3 шт. в слот." },
-  { name: "Кинжал кривой (пеш-кабз)", kind: "weapon", slots: 1, price: "4 зм", damage: "1d4+1", description: "+1 против кольчуг." },
-  { name: "Короткий меч", kind: "weapon", slots: 1, price: "10 зм", damage: "1d6", description: "Оружие лазутчиков; колющий и рубящий." },
-  { name: "Длинный имперский меч", kind: "weapon", slots: 1, price: "15 зм", damage: "1d8", description: "Универсальное рубяще-колющее оружие." },
-  { name: "Сабля степная", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6+1", description: "+1 при атаке с седла." },
-  { name: "Тесак горский", kind: "weapon", slots: 1, price: "8 зм", damage: "1d8", description: "Рубящий замах." },
-  { name: "Двуручный меч", kind: "weapon", slots: 2, price: "40 зм", damage: "1d10", twoHanded: true, description: "Двуручное оружие." },
-  { name: "Боевой топор", kind: "weapon", slots: 1, price: "5 зм", damage: "1d8", description: "Скол при критическом промахе." },
-  { name: "Секира двуручная", kind: "weapon", slots: 2, price: "20 зм", damage: "1d10+1", twoHanded: true, description: "Двуручное оружие." },
-  { name: "Копьё пехотное", kind: "weapon", slots: 1, price: "2 зм", damage: "1d6", description: "Первым бьёт при чардже." },
-  { name: "Длинная пика", kind: "weapon", slots: 2, price: "5 зм", damage: "1d8", twoHanded: true, description: "Двуручное, длина 15 фт." },
-  { name: "Цеп боевой", kind: "weapon", slots: 1, price: "8 зм", damage: "1d6+1", description: "Игнорирует щит врага." },
-  { name: "Короткий лук", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6", twoHanded: true, description: "Дистанция 50/100/150 фт." },
-  { name: "Степной композитный лук", kind: "weapon", slots: 1, price: "45 зм", damage: "1d8", twoHanded: true, description: "Дистанция 60/120/180 фт." },
-  { name: "Длинный лаоркандский лук", kind: "weapon", slots: 2, price: "60 зм", damage: "1d8+1", twoHanded: true, description: "Дистанция 70/140/210 фт." },
-  { name: "Лёгкий арбалет", kind: "weapon", slots: 1, price: "25 зм", damage: "1d6+1", twoHanded: true, description: "60/120/180 фт; выстрел раз в раунд." },
-  { name: "Тяжёлый арбалет", kind: "weapon", slots: 2, price: "50 зм", damage: "1d10", twoHanded: true, description: "80/160/240 фт; выстрел раз в два раунда." },
-  { name: "Праща", kind: "weapon", slots: 1, price: "5 см", damage: "1d4+1", description: "Дистанция 40/80/120 фт." },
-  { name: "Метательный дротик", kind: "weapon", slots: 1, price: "1 зм", damage: "1d4", description: "Пачка 3 шт.; 30/60/90 фт." },
+  { name: "Круглый пехотный щит", kind: "shield", slots: 2, price: "7 зм", shieldBonus: 2, description: "+2 к КБ; защищает от стрел, позволяет парировать." },
+  { name: "Тяжёлый ростовой щит", kind: "shield", slots: 3, price: "15 зм", shieldBonus: 3, description: "+3 к КБ и укрытие; скорость −5 фт." },
+  { name: "Боевой посох", kind: "weapon", slots: 1, price: "2 см", damage: "1d6", twoHanded: true, description: "Двуручное хрупкое оружие.", weaponType: "Боевые посохи", damageType: "Дробящий" },
+  { name: "Булава лёгкая", kind: "weapon", slots: 1, price: "5 зм", damage: "1d6", description: "Простое дробящее оружие.", weaponType: "Дробящее", damageType: "Дробящий" },
+  { name: "Булава тяжёлая", kind: "weapon", slots: 1, price: "10 зм", damage: "1d8", description: "Тяжёлое дробящее оружие.", weaponType: "Дробящее", damageType: "Дробящий" },
+  { name: "Боевой молот", kind: "weapon", slots: 1, price: "6 зм", damage: "1d6+1", description: "Пробивает чешую.", weaponType: "Дробящее", damageType: "Дробящий" },
+  { name: "Походный нож", kind: "weapon", slots: 1, price: "2 зм", damage: "1d4", description: "Метательное 10/20/30; до 3 шт. в слот.", weaponType: "Кинжалы", damageType: "Колющий" },
+  { name: "Кривой кинжал", kind: "weapon", slots: 1, price: "4 зм", damage: "1d4+1", description: "+1 против кольчуг.", weaponType: "Кинжалы", damageType: "Колющий" },
+  { name: "Стилет", kind: "weapon", slots: 1, price: "8 зм", damage: "1d4+1", weaponType: "Кинжалы", damageType: "Колющий", description: "+1 против лёгких и средних доспехов." },
+  { name: "Короткий меч", kind: "weapon", slots: 1, price: "10 зм", damage: "1d6", description: "Оружие лазутчиков; колющий и рубящий.", weaponType: "Мечи", damageType: "Рубящий" },
+  { name: "Длинный имперский меч", kind: "weapon", slots: 1, price: "15 зм", damage: "1d8", description: "Универсальное рубяще-колющее оружие.", weaponType: "Мечи", damageType: "Рубящий" },
+  { name: "Рапира", kind: "weapon", slots: 1, price: "20 зм", damage: "1d8", weaponType: "Мечи", damageType: "Колющий", description: "Фехтовальное оружие; можно считать Ловкость." },
+  { name: "Сабля степная", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6+1", description: "+1 при атаке с седла.", weaponType: "Мечи", damageType: "Рубящий" },
+  { name: "Серп горский", kind: "weapon", slots: 1, price: "8 зм", damage: "1d8", description: "Рубящий замах.", weaponType: "Топоры и секиры", damageType: "Режущий" },
+  { name: "Двуручный меч", kind: "weapon", slots: 2, price: "40 зм", damage: "1d10", twoHanded: true, description: "Двуручное оружие.", weaponType: "Мечи", damageType: "Рубящий, Колющий" },
+  { name: "Боевой топор", kind: "weapon", slots: 1, price: "5 зм", damage: "1d8", description: "Скол при критическом промахе.", weaponType: "Топоры и секиры", damageType: "Рубящий" },
+  { name: "Секира двуручная", kind: "weapon", slots: 2, price: "20 зм", damage: "1d10+1", twoHanded: true, description: "Двуручное оружие.", weaponType: "Топоры и секиры", damageType: "Рубящий" },
+  { name: "Копьё пехотное", kind: "weapon", slots: 1, price: "2 зм", damage: "1d6", description: "Первым бьёт при чардже.", weaponType: "Древковое", damageType: "Колющий" },
+  { name: "Длинная пика", kind: "weapon", slots: 2, price: "5 зм", damage: "1d8", twoHanded: true, description: "Двуручное, длина 15 фт.", weaponType: "Древковое", damageType: "Колющий" },
+  { name: "Цеп боевой", kind: "weapon", slots: 1, price: "8 зм", damage: "1d6+1", description: "Игнорирует щит врага.", weaponType: "Дробящее", damageType: "Дробящий" },
+  { name: "Короткий лук", kind: "weapon", slots: 1, price: "15 зм", damage: "1d6", twoHanded: true, description: "Дистанция 50/100/150 фт.", weaponType: "Луки", damageType: "Колющий" },
+  { name: "Степной композитный лук", kind: "weapon", slots: 1, price: "45 зм", damage: "1d8", twoHanded: true, description: "Дистанция 60/120/180 фт.", weaponType: "Луки", damageType: "Колющий" },
+  { name: "Длинный лаоркандский лук", kind: "weapon", slots: 2, price: "60 зм", damage: "1d8+1", twoHanded: true, description: "Дистанция 70/140/210 фт.", weaponType: "Луки", damageType: "Колющий" },
+  { name: "Лёгкий арбалет", kind: "weapon", slots: 1, price: "25 зм", damage: "1d6+1", twoHanded: true, description: "60/120/180 фт; выстрел раз в раунд.", weaponType: "Арбалеты", damageType: "Колющий" },
+  { name: "Тяжёлый арбалет", kind: "weapon", slots: 2, price: "50 зм", damage: "1d10", twoHanded: true, description: "80/160/240 фт; выстрел раз в два раунда.", weaponType: "Арбалеты", damageType: "Колющий" },
+  { name: "Праща", kind: "weapon", slots: 1, price: "5 см", damage: "1d4+1", description: "Дистанция 40/80/120 фт.", weaponType: "Метательное", damageType: "Дробящий" },
+  { name: "Метательный дротик", kind: "weapon", slots: 1, price: "1 зм", damage: "1d4", description: "Пачка 3 шт.; 30/60/90 фт.", weaponType: "Метательное", damageType: "Колющий" },
   { name: "Факелы (6 шт.)", kind: "light", slots: 1, price: "1 см", description: "Горят 1 Ход, свет 30 фт." },
   { name: "Масляный фонарь", kind: "light", slots: 1, price: "7 зм", description: "Горит 4 часа, ровный свет 30 фт." },
   { name: "Направленный фонарь", kind: "light", slots: 1, price: "12 зм", description: "Луч 60 фт, скрывает владельца позади." },
   { name: "Масло горючее (1 пинта)", kind: "gear", slots: 1, price: "2 см", description: "Заправка лампы или 1d6 огня на 2 раунда." },
-  { name: "Трутница", kind: "gear", slots: 0, price: "1 зм", description: "Кремень, огниво и трут; не занимает слот." },
+  { name: "Трутница", kind: "gear", slots: 0.1, price: "1 зм", description: "Кремень, огниво и трут; не занимает слот." },
   { name: "Сухие пайки (7 дней)", kind: "gear", slots: 1, price: "3 зм", description: "Вяленое мясо, галеты, смоква." },
   { name: "Свежий провиант (7 дней)", kind: "gear", slots: 1, price: "1 зм", description: "Портится через 3 дня в катакомбах." },
   { name: "Бурдюк для воды", kind: "gear", slots: 1, price: "1 зм", description: "Дневная норма воды на переход." },
@@ -309,9 +337,9 @@ export const ITEMS: ItemDef[] = [
   { name: "Аптечка полевая", kind: "gear", slots: 1, price: "5 зм", description: "Бинты и притирки на 5 перевязок." },
   { name: "Набор трав", kind: "gear", slots: 1, price: "10 зм", description: "Для травничества и противоядий." },
   { name: "Святая вода", kind: "gear", slots: 1, price: "25 зм", description: "1d6 урона нежити и созданиям Хаоса." },
-  { name: "Противоядие", kind: "gear", slots: 0, price: "10 зм", description: "+2 к Стойкости против яда; не лечит, а выигрывает время." },
-  { name: "Зеркальце на рукояти", kind: "gear", slots: 0, price: "5 зм", description: "Осматривать углы и отражать взгляд." },
-  { name: "Мел (коробок)", kind: "gear", slots: 0, price: "2 см", description: "Метки на стенах и защитные круги." },
+  { name: "Противоядие", kind: "gear", slots: 0.1, price: "10 зм", description: "+2 к Стойкости против яда; не лечит, а выигрывает время." },
+  { name: "Зеркальце на рукояти", kind: "gear", slots: 0.1, price: "5 зм", description: "Осматривать углы и отражать взгляд." },
+  { name: "Мел (коробок)", kind: "gear", slots: 0.1, price: "2 см", description: "Метки на стенах и защитные круги." },
   { name: "Лопата сапёрная / кирка", kind: "gear", slots: 1, price: "2 зм", description: "Расчистка завала, 1d4 дробящего урона." },
   { name: "Стрелы (20 шт.)", kind: "gear", slots: 1, price: "2 зм", description: "Запас для лука." },
   { name: "Болты (20 шт.)", kind: "gear", slots: 1, price: "3 зм", description: "Запас для арбалета." },
@@ -329,35 +357,60 @@ export const ITEMS: ItemDef[] = [
   { name: "Весло и смола", kind: "gear", slots: 2, price: "5 зм", description: "Запасное весло, смола и пакля для лодки." },
   { name: "Вожжи и упряжь", kind: "gear", slots: 1, price: "3 зм", description: "Ремни, вожжи и дёготь для обоза." },
   { name: "Поплавок и трубка", kind: "gear", slots: 0, price: "1 зм", description: "Пробковый поплавок и тростниковая трубка." },
-  { name: "Ремень и кляп", kind: "gear", slots: 0, price: "1 зм", description: "Ремень, кляп и верёвка для пленного." },
-  { name: "Кастет", kind: "weapon", slots: 1, price: "2 зм", damage: "1d3", description: "Кулачный бой; простое оружие." },
-  { name: "Поводок и намордник", kind: "gear", slots: 0, price: "2 зм", description: "Для дрессировки и спокойного зверя." },
+  { name: "Ремень и кляп", kind: "gear", slots: 0.5, price: "1 зм", description: "Ремень, кляп и верёвка для пленного." },
+  { name: "Кастет", kind: "weapon", slots: 1, price: "2 зм", damage: "1d3", description: "Кулачный бой; простое оружие.", weaponType: "Кулачный бой", damageType: "Дробящий" },
+  { name: "Поводок и намордник", kind: "gear", slots: 0.5, price: "2 зм", description: "Для дрессировки и спокойного зверя." },
   { name: "Одеяло и подшлемник", kind: "gear", slots: 1, price: "4 зм", description: "Тёплый сон в походе." },
-  { name: "Символ бога", kind: "gear", slots: 0, price: "2 зм", description: "Знак веры для молитв и обрядов." },
-  { name: "Ладан и соль", kind: "gear", slots: 0, price: "1 зм", description: "Для духов, запретов и погребальных обрядов." },
-  { name: "Набор костей", kind: "gear", slots: 0, price: "2 зм", description: "Кости и карты для слухов и азарта." },
+  { name: "Символ бога", kind: "gear", slots: 0.1, price: "2 зм", description: "Знак веры для молитв и обрядов." },
+  { name: "Ладан и соль", kind: "gear", slots: 0.25, price: "1 зм", description: "Для духов, запретов и погребальных обрядов." },
+  { name: "Набор костей", kind: "gear", slots: 0.25, price: "2 зм", description: "Кости и карты для слухов и азарта." },
   { name: "Парадная накидка", kind: "gear", slots: 1, price: "8 зм", description: "Для приёмов, храмов и разговоров со знатью." },
-  { name: "Знак артели", kind: "gear", slots: 0, price: "1 зм", description: "Метка своей артели и выход на чёрный рынок." },
-  { name: "Фальшивая печать", kind: "gear", slots: 0, price: "5 зм", description: "Подорожные и печати для подлогов." },
+  { name: "Знак артели", kind: "gear", slots: 0.1, price: "1 зм", description: "Метка своей артели и выход на чёрный рынок." },
+  { name: "Фальшивая печать", kind: "gear", slots: 0.1, price: "5 зм", description: "Подорожные и печати для подлогов." },
   { name: "Весы и пробирный камень", kind: "gear", slots: 1, price: "8 зм", description: "Оценка металла и подделок." },
   { name: "Сигнальный рожок", kind: "gear", slots: 1, price: "5 зм", description: "Команды, строй и сбор отряда." },
-  { name: "Карта Пограничья", kind: "gear", slots: 0, price: "10 зм", description: "Старая карта трактов, колодцев и руин." },
+  { name: "Карта Пограничья", kind: "gear", slots: 0.1, price: "10 зм", description: "Старая карта трактов, колодцев и руин." },
   { name: "Словарь и таблички", kind: "gear", slots: 1, price: "10 зм", description: "Для языков и древних наречий." },
   { name: "Арканные таблицы", kind: "gear", slots: 1, price: "12 зм", description: "Таблицы формул и законов традиции." },
   { name: "Исторические хроники", kind: "gear", slots: 1, price: "15 зм", description: "Даты, династии и падения городов." },
   { name: "Гербовая книга", kind: "gear", slots: 1, price: "12 зм", description: "Роды, гербы, печати и старые обиды." },
-  { name: "Тяжёлый перстень", kind: "gear", slots: 0, price: "3 зм", description: "Для устрашения и солидного вида." },
-  { name: "Образцы монет", kind: "gear", slots: 0, price: "2 зм", description: "Монеты разных царств для торга." },
-  { name: "Свисток", kind: "gear", slots: 0, price: "1 зм", description: "Сигнал, внимание, перекличка." },
+  { name: "Тяжёлый перстень", kind: "gear", slots: 0.1, price: "3 зм", description: "Для устрашения и солидного вида." },
+  { name: "Образцы монет", kind: "gear", slots: 0.25, price: "2 зм", description: "Монеты разных царств для торга." },
+  { name: "Свисток", kind: "gear", slots: 0.1, price: "1 зм", description: "Сигнал, внимание, перекличка." },
   { name: "Плащ от дождя", kind: "gear", slots: 1, price: "3 зм", description: "Погодное чутьё и сухая ночь." },
-  { name: "Набор для ловкости рук", kind: "gear", slots: 0, price: "5 зм", description: "Напёрстки, фальшивая монета и тонкое лезвие." },
-  { name: "Тетива", kind: "gear", slots: 0, price: "1 зм", description: "Запасная тетива для лука." },
-  { name: "Медные марки", kind: "coins", slots: 0, price: "—", description: "Мелкая разменная монета, 1/100 золотого. 100 монет = 1 слот." },
-  { name: "Серебряные дирхемы", kind: "coins", slots: 0, price: "—", description: "Основная городская валюта, 1/10 золотого. 100 монет = 1 слот." },
-  { name: "Золотые денарии", kind: "coins", slots: 0, price: "—", description: "Базовая монета игры, 1 зм. 100 монет = 1 слот." },
-  { name: "Платиновые диски", kind: "coins", slots: 0, price: "—", description: "Древняя монета, 10 зм. 100 монет = 1 слот." },
-  { name: "Монеты", kind: "coins", slots: 0, price: "—", description: "Старое общее поле монет; при сохранении переводится в золотые денарии." },
+  { name: "Набор для ловкости рук", kind: "gear", slots: 0.25, price: "5 зм", description: "Напёрстки, фальшивая монета и тонкое лезвие." },
+  { name: "Тетива", kind: "gear", slots: 0.1, price: "1 зм", description: "Запасная тетива для лука." },
+  { name: "Медные марки", kind: "coins", slots: 0, price: "—", description: "Мелкая разменная монета, 1/100 золотого. 200 монет = 1 слот.", coinsPerSlot: 200 },
+  { name: "Серебряные дирхемы", kind: "coins", slots: 0, price: "—", description: "Основная городская валюта, 1/10 золотого. 150 монет = 1 слот.", coinsPerSlot: 150 },
+  { name: "Золотые денарии", kind: "coins", slots: 0, price: "—", description: "Базовая монета игры, 1 зм. 100 монет = 1 слот.", coinsPerSlot: 100 },
+  { name: "Платиновые диски", kind: "coins", slots: 0, price: "—", description: "Древняя монета, 10 зм. 50 монет = 1 слот.", coinsPerSlot: 50 },
+  { name: "Монеты", kind: "coins", slots: 0, price: "—", description: "Старое общее поле монет; при сохранении переводится в золотые денарии (100 монет = 1 слот)." },
   { name: "Письменные принадлежности", kind: "gear", slots: 1, price: "5 зм", description: "Перья, чернила, бумага; нужны для Грамоты и подделок." },
+  // Одежда (7): цена за комплект, слоты дробные.
+  { name: "Плащ", kind: "clothing", slots: 0.5, price: "5 см", description: "Дорожный плащ: тёплая ночь без огня, дождь по плечам." },
+  { name: "Худ", kind: "clothing", slots: 0.1, price: "2 см", description: "Капюшон и маска; скрывает лицо в толпе." },
+  { name: "Грубая одежда", kind: "clothing", slots: 0.5, price: "5 см", description: "Домашнее платье простолюдина, чистое и крепкое." },
+  { name: "Шелковая одежда", kind: "clothing", slots: 0.5, price: "12 зм", description: "Для приёмов, храмов и разговоров со знатью." },
+  { name: "Башмаки", kind: "clothing", slots: 0.25, price: "2 см", description: "Мягкая подошва: тихий шаг по камню." },
+  { name: "Сапоги", kind: "clothing", slots: 0.75, price: "5 зм", description: "Походные сапоги: сухие ноги, тёплые ночи." },
+  { name: "Сандалии", kind: "clothing", slots: 0.25, price: "1 см", description: "Лёгкая обувь для жары и песка." },
+  // Животные (7): сами несут груз, поэтому слотов не занимают.
+  { name: "Мул вьючный", kind: "animal", slots: 0, price: "15 зм", rent: "5 см", capacity: 25, speed: "20 миль/день", description: "Тянет груз и не боится спуска до первого обвала." },
+  { name: "Осёл", kind: "animal", slots: 0, price: "10 зм", rent: "3 см", capacity: 15, speed: "18 миль/день", description: "Дешёвый вьюк для короткого перехода." },
+  { name: "Степная верховая лошадь", kind: "animal", slots: 0, price: "40 зм", rent: "1 зм", capacity: 18, speed: "30 миль/день", description: "Быстрая, выносливая, с седлом и уздечкой." },
+  { name: "Боевой лаоркандский конь", kind: "animal", slots: 0, price: "150 зм", rent: "3 зм", capacity: 22, speed: "24 мили/день", description: "Держит бой и всадника в латах." },
+  { name: "Верблюд пустынный", kind: "animal", slots: 0, price: "30 зм", rent: "1 зм", capacity: 40, speed: "20 миль/день", description: "Пьёт раз в четыре дня, везёт больше всех." },
+  { name: "Вол", kind: "animal", slots: 0, price: "25 зм", rent: "5 см", capacity: 30, speed: "16 миль/день", description: "Тягловая сила для обоза и плуга." },
+  { name: "Сторожевая собака", kind: "animal", slots: 0, price: "8 зм", rent: "2 см", capacity: 3, speed: "25 миль/день", description: "Лаем поднимает лагерь раньше дозорного." },
+  // Транспорт (8): покупка и аренда, груз в слотах.
+  { name: "Двуколка походная", kind: "transport", slots: 0, price: "20 зм", rent: "1 зм", capacity: 80, speed: "15 миль/день", description: "Требует одного мула или осла." },
+  { name: "Тяжёлый крытый обоз", kind: "transport", slots: 0, price: "100 зм", rent: "3 зм", capacity: 200, speed: "10 миль/день", description: "Требует двух-четырёх волов." },
+  { name: "Сани", kind: "transport", slots: 0, price: "10 зм", rent: "1 см", capacity: 40, speed: "12 миль/день", description: "Зимний транспорт по снегу и насту." },
+  { name: "Шатёр лагерный", kind: "transport", slots: 0, price: "15 зм", rent: "5 см", capacity: 0, speed: "—", description: "На четверых; в сложенном виде занимает 2 слота." },
+  { name: "Палатка лёгкая", kind: "transport", slots: 0, price: "4 зм", rent: "1 см", capacity: 0, speed: "—", description: "На одного-двух, один слот." },
+  { name: "Лодка речная", kind: "transport", slots: 0, price: "25 зм", rent: "1 зм", capacity: 30, speed: "20 миль вниз по течению", description: "Вёсла в комплекте, против течения — медленно." },
+  { name: "Плот", kind: "transport", slots: 0, price: "5 зм", rent: "1 см", capacity: 15, speed: "10 миль вниз по течению", description: "Одноразовый, но дешёвый." },
+  { name: "Барка грузовая", kind: "transport", slots: 0, price: "150 зм", rent: "4 зм", capacity: 120, speed: "15 миль вниз по течению", description: "Нужна команда из двух гребцов." },
 ];
 
 /** Начальное снаряжение по навыку или знанию (1.4.5): кладётся в рюкзак. */
@@ -370,7 +423,7 @@ export const STARTER_KITS: Record<string, string[]> = {
   "Луки": ["Короткий лук", "Стрелы (20 шт.)"],
   "Арбалеты": ["Лёгкий арбалет", "Болты (20 шт.)"],
   "Метательное": ["Метательный дротик"],
-  "Кинжалы и ножи": ["Кинжал походный"],
+  "Кинжалы и ножи": ["Походный нож"],
   "Щиты": ["Круглый пехотный щит"],
   "Кулачный бой и захваты": ["Кастет"],
   // Сила
@@ -480,24 +533,24 @@ export const COMBAT_SKILLS: SkillDef[] = [
 /** Небоевые навыки (6.6): минимумы и ★ — как в книге. */
 export const NONCOMBAT_SKILLS: SkillDef[] = [
   { name: "Скалолазание и такелаж", kind: "noncombat", stat: "str", min: 9 },
-  { name: "Плавание", kind: "noncombat", stat: "str", min: 9 },
+  { name: "Плавание", kind: "noncombat", stat: "str", min: 9, starred: true },
   { name: "Гребля", kind: "noncombat", stat: "str", min: 9 },
   { name: "Возничество и обозы", kind: "noncombat", stat: "str", min: 8 },
   { name: "Борьба и захваты", kind: "noncombat", stat: "str", min: 10 },
-  { name: "Грубая сила", kind: "noncombat", stat: "str", min: 12, starred: true },
+  { name: "Грубая сила", kind: "noncombat", stat: "str", min: 12 },
   { name: "Копание и расчистка", kind: "noncombat", stat: "str", min: 10 },
   { name: "Кузнечное дело", kind: "noncombat", stat: "str", min: 12, starred: true },
-  { name: "Верховая езда", kind: "noncombat", stat: "dex", min: 9 },
+  { name: "Верховая езда", kind: "noncombat", stat: "dex", min: 10, starred: true },
   { name: "Скрытность", kind: "noncombat", stat: "dex", min: 10 },
   { name: "Маскировка и грим", kind: "noncombat", stat: "dex", min: 10 },
   { name: "Взлом замков", kind: "noncombat", stat: "dex", min: 12, starred: true },
   { name: "Поиск и снятие ловушек", kind: "noncombat", stat: "dex", min: 12, starred: true },
-  { name: "Ловкость рук", kind: "noncombat", stat: "dex", min: 12, starred: true },
+  { name: "Ловкость рук", kind: "noncombat", stat: "dex", min: 12 },
   { name: "Балансировка и акробатика", kind: "noncombat", stat: "dex", min: 12 },
   { name: "Огранка и ювелирное дело", kind: "noncombat", stat: "dex", min: 12, starred: true },
   { name: "Стрельба навскидку", kind: "noncombat", stat: "dex", min: 12 },
   { name: "Выносливость", kind: "noncombat", stat: "con", min: 12 },
-  { name: "Терпение", kind: "noncombat", stat: "con", min: 12, starred: true },
+  { name: "Терпение", kind: "noncombat", stat: "con", min: 12 },
   { name: "Сопротивление ядам и хворям", kind: "noncombat", stat: "con", min: 12 },
   { name: "Задержка дыхания и ныряние", kind: "noncombat", stat: "con", min: 10 },
   { name: "Бег и погоня", kind: "noncombat", stat: "con", min: 10 },
@@ -506,7 +559,7 @@ export const NONCOMBAT_SKILLS: SkillDef[] = [
 
 /** Продолжение небоевых навыков: Интеллект, Мудрость, Харизма. */
 export const NONCOMBAT_SKILLS_MENTAL: SkillDef[] = [
-  { name: "Грамота", kind: "noncombat", stat: "int", min: 9, starred: true },
+  { name: "Грамота", kind: "noncombat", stat: "int", min: 10, starred: true },
   { name: "Картография", kind: "noncombat", stat: "int", min: 12, starred: true },
   { name: "Оружейное и доспешное дело", kind: "noncombat", stat: "int", min: 12, starred: true },
   { name: "Механика и архитектура", kind: "noncombat", stat: "int", min: 12, starred: true },
@@ -546,7 +599,7 @@ export const KNOWLEDGE: SkillDef[] = [
   { name: "Богословие и сферы", kind: "knowledge", stat: "wis", min: 12, starred: true },
   { name: "Обычаи и запреты", kind: "knowledge", stat: "wis", min: 10 },
   { name: "Запреты и суеверия", kind: "knowledge", stat: "wis", min: 10 },
-  { name: "Природа и звери", kind: "knowledge", stat: "wis", min: 10 },
+  { name: "Природа и звери", kind: "knowledge", stat: "wis", min: 12 },
   { name: "География Пограничья", kind: "knowledge", stat: "int", min: 10 },
   { name: "Архитектура руин", kind: "knowledge", stat: "int", min: 12, starred: true },
   { name: "Механика и инженерия", kind: "knowledge", stat: "int", min: 12, starred: true },
@@ -629,8 +682,15 @@ export function isCoinItem(entry: InventoryItem): boolean {
   return findItem(entry.name)?.kind === "coins";
 }
 
+/** Сколько слотов занимают монеты одного номинала: медь легче, платина тяжелее. */
+export function coinSlotsFor(name: string, amount: number): number {
+  const perSlot = findItem(name)?.coinsPerSlot ?? 100;
+  const slots = Math.max(0, Number(amount) || 0) / Math.max(1, perSlot);
+  return Math.round(slots * 100) / 100;
+}
+
 export function coinsSlots(amount: number): number {
-  return Math.ceil(Math.max(0, Number(amount) || 0) / 100);
+  return coinSlotsFor(COIN_TYPES[2].name, amount);
 }
 
 export function itemSlots(entry: InventoryItem): number {
@@ -643,6 +703,14 @@ export function coinCount(inventory: InventoryItem[] | undefined): number {
   return (inventory ?? [])
     .filter((item) => findItem(item.name)?.kind === "coins")
     .reduce((sum, item) => sum + Math.max(0, Math.round(Number(item.qty) || 0)), 0);
+}
+
+/** Сколько слотов занимают все монеты инвентаря с учётом металла. */
+export function coinsInventorySlots(inventory: InventoryItem[] | undefined): number {
+  const slots = (inventory ?? [])
+    .filter((item) => findItem(item.name)?.kind === "coins")
+    .reduce((sum, item) => sum + coinSlotsFor(item.name, Number(item.qty) || 0), 0);
+  return Math.round(slots * 100) / 100;
 }
 
 /** Стоимость всех монет в золотых денариях. */
@@ -658,19 +726,20 @@ export function coinsAmount(inventory: InventoryItem[] | undefined): number {
   return coinsGoldValue(inventory);
 }
 
-/** Сколько слотов занимает инвентарь: монеты считаются по общей сумме. */
+/** Сколько слотов занимает инвентарь: монеты считаются по металлу и количеству. */
 export function inventorySlots(inventory: InventoryItem[] | undefined): number {
   const list = inventory ?? [];
   const nonCoins = list
     .filter((item) => findItem(item.name)?.kind !== "coins")
     .reduce((sum, item) => sum + itemSlots(item), 0);
-  return nonCoins + coinsSlots(coinCount(list));
+  return Math.round((nonCoins + coinsInventorySlots(list)) * 100) / 100;
 }
 
+/** Мелочь без слотов: дробный вес не считается «нулевым», поэтому таких предметов теперь нет. */
 export function zeroSlotCount(inventory: InventoryItem[] | undefined): number {
   return (inventory ?? []).filter((entry) => {
     const def = findItem(entry.name);
-    return def && def.kind !== "coins" && def.slots === 0;
+    return def && def.kind === "coins" && def.slots === 0 ? false : def?.slots === 0;
   }).length;
 }
 
@@ -707,7 +776,7 @@ export function inventoryBlockReason(
     }
   }
 
-  if (item.slots === 0 && zeroSlotCount(list) >= 4) {
+  if (item.slots === 0 && item.kind !== "animal" && item.kind !== "transport" && zeroSlotCount(list) >= 4) {
     return "Не больше четырёх предметов без слотов";
   }
 
@@ -747,7 +816,7 @@ export function overloadedIds(
     total += itemSlots(item);
     if (total > capacity) ids.add(item.id);
   }
-  total += coinsSlots(coinCount(inventory));
+  total += coinsInventorySlots(inventory);
   if (total > capacity) {
     for (const item of inventory ?? []) {
       if (findItem(item.name)?.kind === "coins") ids.add(item.id);
@@ -892,15 +961,15 @@ export function derive(character: DerivableCharacter): DerivedStats {
 
   const perLevel = 5 + conMod;
   const hpSuggested = Math.max(level, 8 + conMod + (level - 1) * perLevel);
-  const saveBonus = proficiencyBonus(level);
 
   return {
     hpSuggested,
     ac: armor.ac + cappedDex + shield.bonus,
+    // Испытания считаются как 10 + модификатор характеристики: 10 — «норма» мира.
     saves: {
-      fortitude: conMod + saveBonus,
-      reflexes: dexMod + saveBonus,
-      will: abilityMod(statValue(stats, "wis")) + saveBonus,
+      fortitude: 10 + conMod,
+      reflexes: 10 + dexMod,
+      will: 10 + abilityMod(statValue(stats, "wis")),
     },
     speed: "30 фт в бою · 120 фт за Ход",
     slots: statValue(stats, "str"),
@@ -997,3 +1066,131 @@ export function rollAbilityScores(method: AbilityMethod, random: () => number = 
 }
 
 
+/** Наёмники (2.6): плата за день, навыки и варианты снаряжения. */
+export interface MercenaryDef {
+  name: string;
+  role: string;
+  level: number;
+  /** Плата за день похода. */
+  wage: string;
+  /** Постоянные навыки и знания. */
+  skills: string[];
+  /** Из этого списка берётся случайный навык. */
+  randomSkills: string[];
+  /** Варианты снаряжения: берётся 2–3 позиции. */
+  equipment: string[];
+  note?: string;
+}
+
+export const MERCENARIES: MercenaryDef[] = [
+  {
+    name: "Горожанин с ремеслом",
+    role: "Мастеровой",
+    level: 0,
+    wage: "3 см в день",
+    skills: ["Убеждение и торг"],
+    randomSkills: ["Кузнечное дело", "Плотницкое дело", "Механика и архитектура", "Огранка и ювелирное дело"],
+    equipment: ["Грубая одежда", "Башмаки", "Походный нож"],
+    note: "Нужен для починки, торга и работы на лагере; в драку идёт последним.",
+  },
+  {
+    name: "Бродяга",
+    role: "Разнорабочий",
+    level: 0,
+    wage: "2 см в день",
+    skills: ["Выживание"],
+    randomSkills: ["Скрытность", "Внимание и бдительность", "Сбор слухов"],
+    equipment: ["Грубая одежда", "Сандалии", "Походный нож", "Бурдюк для воды"],
+    note: "Носит, копает, стоит на часах; знает городские закоулки.",
+  },
+  {
+    name: "Воин 1 уровня",
+    role: "Наёмник",
+    level: 1,
+    wage: "1 зм в день",
+    skills: ["Щиты"],
+    randomSkills: ["Мечи", "Дробящее", "Древковое"],
+    equipment: ["Короткий меч", "Кожаный доспех", "Круглый пехотный щит"],
+    note: "Держит строй и охраняет лагерь.",
+  },
+  {
+    name: "Воин 2 уровня",
+    role: "Ветеран отряда",
+    level: 2,
+    wage: "2 зм в день",
+    skills: ["Щиты", "Внимание и бдительность"],
+    randomSkills: ["Мечи", "Топоры и секиры", "Древковое"],
+    equipment: ["Длинный имперский меч", "Клепаная кожа", "Круглый пехотный щит", "Аптечка полевая"],
+    note: "Ходит в первый ряд и знает цену засадам.",
+  },
+  {
+    name: "Воин 3 уровня",
+    role: "Десятник",
+    level: 3,
+    wage: "4 зм в день",
+    skills: ["Щиты", "Командование и мораль"],
+    randomSkills: ["Мечи", "Топоры и секиры", "Кулачный бой и захваты"],
+    equipment: ["Двуручный меч", "Кольчужная рубаха", "Тяжёлый ростовой щит", "Сигнальный рожок"],
+    note: "Ведёт за собой трёх-четырёх бойцов.",
+  },
+  {
+    name: "Воин 4 уровня",
+    role: "Воитель",
+    level: 4,
+    wage: "8 зм в день",
+    skills: ["Щиты", "Командование и мораль", "Выносливость"],
+    randomSkills: ["Мечи", "Древковое", "Арбалеты"],
+    equipment: ["Лаоркандский полулатый", "Длинный имперский меч", "Круглый пехотный щит", "Боевой лаоркандский конь"],
+    note: "Тяжёлая пехота или конный бой; дорого и надёжно.",
+  },
+  {
+    name: "Вор 1 уровня",
+    role: "Ловчила",
+    level: 1,
+    wage: "8 см в день",
+    skills: ["Ловкость рук", "Взлом замков"],
+    randomSkills: ["Скрытность", "Маскировка и грим", "Балансировка и акробатика"],
+    equipment: ["Походный нож", "Инструменты взломщика", "Пеньковая верёвка (50 фт)"],
+    note: "Открывает двери и выносит кошельки.",
+  },
+  {
+    name: "Вор 2 уровня",
+    role: "Взломщик",
+    level: 2,
+    wage: "1 зм 5 см в день",
+    skills: ["Ловкость рук", "Взлом замков", "Поиск и снятие ловушек"],
+    randomSkills: ["Скрытность", "Оценка и сбыт", "Сбор слухов"],
+    equipment: ["Кривой кинжал", "Инструменты взломщика", "Набор для ловкости рук", "Фальшивая печать"],
+    note: "Проходит ловушки и договаривается со скупщиком.",
+  },
+  {
+    name: "Вор 3 уровня",
+    role: "Мастер теней",
+    level: 3,
+    wage: "3 зм в день",
+    skills: ["Ловкость рук", "Взлом замков", "Поиск и снятие ловушек", "Скрытность"],
+    randomSkills: ["Маскировка и грим", "Сбор слухов", "Оценка и сбыт"],
+    equipment: ["Стилет", "Инструменты взломщика", "Шёлковая верёвка (50 фт)"],
+    note: "Работает в чужом доме как у себя.",
+  },
+  {
+    name: "Жрец 1 уровня",
+    role: "Служитель",
+    level: 1,
+    wage: "1 зм в день",
+    skills: ["Богословие и сферы", "Полевая медицина"],
+    randomSkills: ["Травничество", "Погребальные обряды", "Знание духов и знамений"],
+    equipment: ["Символ бога", "Святая вода", "Аптечка полевая"],
+    note: "Лечит, освящает и знает, кого нельзя трогать.",
+  },
+  {
+    name: "Жрец 2 уровня",
+    role: "Настоятель",
+    level: 2,
+    wage: "2 зм 5 см в день",
+    skills: ["Богословие и сферы", "Полевая медицина", "Теология и оккультные запреты"],
+    randomSkills: ["Травничество", "Убеждение и торг", "Этикет и приличия"],
+    equipment: ["Символ бога", "Святая вода", "Набор трав", "Ладан и соль"],
+    note: "Держит общину и говорит с духами места.",
+  },
+];

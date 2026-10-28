@@ -1,12 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  charactersToJson,
-  downloadText,
-  exportCharacter,
-  type ExportFormat,
-} from "@/lib/characterExport";
+import { exportCharacter } from "@/lib/characterExport";
 import { canEdit, draftFromCharacter, emptyDraft } from "@/lib/characters";
 import { carryCapacity, coinsAmount, derive, inventorySlots } from "@/lib/rules";
 import type { Character, CharacterDraft, Player } from "@/lib/types";
@@ -69,11 +64,13 @@ export function CharactersPanel({
 
   const open = useCallback(
     (character: Character) => {
-      setMode({ kind: canEditCharacter(character) ? "edit" : "view", id: character.id });
+      // Открываем лист как обычный лист: поля у владельца и мастера редактируются сразу,
+      // навыки и знания — только при создании и на подъёме уровня.
+      setMode({ kind: "view", id: character.id });
       setDraft(draftFromCharacter(character));
       setError(null);
     },
-    [canEditCharacter],
+    [],
   );
 
   useEffect(() => {
@@ -192,12 +189,20 @@ export function CharactersPanel({
             canEdit={canEditSheet}
             busy={busy}
             error={error}
-            owner={selected?.owner ?? me}
+            owner={
+              selected && (selected.players?.length ?? 0) > 0
+                ? (selected.players ?? []).join(", ")
+                : (selected?.owner ?? me)
+            }
             onChange={setDraft}
             onSave={() => void save()}
             onCancel={cancelEdit}
             onEdit={startEdit}
             onDelete={() => void remove()}
+            onExport={(format) => {
+              if (selected) exportCharacter(selected, format);
+              else setError("Сначала сохраните персонажа");
+            }}
           />
         ) : (
           <div className="flex h-full items-center justify-center p-6">
@@ -221,35 +226,6 @@ export function CharactersPanel({
             <p className="text-[10px] text-zinc-600">{characters.length} в комнате</p>
           </div>
           <div className="flex items-center gap-1.5">
-            <select
-              value=""
-              onChange={(event) => {
-                const value = event.target.value;
-                event.currentTarget.value = "";
-                if (!value) return;
-                if (value === "all-json") {
-                  downloadText(
-                    `characters-${new Date().toISOString().slice(0, 10)}.json`,
-                    charactersToJson(characters),
-                    "application/json",
-                  );
-                  return;
-                }
-                if (!selected) {
-                  setError("Сначала откройте лист персонажа");
-                  return;
-                }
-                exportCharacter(selected, value as ExportFormat);
-              }}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-1.5 py-1.5 text-xs text-zinc-300"
-              title="Экспорт листа: JSON, HTML или PDF"
-            >
-              <option value="">Экспорт</option>
-              <option value="json">JSON</option>
-              <option value="html">HTML</option>
-              <option value="pdf">PDF (печать)</option>
-              <option value="all-json">Все листы (JSON)</option>
-            </select>
             <button
               type="button"
               onClick={startCreate}
@@ -304,9 +280,7 @@ export function CharactersPanel({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm text-zinc-100">{character.name}</span>
                     <span className="block truncate text-[10px] text-zinc-500">
-                      {assigned.length > 0
-                        ? `игроки: ${assigned.join(" · ")}`
-                        : `владелец: ${character.owner}`}
+                      {assigned.length > 0 ? assigned.join(" · ") : character.owner}
                     </span>
                     <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 font-mono text-[9px] text-zinc-500">
                       <span>ур. {character.level ?? 1}</span>

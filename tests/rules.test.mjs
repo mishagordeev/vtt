@@ -10,6 +10,8 @@ import {
   abilityMod,
   carryCapacity,
   coinCount,
+  coinSlotsFor,
+  itemSlots,
   coinsAmount,
   derive,
   findItem,
@@ -67,12 +69,28 @@ test("производные числа: ОЗ, КБ, испытания", () => 
     ],
   });
   assert.equal(derived.hpSuggested, 10);
-  assert.equal(derived.ac, 18);
-  assert.equal(derived.saves.fortitude, 4);
-  assert.equal(derived.saves.reflexes, 5);
-  assert.equal(derived.saves.will, 3);
+  assert.equal(derived.ac, 19);
+  // Испытания: 10 + модификатор характеристики (Тел +2, Лов +3, Мдр +1).
+  assert.equal(derived.saves.fortitude, 12);
+  assert.equal(derived.saves.reflexes, 13);
+  assert.equal(derived.saves.will, 11);
   assert.equal(derived.slots, 16);
   assert.equal(derived.companions, 1);
+});
+
+test("вес предметов дробный, монеты — по металлу", () => {
+  assert.equal(itemSlots({ id: "a", name: "Трутница", location: "backpack" }), 0.1);
+  assert.equal(itemSlots({ id: "b", name: "Худ", location: "backpack" }), 0.1);
+  assert.equal(coinSlotsFor("Медные марки", 200), 1);
+  assert.equal(coinSlotsFor("Серебряные дирхемы", 150), 1);
+  assert.equal(coinSlotsFor("Золотые денарии", 100), 1);
+  assert.equal(coinSlotsFor("Платиновые диски", 50), 1);
+  const slots = inventorySlots([
+    { id: "c", name: "Золотые денарии", location: "backpack", qty: 100 },
+    { id: "d", name: "Медные марки", location: "backpack", qty: 200 },
+    { id: "e", name: "Трутница", location: "backpack" },
+  ]);
+  assert.equal(slots, 2.1);
 });
 
 test("тяжёлый доспех ограничивает Ловкость, уровень повышает ОЗ", () => {
@@ -96,6 +114,20 @@ test("каталог навыков целостен", () => {
   }
   assert.equal(SKILLS.filter((skill) => skill.kind === "combat").length, 10);
   assert.equal(SKILLS.filter((skill) => skill.kind === "knowledge").length, 23);
+  // Минимумы из происхождений (правки пользователя — источник истины).
+  assert.equal(findSkill("Грамота")?.min, 10);
+  assert.equal(findSkill("Верховая езда")?.min, 10);
+  assert.equal(findSkill("Природа и звери")?.min, 12);
+});
+
+test("вес монет зависит от металла", () => {
+  assert.equal(findItem("Медные марки")?.coinsPerSlot, 200);
+  assert.equal(findItem("Серебряные дирхемы")?.coinsPerSlot, 150);
+  assert.equal(findItem("Золотые денарии")?.coinsPerSlot, 100);
+  assert.equal(findItem("Платиновые диски")?.coinsPerSlot, 50);
+  assert.equal(coinSlotsFor("Серебряные дирхемы", 300), 2);
+  assert.equal(coinSlotsFor("Медные марки", 400), 2);
+  assert.equal(coinSlotsFor("Платиновые диски", 25), 0.5);
 });
 
 test("уточнения языков и традиций находят базовую запись", () => {
@@ -231,12 +263,12 @@ test("у каждого навыка и знания есть стартовый
   }
 });
 
-test("монеты лежат в рюкзаке: 1 слот за 100", () => {
+test("монеты: вес зависит от металла", () => {
   const stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
   const inventory = [
     { id: "coins", name: "Монеты", location: "backpack", qty: 250 },
   ];
-  assert.equal(inventorySlots(inventory), 3);
+  assert.equal(inventorySlots(inventory), 2.5);
   assert.equal(coinsAmount(inventory), 250);
   assert.equal(zeroSlotCount(inventory), 0);
   const coins = findItem("Монеты");
@@ -252,7 +284,7 @@ test("четыре номинала монет считаются одной с�
     { id: "pm", name: "Платиновые диски", location: "backpack", qty: 1 },
   ];
   assert.equal(coinCount(inventory), 171);
-  assert.equal(inventorySlots(inventory), 2);
+  assert.equal(inventorySlots(inventory), 1.42);
   assert.equal(Math.round(coinsAmount(inventory) * 100) / 100, 113.4);
   assert.equal(zeroSlotCount(inventory), 0);
 });
@@ -315,17 +347,19 @@ test("руки: 1 оружие + щит, 2 одноручных, 1 двуруч�
   );
 });
 
-test("не больше четырёх предметов без слотов и перегруз", () => {
+test("вес без слотов: мелочь занимает дробные слоты", () => {
   const stats = { str: 2, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
   const chalk = findItem("Мел (коробок)");
   assert.ok(chalk);
+  assert.equal(chalk.slots, 0.1);
   const four = Array.from({ length: 4 }, (_, index) => ({
     id: `z${index}`,
     name: "Мел (коробок)",
     location: "backpack",
   }));
-  assert.equal(zeroSlotCount(four), 4);
-  assert.match(inventoryBlockReason(four, stats, chalk, "backpack") ?? "", /четырёх/);
+  assert.equal(zeroSlotCount(four), 0);
+  assert.equal(inventorySlots(four), 0.4);
+  assert.equal(inventoryBlockReason(four, stats, chalk, "backpack"), null);
 
   const heavy = [
     { id: "a", name: "Кольчужная рубаха", location: "hands" },

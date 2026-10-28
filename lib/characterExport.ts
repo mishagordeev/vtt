@@ -185,8 +185,11 @@ export function characterToHtml(character: Character): string {
       <h1>${esc(character.name)}</h1>
       <div class="meta">
         ${esc(RULES.game)} · уровень ${esc(character.level ?? 1)} · ${esc(character.origin || "происхождение не выбрано")}
-        <br>Владелец: ${esc(character.owner)}
-        ${(character.players ?? []).length ? ` · игроки: ${esc((character.players ?? []).join(", "))}` : ""}
+        <br>${esc(
+          (character.players ?? []).length > 0
+            ? (character.players ?? []).join(", ")
+            : character.owner,
+        )}
       </div>
     </div>
   </div>

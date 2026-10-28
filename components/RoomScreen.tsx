@@ -53,6 +53,7 @@ export default function RoomScreen({ code }: { code: string }) {
   const [lastSyncAt, setLastSyncAt] = useState(0);
   const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
   const [profileFor, setProfileFor] = useState<string | null>(null);
+  const [knownPlayers, setKnownPlayers] = useState<Player[]>([]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
@@ -176,11 +177,18 @@ export default function RoomScreen({ code }: { code: string }) {
     bootedRef.current = true;
     const saved =
       window.localStorage.getItem(nameKey(code)) ?? window.localStorage.getItem("pp:name");
-    if (saved) {
-      void join(saved);
-    } else {
-      setPhase("join");
-    }
+    // Сначала узнаём, кто уже за столом: имена подскажем списком, а сохранённое —
+    // сразу используем для входа без вопросов.
+    void (async () => {
+      try {
+        const info = await api<{ players: Player[] }>(`/api/rooms/${code}/players`);
+        setKnownPlayers(info.players);
+      } catch {
+        setKnownPlayers([]);
+      }
+      if (saved) void join(saved);
+      else setPhase("join");
+    })();
   }, [code, join]);
 
   // Запросы в базу — только по действиям. Фонового опроса по таймеру нет:
@@ -472,7 +480,13 @@ export default function RoomScreen({ code }: { code: string }) {
 
   if (phase === "join") {
     return (
-      <JoinGate code={code} error={joinError} busy={joinBusy} onJoin={(name) => void join(name)} />
+      <JoinGate
+        code={code}
+        error={joinError}
+        busy={joinBusy}
+        players={knownPlayers}
+        onJoin={(name) => void join(name)}
+      />
     );
   }
 
@@ -552,9 +566,13 @@ export default function RoomScreen({ code }: { code: string }) {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section
-          className={tab === "table" ? "hidden min-h-0 flex-1 lg:block" : "min-h-0 flex-1"}
+          className={
+            tab === "table"
+              ? "scroll-thin min-h-0 flex-1 overflow-y-auto lg:block lg:flex-1"
+              : "scroll-thin min-h-0 flex-1 overflow-y-auto"
+          }
         >
           {tab === "table" ? (
             <DeskPanel
@@ -593,7 +611,7 @@ export default function RoomScreen({ code }: { code: string }) {
 
         <section
           className={`min-h-0 flex-col border-zinc-800/80 lg:flex lg:w-[420px] lg:flex-none lg:border-l xl:w-[460px] ${
-            tab === "table" ? "flex flex-1" : "hidden"
+            tab === "table" ? "flex min-h-[46vh] flex-1 lg:min-h-0" : "hidden"
           }`}
         >
           <MusicPlaylist

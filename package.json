@@ -1,6 +1,6 @@
 {
   "name": "poison-press",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "private": true,
   "description": "VTT для настольной игры «Вторые»: чат, броски, персонажи",
   "scripts": {
@@ -8,7 +8,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/dice.test.mjs tests/rules.test.mjs tests/youtube.test.mjs"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/dice.test.mjs tests/rules.test.mjs tests/youtube.test.mjs",
+    "rules:catalog": "node tools/export-rules.cjs",
+    "rules:books": "node tools/export-rules.cjs && node tools/sync-books.cjs"
   },
   "dependencies": {
     "next": "^15.5.0",
