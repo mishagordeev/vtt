@@ -10,6 +10,10 @@
  * небесные тела, фазы двух лун и погода с ветром. Всё это придумано под
  * Кас-Хатар и живёт в одном месте, чтобы лист, стол и книга не расходились.
  *
+ * Месяцы названы по ассирийско-вавилонскому счёту: полное имя для грамот и
+ * писцов — «Нисану», «Айяру», а на базаре говорят коротко — «Нисан», «Аяр».
+ * Климат Пограничья — резко континентальная степь: см. `CLIMATE_NOTE`.
+ *
  * Тот же текст выгружается в базу знаний: `npm run calendar:book`
  * (`tools/export-calendar.cjs` → `../Vtorye/Кас-Хатар_Календарь_и_небо.md`).
  */
@@ -23,7 +27,7 @@ export interface GameMonth {
   name: string;
   /** Имперское имя для грамотных и писцов. */
   imperial: string;
-  /** Родительный падеж для даты: «12 Травеня». */
+  /** Родительный падеж для даты: «12 Симана». */
   genitive: string;
   season: string;
   /** Короткая примета месяца. */
@@ -81,20 +85,26 @@ export const WEEKDAYS = [
   "День Огня",
 ] as const;
 
+/**
+ * Месяцы: короткое имя — как говорят в степи и на базаре, имперское — как пишут
+ * писцы и грамоты (ассирийско-вавилонский счёт). Приметы — про резко
+ * континентальный климат: короткая весна, сухое жаркое лето, малоснежная стужа.
+ */
 export const MONTHS: GameMonth[] = [
-  { index: 1, name: "Сеятель", imperial: "Примус", genitive: "Сеятеля", season: "весна", note: "Пахота, первый караван, грязь на трактах." },
-  { index: 2, name: "Ветрень", imperial: "Секундус", genitive: "Ветреня", season: "весна", note: "Степные ветры гонят пыль, ночи ещё холодные." },
-  { index: 3, name: "Травень", imperial: "Терциус", genitive: "Травеня", season: "весна", note: "Трава встаёт, на трактах открывается переезд." },
-  { index: 4, name: "Медовник", imperial: "Квартус", genitive: "Медовника", season: "лето", note: "Свадьбы, торг, первая жара." },
-  { index: 5, name: "Зной", imperial: "Квинтус", genitive: "Зноя", season: "лето", note: "Солнце над Дворцом стоит высоко; работы — до полудня." },
-  { index: 6, name: "Суховей", imperial: "Секстус", genitive: "Суховея", season: "лето", note: "Колодцы мелеют, по степи идёт горячий ветер." },
-  { index: 7, name: "Жатвень", imperial: "Септимус", genitive: "Жатвеня", season: "осень", note: "Уборка, счёт зерна и долгов." },
-  { index: 8, name: "Багрянец", imperial: "Октавус", genitive: "Багрянца", season: "осень", note: "Трава рыжеет, караваны идут на юг." },
-  { index: 9, name: "Листобой", imperial: "Новем", genitive: "Листобоя", season: "осень", note: "Дожди, последние переходы до снега." },
-  { index: 10, name: "Грязень", imperial: "Децим", genitive: "Грязня", season: "зима", note: "Распутица, в город приходит тихая подать." },
-  { index: 11, name: "Морозень", imperial: "Ундецим", genitive: "Морозеня", season: "зима", note: "Короткий день, долгие вечера у огня." },
-  { index: 12, name: "Стужень", imperial: "Дуодецим", genitive: "Стуженя", season: "зима", note: "Самые долгие ночи; степь пуста." },
+  { index: 1, name: "Нисан", imperial: "Нисану", genitive: "Нисана", season: "весна", note: "Снег сходит за неделю, ночи ещё морозные, тракты — в грязи." },
+  { index: 2, name: "Аяр", imperial: "Айяру", genitive: "Аяра", season: "весна", note: "Пыльные ветры и сухие грозы; случаются возвратные заморозки." },
+  { index: 3, name: "Симан", imperial: "Симану", genitive: "Симана", season: "весна", note: "Трава встаёт по пояс, переезд открыт; первые ливни с градом." },
+  { index: 4, name: "Дузу", imperial: "Ду'узу", genitive: "Дузу", season: "лето", note: "Солнцестояние: пекло к полудню, к вечеру — стена грозы." },
+  { index: 5, name: "Абу", imperial: "Абу", genitive: "Абу", season: "лето", note: "Самая жара: ручьи пересыхают, работы — до восхода, в тени +40." },
+  { index: 6, name: "Улул", imperial: "Улулу", genitive: "Улула", season: "лето", note: "Суховеи и пыльные бури; колодцы мелеют, скот гонят к реке." },
+  { index: 7, name: "Ташрит", imperial: "Ташриту", genitive: "Ташрита", season: "осень", note: "Жатва и счёт зерна; дни тёплые и сухие, ночи уже холодные." },
+  { index: 8, name: "Самна", imperial: "Арахсамну", genitive: "Самны", season: "осень", note: "Бабье лето: днём +20, к утру иней; караваны идут на юг." },
+  { index: 9, name: "Кислим", imperial: "Кислиму", genitive: "Кислима", season: "осень", note: "Резкий ветер, мокрый снег и распутица; первые бураны." },
+  { index: 10, name: "Тебет", imperial: "Тебету", genitive: "Тебета", season: "зима", note: "Морозы до −25, снега мало: степь звенит под копытом." },
+  { index: 11, name: "Шват", imperial: "Шабату", genitive: "Швата", season: "зима", note: "Самые стылые ночи и короткий день; по степи идёт позёмка." },
+  { index: 12, name: "Адар", imperial: "Адару", genitive: "Адара", season: "зима", note: "Морозы ломаются, оттепели и гололёд; к концу — капель." },
 ];
+
 
 export const HOLIDAYS: Holiday[] = [
   { month: 1, day: 1, name: "Первый Вспах", note: "Начало года: первый раз режут землю. В этот день не начинают войн и не подписывают долгов." },
@@ -114,7 +124,7 @@ export const HOLIDAYS: Holiday[] = [
 export const SILENT_NOTE =
   "Пять Немых дней стоят между годами: время в них не считают, сделки не заключают, " +
   "долги не отдают, детей не называют. Кто родился в Немой день — «без числа», и " +
-  "натальную карту ему читают по последнему дню Стуженя.";
+  "натальную карту ему читают по последнему дню Адара.";
 
 export const CELESTIALS: CelestialBody[] = [
   { name: "Око", kind: "солнце", note: "Солнце Пограничья: белое, злое, летом выжигает траву до пыли." },
@@ -244,7 +254,7 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-/** Номер дня от 1 Сеятеля текущего года: 0 — первый день календаря. */
+/** Номер дня от 1 Нисана текущего года: 0 — первый день календаря. */
 export function dayIndex(year: number, month: number, day: number): number {
   const safeYear = Math.max(FIRST_YEAR, Math.round(year));
   const safeMonth = Math.max(1, Math.min(12, Math.round(month)));
@@ -261,7 +271,7 @@ export interface GameDateInfo {
   /** 1–30; для Немых дней — 1–5. */
   day: number;
   silent: boolean;
-  /** «12 Травеня 214 г. от Ворот». */
+  /** «12 Симана 214 г. от Ворот». */
   label: string;
   /** «12.03». */
   short: string;
@@ -348,6 +358,8 @@ const MOONS = CELESTIALS.filter((body) => body.kind === "луна" && body.cycle
 export interface MoonState {
   name: string;
   phase: string;
+  /** 0–7: новая, серп на прибыли, первая четверть … серп на убыли — для значка. */
+  phaseIndex: number;
   /** Доля освещённого диска 0–1 — для рисунка. */
   lit: number;
 }
@@ -360,7 +372,7 @@ export function moonPhases(index: number): MoonState[] {
     const step = safe % cycle;
     const slot = Math.floor((step / cycle) * 8) % 8;
     const lit = Math.round((Math.abs(4 - slot) / 4) * 100) / 100;
-    return { name: body.name, phase: MOON_PHASES[slot], lit };
+    return { name: body.name, phase: MOON_PHASES[slot], phaseIndex: slot, lit };
   });
 }
 
@@ -394,7 +406,7 @@ export function formatBirth(day: number, month: number): string {
 
 export interface NatalChart {
   birth: BirthDate;
-  /** «12 Травеня». */
+  /** «12 Симана». */
   dayLabel: string;
   month: GameMonth;
   season: string;
@@ -465,20 +477,63 @@ export function natalChart(day: number, month: number): NatalChart | null {
 
 /* --------------------------------------------------------------- погода */
 
-/** Средняя дневная температура по месяцам (1–12); Немые дни — самые стылые. */
-const BASE_TEMPERATURE = [12, 16, 21, 26, 31, 33, 28, 21, 15, 8, 2, -2];
-const SILENT_TEMPERATURE = -4;
+/**
+ * Климат Пограничья — резко континентальный, степной: зима стылая и
+ * малоснежная, лето сухое и жаркое, а сутки гуляют на 9–16 градусов. Дождей
+ * мало, зато приходят ливни с градом, суховеи и пыльные бури. Так бывает в
+ * низовьях большой реки или на равнинах за океаном — Волгоград, Техас.
+ */
+export const CLIMATE_NOTE =
+  "Климат Пограничья резко континентальный, степной: зима стылая и малоснежная " +
+  "(до −25°), лето сухое и жаркое (до +40°), суточный размах 9–16°. Осадков за год " +
+  "около 380 мм — и почти все выпадают ливнями и грозами в конце весны и в начале " +
+  "лета; зимой снега мало, его сдувает ветром в балки. Часты суховеи, пыльные бури " +
+  "и возвратные заморозки, которые бьют всходы в Аяре и Самне.";
 
-/** Поправка на время суток: до рассвета холоднее, после полудня жарче. */
-function hourShift(hour: number): number {
+/** Средняя температура месяца (1–12), градусы. */
+export const MONTH_TEMPERATURE = [2, 10, 17, 23, 26, 24, 17, 9, 1, -5, -7, -6];
+
+/** Средний суточный размах: от предрассветного минимума до полуденного пика. */
+export const MONTH_RANGE = [12, 14, 16, 16, 16, 15, 14, 14, 12, 10, 9, 10];
+
+/** Немые дни — самые стылые в году. */
+const SILENT_TEMPERATURE = -9;
+const SILENT_RANGE = 9;
+
+/**
+ * Ход температуры за сутки: доля суточного размаха. Минимум — перед рассветом,
+ * пик — между 13 и 16 часами. Поэтому в степи ночью надевают тулуп, а к полудню
+ * ищут тень: разница в 16 градусов здесь обычное дело.
+ */
+function dayCurve(hour: number): number {
   const safe = ((Math.floor(hour) % 24) + 24) % 24;
-  if (safe < 5) return -6;
-  if (safe < 8) return -4;
-  if (safe < 11) return -1;
-  if (safe < 16) return 3;
-  if (safe < 19) return 1;
-  if (safe < 22) return -2;
-  return -5;
+  if (safe < 3) return -0.45;
+  if (safe < 5) return -0.5;
+  if (safe < 7) return -0.4;
+  if (safe < 9) return -0.25;
+  if (safe < 11) return -0.05;
+  if (safe < 13) return 0.2;
+  if (safe < 16) return 0.5;
+  if (safe < 18) return 0.35;
+  if (safe < 20) return 0.15;
+  if (safe < 22) return -0.1;
+  return -0.3;
+}
+
+/** Что падает с неба. */
+export type PrecipitationKind =
+  | "дождь"
+  | "ливень"
+  | "гроза"
+  | "град"
+  | "снег"
+  | "крупа"
+  | "мокрый снег";
+
+export interface Precipitation {
+  kind: PrecipitationKind;
+  /** Сколько выпадет за блок в четыре часа, мм. */
+  mm: number;
 }
 
 export interface WeatherKind {
@@ -488,21 +543,40 @@ export interface WeatherKind {
   effect: string;
   /** Поправка к температуре. */
   shift: number;
-  /** Бывает только в тёплые месяцы (средняя ≥ 20°). */
-  warm?: boolean;
-  /** Бывает только в холодные месяцы (средняя ≤ 4°). */
-  cold?: boolean;
+  /** Облачность, % неба. */
+  cloud: number;
+  /** Осадки за четыре часа; без поля — сухо. */
+  precip?: { kind: PrecipitationKind; min: number; max: number };
+  /** Бывает, только если средняя месяца не ниже этого значения. */
+  minTemp?: number;
+  /** Бывает, только если средняя месяца не выше этого значения. */
+  maxTemp?: number;
   /** Сдвиг силы ветра: 0 — как выпало, 3 — почти всегда крепкий. */
   windShift?: number;
+  /** Вес при выборе: чаще ясно и сухо, реже — буря и град. */
+  weight?: number;
 }
+
 
 export const WEATHER_KINDS: WeatherKind[] = [
   {
     key: "clear",
     title: "Ясно",
-    text: "Небо белое от зноя, тени короткие и жёсткие. Над Солнечным Дворцом дрожит воздух.",
+    text: "Небо вымыто до белизны, тени короткие и жёсткие; к полудню над степью дрожит воздух.",
     effect: "Видно далеко; на открытом месте заметят и вас.",
     shift: 3,
+    cloud: 5,
+    weight: 4,
+  },
+  {
+    key: "wind",
+    title: "Степной ветер",
+    text: "Ровный ветер идёт по ковылю волной, несёт семена, сухую траву и пыль.",
+    effect: "Стрелять и бросать на ветер — −1; огонь разводить труднее.",
+    shift: -1,
+    cloud: 20,
+    windShift: 1,
+    weight: 3,
   },
   {
     key: "haze",
@@ -510,45 +584,61 @@ export const WEATHER_KINDS: WeatherKind[] = [
     text: "Мелкая пыль висит в воздухе, скрипит на зубах и оседает на мокром.",
     effect: "−1 к Вниманию на дистанции: дальние ориентиры плывут.",
     shift: 2,
+    cloud: 30,
+    minTemp: 5,
+    weight: 2,
   },
   {
     key: "dust",
+    title: "Пыльная буря",
+    text: "Стена рыжей пыли идёт от горизонта: солнце становится медным, дышать нечем, дороги нет.",
+    effect: "Видно на 60 фт, следы заносит; без мокрой тряпки на лице — испытание Телосложения.",
+    shift: 4,
+    cloud: 70,
+    minTemp: 15,
+    windShift: 3,
+    weight: 1,
+  },
+  {
+    key: "dryStorm",
+    title: "Сухая гроза",
+    text: "Молнии бьют в сухую степь, дождя нет: за рекой уже горит ковыль и пахнет гарью.",
+    effect: "Пожары идут по ветру; открытый огонь опасен, звери бегут прочь.",
+    shift: 4,
+    cloud: 60,
+    minTemp: 20,
+    windShift: 2,
+    weight: 1,
+  },
+  {
+    key: "sukhovei",
     title: "Суховей",
     text: "Горячий ветер несёт песок; губы трескаются за час, вода уходит вдвое быстрее.",
     effect: "Норма воды удваивается, испытания Телосложения против жары.",
     shift: 7,
-    warm: true,
+    cloud: 15,
+    minTemp: 22,
     windShift: 2,
+    weight: 2,
+  },
+  {
+    key: "heat",
+    title: "Пекло",
+    text: "Воздух стоит и дрожит, земля трескается, даже птицы молчат до заката.",
+    effect: "Испытание Телосложения каждый час; тяжёлую работу делать только до восхода и после заката.",
+    shift: 9,
+    cloud: 5,
+    minTemp: 25,
+    weight: 1,
   },
   {
     key: "overcast",
     title: "Пасмурно",
-    text: "Серое небо без просвета, свет ровный и вязкий.",
+    text: "Серое небо без просвета, свет ровный и вязкий; степь кажется шире, чем есть.",
     effect: "Тени пропадают: хорошо идти скрытно, плохо ориентироваться.",
     shift: 1,
-  },
-  {
-    key: "drizzle",
-    title: "Морось",
-    text: "Мелкая сырость без капель: одежда мокрая, а дождя будто нет.",
-    effect: "Трут, тетива и порох отсыревают; −1 к дальним броскам.",
-    shift: 0,
-  },
-  {
-    key: "rain",
-    title: "Дождь",
-    text: "Ровный тяжёлый дождь: глина на трактах превращается в мыло.",
-    effect: "Скорость перехода −25%, следы на земле остаются надолго.",
-    shift: -2,
-  },
-  {
-    key: "storm",
-    title: "Гроза",
-    text: "Стена дождя идёт с севера, гром бьёт по степи, как обвал в шахте.",
-    effect: "Дальние броски невозможны, огонь гасить; зато следы смывает.",
-    shift: -3,
-    warm: true,
-    windShift: 2,
+    cloud: 90,
+    weight: 2,
   },
   {
     key: "fog",
@@ -556,15 +646,90 @@ export const WEATHER_KINDS: WeatherKind[] = [
     text: "Молоко до земли; в тумане слышно, как перекликаются чужие голоса.",
     effect: "Видно на 30 фт: скрытность +2, Внимание −2.",
     shift: -2,
+    cloud: 60,
     windShift: -2,
+    minTemp: 2,
+    weight: 1,
+  },
+  {
+    key: "drizzle",
+    title: "Морось",
+    text: "Мелкая сырость без капель: одежда мокрая, а дождя будто нет.",
+    effect: "Трут, тетива и порох отсыревают; −1 к дальним броскам.",
+    shift: 0,
+    cloud: 85,
+    precip: { kind: "дождь", min: 0.2, max: 1 },
+    minTemp: 3,
+    weight: 1,
+  },
+  {
+    key: "rain",
+    title: "Дождь",
+    text: "Ровный тяжёлый дождь: глина на трактах превращается в мыло, балки наполняются.",
+    effect: "Скорость перехода −25%, следы на земле остаются надолго.",
+    shift: -2,
+    cloud: 95,
+    precip: { kind: "дождь", min: 2, max: 6 },
+    minTemp: 3,
+    weight: 2,
+  },
+  {
+    key: "shower",
+    title: "Ливень",
+    text: "Стена воды падает за минуту: низины стоят под водой, сухие русла ревут.",
+    effect: "Переходы через балки — с риском; следы смывает начисто.",
+    shift: -3,
+    cloud: 95,
+    precip: { kind: "ливень", min: 8, max: 22 },
+    minTemp: 14,
+    windShift: 1,
+    weight: 2,
+  },
+  {
+    key: "thunderstorm",
+    title: "Гроза",
+    text: "Стена дождя идёт с севера, гром бьёт по степи, как обвал в шахте.",
+    effect: "Дальние броски невозможны, огонь гасить; зато следы смывает.",
+    shift: -3,
+    cloud: 90,
+    precip: { kind: "гроза", min: 5, max: 16 },
+    minTemp: 14,
+    windShift: 2,
+    weight: 2,
+  },
+  {
+    key: "hail",
+    title: "Град",
+    text: "С неба бьёт ледяная дробь — с горошину, а то и с орех; за десять минут крупа валит траву.",
+    effect: "Без укрытия — 1 урон от града каждый час; коней держать под попоной.",
+    shift: -4,
+    cloud: 90,
+    precip: { kind: "град", min: 4, max: 12 },
+    minTemp: 16,
+    windShift: 2,
+    weight: 1,
   },
   {
     key: "snow",
-    title: "Снежная крупа",
-    text: "Жёсткая крупа бьёт по лицу и забивает следы.",
-    effect: "Следы не читаются; −1 к проверкам Ловкости на льду.",
+    title: "Снег",
+    text: "Сухая крупа и медленные хлопья; снег лежит недолго — степь сдувает его в балки.",
+    effect: "Следы не читаются; −1 к проверкам Ловкости на скользком.",
     shift: -1,
-    cold: true,
+    cloud: 90,
+    precip: { kind: "снег", min: 1, max: 5 },
+    maxTemp: 1,
+    weight: 2,
+  },
+  {
+    key: "wetSnow",
+    title: "Мокрый снег",
+    text: "Тяжёлый снег с дождём: одежда набухает, дороги раскисают за час.",
+    effect: "Одежда не сохнет; ночевать в мокром — риск переохлаждения.",
+    shift: 0,
+    cloud: 90,
+    precip: { kind: "мокрый снег", min: 2, max: 6 },
+    maxTemp: 3,
+    weight: 2,
   },
   {
     key: "blizzard",
@@ -572,8 +737,64 @@ export const WEATHER_KINDS: WeatherKind[] = [
     text: "Степь исчезает: белое на белом, дороги нет, есть только ветер.",
     effect: "Переходы только по верёвке; проверка Выживания каждый час.",
     shift: -6,
-    cold: true,
+    cloud: 95,
+    precip: { kind: "крупа", min: 3, max: 9 },
+    maxTemp: 0,
     windShift: 3,
+    weight: 1,
+  },
+  {
+    key: "iceFog",
+    title: "Морозный туман",
+    text: "Клубы морозного тумана оседают куржаком: полынь, кусты и усы белые от инея.",
+    effect: "Видно на 60 фт; к утру куржак, к вечеру — гололёд.",
+    shift: -3,
+    cloud: 55,
+    maxTemp: 2,
+    windShift: -2,
+    weight: 1,
+  },
+  {
+    key: "frostSun",
+    title: "Студёное солнце",
+    text: "Солнце светит и не греет: тени синие, воздух щиплет щёки, снег скрипит под копытом.",
+    effect: "Видно далеко; открытые лица и руки — испытание Телосложения при долгом переходе.",
+    shift: -3,
+    cloud: 10,
+    maxTemp: 0,
+    weight: 2,
+  },
+  {
+    key: "hardFrost",
+    title: "Стужа",
+    text: "Мороз крепчает к рассвету; снег звенит, как стекло, и железо липнет к рукам.",
+    effect: "Ночёвка без огня — испытание Телосложения; вода и вино замерзают.",
+    shift: -8,
+    cloud: 10,
+    maxTemp: -3,
+    weight: 2,
+  },
+  {
+    key: "thaw",
+    title: "Оттепель",
+    text: "Среди зимы пахнет весной: снег оседает, тракты раскисают, в балках прибывает вода.",
+    effect: "Переходы медленнее на треть; к ночи грязь снова встанет льдом.",
+    shift: 6,
+    cloud: 75,
+    precip: { kind: "мокрый снег", min: 0.5, max: 2 },
+    maxTemp: 1,
+    weight: 1,
+  },
+  {
+    key: "morning",
+    title: "Утренник",
+    text: "К рассвету ударил заморозок: лужи встали ледком, трава и всходы сизые.",
+    effect: "Всходы и урожай гибнут; вода в бурдюках к утру — лёд, днём будет тепло.",
+    shift: -8,
+    cloud: 15,
+    minTemp: 2,
+    maxTemp: 22,
+    weight: 1,
   },
 ];
 
@@ -613,8 +834,15 @@ export interface WeatherInfo {
   title: string;
   text: string;
   effect: string;
-  /** Температура в градусах. */
+  /** Температура сейчас, в градусах. */
   temperature: number;
+  /** Климатическая норма суток: ночной минимум и дневной максимум — по ним виден размах. */
+  low: number;
+  high: number;
+  /** Облачность, % неба. */
+  cloud: number;
+  /** Осадки за блок в четыре часа; null — сухо. */
+  precipitation: Precipitation | null;
   wind: WindInfo;
 }
 
@@ -641,26 +869,62 @@ function seeded(seed: number): () => number {
   };
 }
 
+/** Взвешенный выбор: чаще выпадает ясно и сухо, реже — буря и град. */
+function pickWeighted(kinds: WeatherKind[], roll: number): WeatherKind {
+  const total = kinds.reduce((sum, kind) => sum + (kind.weight ?? 1), 0);
+  let left = roll * total;
+  for (const kind of kinds) {
+    left -= kind.weight ?? 1;
+    if (left <= 0) return kind;
+  }
+  return kinds[kinds.length - 1] ?? WEATHER_KINDS[0];
+}
+
+/** Миллиметры с одним знаком: морось — 0.4 мм, ливень — 17.2 мм. */
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 /**
  * Погода на день и час. Меняется раз в четыре часа; одинаковые день, час и
  * seed дают одинаковый результат у всех за столом. Мастер «перебрасывает»
  * погоду, меняя seed.
+ *
+ * Температура считается от средней по месяцу (резко континентальный климат)
+ * с суточным ходом и поправкой на погоду; рядом отдаются минимум и максимум
+ * суток, облачность в процентах и осадки в миллиметрах за блок.
  */
 export function weatherAt(dayNumber: number, hour: number, seed = 0): WeatherInfo {
   const info = describeDay(dayNumber);
-  const base = info.silent ? SILENT_TEMPERATURE : BASE_TEMPERATURE[info.month - 1] ?? 10;
+  const base = info.silent ? SILENT_TEMPERATURE : MONTH_TEMPERATURE[info.month - 1] ?? 10;
+  const range = info.silent ? SILENT_RANGE : MONTH_RANGE[info.month - 1] ?? 12;
   const safeHour = ((Math.floor(hour) % 24) + 24) % 24;
   const block = Math.floor(safeHour / 4);
   const random = seeded(seedHash(dayNumber, block, seed));
 
   const available = WEATHER_KINDS.filter((kind) => {
-    if (kind.warm && base < 20) return false;
-    if (kind.cold && base > 4) return false;
+    if (kind.minTemp !== undefined && base < kind.minTemp) return false;
+    if (kind.maxTemp !== undefined && base > kind.maxTemp) return false;
     return true;
   });
-  const kind = available[Math.floor(random() * available.length)] ?? WEATHER_KINDS[0];
+  const pool = available.length > 0 ? available : WEATHER_KINDS;
+  const kind = pickWeighted(pool, random());
 
-  const temperature = Math.round(base + hourShift(safeHour) + kind.shift + (random() * 5 - 2));
+  // Минимум и максимум — климатическая норма этих суток (средняя месяца ± полразмаха).
+  // Она не зависит от того, какая погода стоит в конкретные четыре часа: град или
+  // пекло уводят столбик от нормы, но саму норму не меняют.
+  const high = Math.round(base + range * 0.5);
+  const low = Math.round(base - range * 0.5);
+  const raw = base + range * dayCurve(safeHour) + kind.shift + (random() * 3 - 1.5);
+  const temperature = Math.round(raw);
+  const cloud = Math.max(0, Math.min(100, Math.round(kind.cloud + random() * 24 - 12)));
+  const precipitation = kind.precip
+    ? {
+        kind: kind.precip.kind,
+        mm: round1(kind.precip.min + random() * (kind.precip.max - kind.precip.min)),
+      }
+    : null;
+
   const dir = WIND_DIRS[Math.floor(random() * WIND_DIRS.length)] ?? WIND_DIRS[0];
   const strengthIndex = Math.max(
     0,
@@ -674,6 +938,10 @@ export function weatherAt(dayNumber: number, hour: number, seed = 0): WeatherInf
     text: kind.text,
     effect: kind.effect,
     temperature,
+    low,
+    high,
+    cloud,
+    precipitation,
     wind: {
       dir: dir.dir,
       // Стрелка показывает, куда несёт ветер: откуда дует + 180°.
@@ -719,7 +987,7 @@ export function worldClock(world: WorldClockSource, serverNow: number): WorldClo
   };
 }
 
-/** Одной строкой: «12 Травеня 214 г. от Ворот · 14:20 · день». */
+/** Одной строкой: «12 Симана 214 г. от Ворот · 14:20 · день». */
 export function describeClock(clock: WorldClock): string {
   return `${describeDay(clock.day).label} · ${formatClock(clock.hour, clock.minute)} · ${partOfDay(clock.hour)}`;
 }

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  CLIMATE_NOTE,
   DAYS_PER_MONTH,
   FIRST_YEAR,
   HOLIDAYS,
   MONTHS,
+  MONTH_RANGE,
+  MONTH_TEMPERATURE,
   SIGNS,
+  WEATHER_KINDS,
   WEEKDAYS,
   YEAR_DAYS,
   dayIndex,
@@ -27,7 +31,7 @@ test("календарь: 12 месяцев по 30 дней и пятеро Н�
   assert.equal(YEAR_DAYS, 365);
 
   const first = describeDay(0);
-  assert.equal(first.label, `1 Сеятеля ${FIRST_YEAR} г. от Ворот`);
+  assert.equal(first.label, `1 Нисана ${FIRST_YEAR} г. от Ворот`);
   assert.equal(first.weekday, WEEKDAYS[0]);
   assert.equal(first.season, "весна");
   assert.equal(first.sign?.name, "Ключ");
@@ -82,11 +86,44 @@ test("знаки идут по месяцам: 12 знаков, у каждог�
   assert.equal(SIGNS[0].alignment, "Порядок");
 });
 
+test("месяцы: восточные имена, имперская запись и примета у каждого", () => {
+  assert.deepEqual(
+    MONTHS.map((month) => month.name),
+    ["Нисан", "Аяр", "Симан", "Дузу", "Абу", "Улул", "Ташрит", "Самна", "Кислим", "Тебет", "Шват", "Адар"],
+  );
+  assert.deepEqual(
+    MONTHS.map((month) => month.imperial),
+    [
+      "Нисану",
+      "Айяру",
+      "Симану",
+      "Ду'узу",
+      "Абу",
+      "Улулу",
+      "Ташриту",
+      "Арахсамну",
+      "Кислиму",
+      "Тебету",
+      "Шабату",
+      "Адару",
+    ],
+  );
+  for (const month of MONTHS) {
+    assert.ok(month.genitive.length > 2);
+    assert.ok(month.note.length > 20);
+    assert.ok(["весна", "лето", "осень", "зима"].includes(month.season));
+  }
+  // В родительном падеже дата читается как «12 Симана».
+  assert.equal(describeDay(dayIndex(FIRST_YEAR, 3, 12)).label, `12 Симана ${FIRST_YEAR} г. от Ворот`);
+  // «Дузу» и «Абу» не склоняются — так и в дате.
+  assert.equal(describeDay(dayIndex(FIRST_YEAR, 5, 1)).label, `1 Абу ${FIRST_YEAR} г. от Ворот`);
+});
+
 test("натальная карта: знак по месяцу, луны и праздник", () => {
   const chart = natalChart(12, 3);
   assert.ok(chart);
   assert.equal(chart.sign.name, "Колодец");
-  assert.equal(chart.dayLabel, "12 Травеня");
+  assert.equal(chart.dayLabel, "12 Симана");
   assert.equal(chart.holiday?.name, "Открытые Ворота");
   assert.equal(chart.moons.length, 2);
   assert.match(chart.reading, /Колодец/);
@@ -117,7 +154,12 @@ test("фазы лун: у Уллу цикл 30 дней, у Карры — 44", 
   assert.equal(first.length, 2);
   assert.deepEqual(first.map((moon) => moon.name), ["Уллу", "Карра"]);
   assert.equal(first[0].phase, "новая");
+  assert.equal(first[0].phaseIndex, 0);
   assert.equal(moonPhases(15)[0].phase, "полная");
+  assert.equal(moonPhases(15)[0].phaseIndex, 4);
+  for (const moon of first) {
+    assert.ok(moon.phaseIndex >= 0 && moon.phaseIndex <= 7);
+  }
   assert.equal(moonPhases(15)[1].phase, moonPhases(15)[1].phase);
 });
 
@@ -147,6 +189,74 @@ test("погода одинакова при одном зерне и меняе
   assert.ok(!summer.has("snow"));
 });
 
+test("климат: резко континентальный — суточный ход, облачность и осадки", () => {
+  assert.match(CLIMATE_NOTE, /резко континентальный/);
+  assert.equal(MONTH_TEMPERATURE.length, 12);
+  assert.equal(MONTH_RANGE.length, 12);
+
+  // Зима стылая, лето жаркое: разница средних — не меньше 30 градусов.
+  const coldest = Math.min(...MONTH_TEMPERATURE);
+  const hottest = Math.max(...MONTH_TEMPERATURE);
+  assert.ok(coldest <= -5);
+  assert.ok(hottest >= 25);
+  assert.ok(hottest - coldest >= 30);
+
+  for (let month = 1; month <= 12; month += 1) {
+    const day = dayIndex(FIRST_YEAR, month, 10);
+    for (let hour = 0; hour < 24; hour += 4) {
+      const weather = weatherAt(day, hour, 5);
+      assert.ok(weather.cloud >= 0 && weather.cloud <= 100);
+      assert.ok(weather.high > weather.low, "суточный размах есть всегда");
+      assert.ok(weather.temperature >= -50 && weather.temperature <= 60);
+      // Норма суток: размах совпадает с климатом месяца и за сутки не меняется.
+      assert.deepEqual(
+        [weather.low, weather.high],
+        [weatherAt(day, 0, 5).low, weatherAt(day, 0, 5).high],
+      );
+      assert.ok(
+        Math.abs(weather.high - weather.low - MONTH_RANGE[month - 1]) <= 1,
+        "размах суток равен климатическому размаху месяца",
+      );
+      if (weather.precipitation) {
+        assert.ok(weather.precipitation.mm > 0, "осадки измеряются в мм");
+        assert.ok(weather.precipitation.kind.length > 3);
+      }
+    }
+  }
+
+  // Днём жарче, чем до рассвета: суточный ход на месте.
+  const day = dayIndex(FIRST_YEAR, 5, 10);
+  assert.ok(weatherAt(day, 14, 1).temperature > weatherAt(day, 4, 1).temperature);
+});
+
+test("климат: у каждой погоды свои условия и осадки", () => {
+  assert.ok(WEATHER_KINDS.length >= 18);
+  const keys = new Set(WEATHER_KINDS.map((kind) => kind.key));
+  assert.equal(keys.size, WEATHER_KINDS.length, "ключи погод не повторяются");
+  for (const kind of WEATHER_KINDS) {
+    assert.ok(kind.cloud >= 0 && kind.cloud <= 100);
+    assert.ok(kind.title.length > 3);
+    assert.ok(kind.effect.length > 10);
+    if (kind.precip) assert.ok(kind.precip.max >= kind.precip.min);
+    if (kind.minTemp !== undefined && kind.maxTemp !== undefined) {
+      assert.ok(kind.minTemp <= kind.maxTemp);
+    }
+  }
+
+  // Град и суховей — только в тёплую половину года, буран и стужа — только в холодную.
+  const summerKeys = new Set();
+  const winterKeys = new Set();
+  for (let seed = 0; seed < 40; seed += 1) {
+    for (const hour of [0, 6, 12, 18]) {
+      summerKeys.add(weatherAt(dayIndex(FIRST_YEAR, 5, 10), hour, seed).key);
+      winterKeys.add(weatherAt(dayIndex(FIRST_YEAR, 11, 10), hour, seed).key);
+    }
+  }
+  assert.ok(!summerKeys.has("blizzard") && !summerKeys.has("hardFrost"));
+  assert.ok(!winterKeys.has("hail") && !winterKeys.has("heat"));
+  assert.ok(summerKeys.size >= 4 && winterKeys.size >= 4);
+});
+
 test("часы кампании: стоят, идут и показывают часть суток", () => {
   const stopped = { day: 0, hour: 8, minute: 0, startedAt: 0, running: false };
   assert.deepEqual(worldClock(stopped, 10_000_000), { day: 0, hour: 8, minute: 0 });
@@ -165,6 +275,6 @@ test("часы кампании: стоят, идут и показывают ч
   assert.equal(partOfDay(19), "закат");
   assert.match(
     describeClock({ day: 0, hour: 23, minute: 59 }),
-    new RegExp(`1 Сеятеля ${FIRST_YEAR}`),
+    new RegExp(`1 Нисана ${FIRST_YEAR}`),
   );
 });

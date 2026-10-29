@@ -28,9 +28,50 @@ const SHIFTS: { label: string; hours?: number; title: string }[] = [
   { label: "+1 день", hours: 24, title: "Следующий день, то же время" },
 ];
 
+/** Значок погоды: облачность и то, что падает с неба. */
+const WEATHER_ICONS: Record<string, string> = {
+  clear: "☀️",
+  wind: "🍃",
+  haze: "🌫",
+  dust: "🌪",
+  dryStorm: "🌩",
+  sukhovei: "🌬",
+  heat: "🔥",
+  overcast: "☁️",
+  fog: "🌫",
+  drizzle: "🌦",
+  rain: "🌧",
+  shower: "🌧",
+  thunderstorm: "⛈",
+  hail: "🌨",
+  snow: "❄️",
+  wetSnow: "🌨",
+  blizzard: "🌬",
+  iceFog: "🌫",
+  frostSun: "🌤",
+  hardFrost: "❄️",
+  thaw: "🌦",
+  morning: "🧊",
+};
+
+/** Восемь фаз лун по порядку — совпадают с MOON_PHASES в `lib/calendar.ts`. */
+const MOON_ICONS = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
+
+/** Осадки одной строкой: «дождь 4.2 мм» или «сухо». */
+function precipText(precipitation: { kind: string; mm: number } | null): string {
+  return precipitation ? `${precipitation.kind} ${precipitation.mm} мм` : "сухо";
+}
+
+/** «+26°», «−7°», «0°». */
+function tempText(value: number): string {
+  return `${value > 0 ? "+" : ""}${value}°`;
+}
+
 export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps) {
   const [, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
+  /** Погода свёрнута в одну строку; по клику раскрывается целиком. */
+  const [open, setOpen] = useState(false);
 
   // Минута игры = минута за столом: раз в 20 секунд пересчитываем стрелки.
   useEffect(() => {
@@ -43,6 +84,11 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   const date = describeDay(clock.day);
   const weather = weatherAt(clock.day, clock.hour, world.weatherSeed);
   const moons = moonPhases(clock.day);
+  const icon = WEATHER_ICONS[weather.key] ?? "🌤";
+  const windTitle = `Ветер дует с ${weather.wind.dir}: ${weather.wind.strength}, ${weather.wind.speed}`;
+  const moonTitle = moons
+    .map((moon) => `${MOON_ICONS[moon.phaseIndex] ?? "🌙"} ${moon.name} — ${moon.phase}`)
+    .join(" · ");
 
   async function act(payload: Record<string, unknown>) {
     setBusy(true);
@@ -90,39 +136,70 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
         </div>
       </div>
 
-      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
-        <div className="min-w-0">
-          <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-zinc-200">
-            <span className="text-zinc-500">🌤</span>
-            <span>{weather.title}</span>
-            <span className="font-mono text-zinc-300">
-              {weather.temperature > 0 ? `+${weather.temperature}` : weather.temperature}°
+      {/* Погода одной строкой: значок, градусы, ветер, облачность-осадки, луны. Клик — сводка. */}
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        title={open ? "Свернуть сводку погоды" : "Развернуть сводку: температура, ветер, осадки, луны"}
+        className="mt-2 flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2 py-1 text-left transition hover:border-sky-500/40 hover:bg-zinc-950/70"
+      >
+        <span className="text-sm leading-none">{icon}</span>
+        <span className="font-mono text-sm text-emerald-100">{tempText(weather.temperature)}</span>
+        <span className="text-[11px] text-zinc-300">{weather.title}</span>
+        <span className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-0.5 whitespace-nowrap text-[11px] text-zinc-400">
+          {/* Стрелка показывает, куда несёт ветер. */}
+          <span className="flex items-center gap-1" title={windTitle}>
+            <span className="text-sky-300" style={{ transform: `rotate(${weather.wind.degrees}deg)` }}>
+              ↑
             </span>
-            <span className="text-[11px] text-zinc-500">
-              ветер {weather.wind.dir}, {weather.wind.strength} · {weather.wind.speed}
-            </span>
-          </p>
-          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">{weather.text}</p>
-          <p className="text-[11px] leading-snug text-amber-200/70">{weather.effect}</p>
-          <p className="mt-0.5 text-[10px] text-zinc-600">
-            {moons.map((moon) => `${moon.name} — ${moon.phase}`).join(" · ")}
-          </p>
-        </div>
-
-        {/* Стрелка показывает, куда несёт ветер. */}
-        <div
-          className="flex h-14 w-14 shrink-0 flex-col items-center justify-center self-center rounded-full border border-zinc-700/70 bg-zinc-950/60"
-          title={`Ветер дует с ${weather.wind.dir} со скоростью ${weather.wind.speed}`}
-        >
-          <span
-            className="text-xl leading-none text-sky-300"
-            style={{ transform: `rotate(${weather.wind.degrees}deg)` }}
-          >
-            ↑
+            {weather.wind.dir}
+            <span className="hidden text-zinc-600 sm:inline">{weather.wind.speed}</span>
           </span>
-          <span className="mt-0.5 font-mono text-[10px] text-zinc-400">{weather.wind.dir}</span>
+          <span title={`Облачность ${weather.cloud}%, осадки: ${precipText(weather.precipitation)}`}>
+            {weather.cloud >= 70 ? "☁" : weather.cloud >= 30 ? "⛅" : "☀"} {weather.cloud}%
+            <span className="text-zinc-600"> · </span>
+            {weather.precipitation ? `💧${weather.precipitation.mm}` : "💧—"}
+          </span>
+          <span title={moonTitle} className="tracking-tight">
+            {moons.map((moon) => MOON_ICONS[moon.phaseIndex] ?? "🌙").join("")}
+          </span>
+          <span className="text-zinc-600">{open ? "▴" : "▾"}</span>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="mt-1.5 space-y-1 rounded-lg border border-zinc-800/60 bg-zinc-950/30 px-2 py-1.5">
+          <p className="text-[11px] leading-snug text-zinc-400">{weather.text}</p>
+          <p className="text-[11px] leading-snug text-amber-200/70">{weather.effect}</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-zinc-500">
+            <span>
+              Обычно ночью <span className="font-mono text-zinc-300">{tempText(weather.low)}</span>, днём{" "}
+              <span className="font-mono text-zinc-300">{tempText(weather.high)}</span>
+              <span className="text-zinc-600"> · размах {weather.high - weather.low}°</span>
+            </span>
+            <span>
+              Облачность <span className="text-zinc-300">{weather.cloud}%</span>
+            </span>
+            <span>
+              Осадки:{" "}
+              <span className="text-zinc-300">
+                {weather.precipitation
+                  ? `${weather.precipitation.kind}, ${weather.precipitation.mm} мм за 4 ч`
+                  : "нет"}
+              </span>
+            </span>
+            <span>
+              Ветер:{" "}
+              <span className="text-zinc-300">
+                {weather.wind.dir}, {weather.wind.strength}
+              </span>
+              <span className="text-zinc-600"> {weather.wind.speed}</span>
+            </span>
+            <span className="col-span-2 text-zinc-400">{moonTitle}</span>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {gm ? (
         <div className="mt-2 flex flex-wrap items-center gap-1">
