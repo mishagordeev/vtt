@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "@/lib/notes";
+import { MONTHS, formatBirth, natalChart, parseBirth } from "@/lib/calendar";
 import {
   ABILITY_METHODS,
   COIN_TYPES,
@@ -13,11 +14,14 @@ import {
   SKILLS,
   TRAITS,
   abilityMod,
+  ageBand,
   carryCapacity,
   coinCount,
   coinsGoldValue,
   coinsInventorySlots,
+  decodeMods,
   derive,
+  encodeMods,
   findItem,
   findOrigin,
   findSkill,
@@ -31,6 +35,9 @@ import {
   overloadedIds,
   rankLabel,
   rollAbilityScores,
+  rollAge,
+  rollStartingCoins,
+  shiftStats,
   skillAvailable,
   skillBonus,
   skillSlotBudget,
@@ -38,6 +45,8 @@ import {
   starterKit,
   zeroSlotCount,
   type AbilityMethod,
+  type AgeRoll,
+  type CoinsRoll,
   type ItemDef,
   type ItemKind,
   type OriginDef,
@@ -170,6 +179,105 @@ function FeatureList({ title, hint, items, notes, selected, editing, accent, onT
   );
 }
 
+interface NatalCardProps {
+  /** День рождения в виде «дд.мм» по календарю Кас-Хатара. */
+  birth: string;
+  editing: boolean;
+  onChange: (value: string) => void;
+}
+
+/**
+ * День рождения и условная натальная карта: знак Небесного Круга, покровитель,
+ * обе луны, ближайший праздник и маленькая выгода знака. Календаря в книгах нет,
+ * поэтому весь круг — из `lib/calendar.ts` (дополнение «Календарь и небо»).
+ */
+function NatalCard({ birth, editing, onChange }: NatalCardProps) {
+  const parsed = parseBirth(birth);
+  const chart = parsed ? natalChart(parsed.day, parsed.month) : null;
+  const day = parsed?.day ?? 0;
+  const month = parsed?.month ?? 0;
+
+  function setDate(nextDay: number, nextMonth: number) {
+    if (nextDay >= 1 && nextMonth >= 1) onChange(formatBirth(nextDay, nextMonth));
+    else onChange("");
+  }
+
+  return (
+    <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+          День рождения и натальная карта
+        </h3>
+        {chart ? (
+          <span className="rounded border border-indigo-400/40 px-1.5 py-0.5 text-[10px] text-indigo-200">
+            {chart.sign.alignment}
+          </span>
+        ) : null}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="space-y-1">
+            <span className="block text-[10px] uppercase tracking-wide text-zinc-600">День</span>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={day || ""}
+              onChange={(event) => setDate(Number(event.target.value), month)}
+              className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="block text-[10px] uppercase tracking-wide text-zinc-600">Месяц</span>
+            <select
+              value={month || ""}
+              onChange={(event) => setDate(day || 1, Number(event.target.value))}
+              className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
+            >
+              <option value="">— не выбран —</option>
+              {MONTHS.map((entry) => (
+                <option key={entry.index} value={entry.index}>
+                  {entry.name} ({entry.imperial})
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="pb-1 text-[10px] text-zinc-600">
+            в месяце 30 дней; если дата неизвестна — оставьте пусто
+          </span>
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-400">
+          {chart ? `${chart.dayLabel} · ${chart.weekday} · ${chart.season}` : "День рождения не указан."}
+        </p>
+      )}
+
+      {chart ? (
+        <div className="space-y-1 rounded-lg border border-indigo-400/25 bg-indigo-500/5 p-2">
+          <p className="text-sm text-indigo-100">
+            Знак «{chart.sign.name}» · покровитель {chart.sign.patron}
+          </p>
+          <p className="text-[11px] leading-snug text-zinc-400">{chart.sign.constellation}</p>
+          <p className="text-[11px] leading-snug text-zinc-300">{chart.reading}</p>
+          <p className="text-[11px] leading-snug text-emerald-200/80">{chart.sign.boon}</p>
+          {chart.holiday ? (
+            <p className="text-[11px] leading-snug text-amber-200/80">
+              «{chart.holiday.name}»: {chart.holiday.note}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-[11px] leading-snug text-zinc-600">
+          Укажите день и месяц — лист покажет знак, обе луны и ближайший праздник.
+        </p>
+      )}
+    </section>
+  );
+}
+
+
+
 
 export function CharacterSheet({
   draft,
@@ -201,6 +309,9 @@ export function CharacterSheet({
   const [assignment, setAssignment] = useState<Record<string, number | null>>({});
   const [lastDetails, setLastDetails] = useState<number[][] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Результат последнего броска возраста и стартовых монет — только для показа. */
+  const [ageRoll, setAgeRoll] = useState<AgeRoll | null>(null);
+  const [coinsRoll, setCoinsRoll] = useState<CoinsRoll | null>(null);
   /** Навыки и знания выбираются только при создании и на подъёме уровня. */
   const [levelUpOpen, setLevelUpOpen] = useState(false);
 
@@ -239,6 +350,8 @@ export function CharacterSheet({
   const hands = handsCount(draft.inventory);
   const money = coinsGoldValue(draft.inventory);
   const coinQty = coinCount(draft.inventory);
+  /** Возраст из поля листа: 0 — не указан. */
+  const ageValue = Math.max(0, Math.min(130, Number(draft.fields.age) || 0));
   const overloaded = overloadedIds(draft.inventory, draft.stats);
   const origin = findOrigin(draft.origin);
   const languageBudget = languageSlots(draft.stats);
@@ -577,6 +690,41 @@ export function CharacterSheet({
           },
         ];
     patch({ inventory });
+  }
+
+  /**
+   * Возраст меняет характеристики: прежние поправки снимаем, новые накладываем,
+   * поэтому повторный бросок не считается дважды. Запись поправок живёт в
+   * `fields.ageMods` — по ней же их можно снять вручную.
+   */
+  function applyAge(value: number) {
+    if (!editing) return;
+    const band = ageBand(value);
+    const previous = decodeMods(draft.fields.ageMods);
+    const base = shiftStats(draft.stats, previous, -1);
+    const stats = shiftStats(base, band.mods, 1);
+    patch({
+      stats,
+      fields: { ...draft.fields, age: String(value), ageMods: encodeMods(band.mods) },
+    });
+  }
+
+  /** Бросок возраста: два d6 на десятки, d10 на единицы. */
+  function rollCharacterAge() {
+    if (!editing) return;
+    const roll = rollAge();
+    applyAge(roll.age);
+    setAgeRoll(roll);
+  }
+
+  /** Стартовые монеты: максимальный модификатор характеристики × d6 × 10. */
+  function grantStartingCoins() {
+    if (!editing) return;
+    const roll = rollStartingCoins(draft.stats);
+    setCoinsRoll(roll);
+    const gold = COIN_TYPES.find((coin) => coin.key === "zm");
+    if (gold) setCoin(gold.name, roll.coins);
+    setNotice(`Стартовые монеты: ${roll.coins} зм — ${roll.formula}.`);
   }
 
   function levelUp() {
@@ -1248,6 +1396,12 @@ export function CharacterSheet({
               ) : null}
             </section>
 
+            <NatalCard
+              birth={draft.fields.birth ?? ""}
+              editing={editing}
+              onChange={(value) => patch({ fields: { ...draft.fields, birth: value } })}
+            />
+
             <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Заметки</h3>
@@ -1347,6 +1501,86 @@ export function CharacterSheet({
               ) : null}
             </section>
 
+
+            <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
+                  Возраст
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1 text-[11px] text-zinc-400">
+                    лет
+                    <input
+                      type="number"
+                      min={1}
+                      max={130}
+                      disabled={!editing}
+                      value={draft.fields.age ?? ""}
+                      onChange={(event) =>
+                        patch({ fields: { ...draft.fields, age: event.target.value.slice(0, 6) } })
+                      }
+                      className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-amber-400/60 disabled:opacity-70"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!editing}
+                    onClick={() => rollCharacterAge()}
+                    title="Два d6 на десятки и d10 на единицы; поправки сразу идут в характеристики"
+                    className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
+                  >
+                    🎲 Бросить возраст
+                  </button>
+                  {editing && draft.fields.age ? (
+                    <button
+                      type="button"
+                      onClick={() => applyAge(Number(draft.fields.age))}
+                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-amber-200"
+                    >
+                      Применить поправки
+                    </button>
+                  ) : null}
+                  {editing && draft.fields.ageMods ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          stats: shiftStats(draft.stats, decodeMods(draft.fields.ageMods), -1),
+                          fields: { ...draft.fields, ageMods: "" },
+                        })
+                      }
+                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-500 hover:text-rose-200"
+                    >
+                      Снять
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                Бросок: два d6 на десятки и d10 на единицы — от 21 до 130 лет. Поправки возраста
+                прибавляются к характеристикам один раз и снимаются кнопкой «Снять».
+              </p>
+              {ageRoll ? (
+                <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
+                  d6: {ageRoll.tens.join(" + ")} → {ageRoll.tens[0] + ageRoll.tens[1]} дес. · d10:{" "}
+                  {ageRoll.unit} → {ageRoll.age} лет
+                </p>
+              ) : null}
+              {ageValue ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-zinc-300">
+                    {ageValue} лет · {ageBand(ageValue).label}
+                  </p>
+                  <p className="text-[11px] leading-snug text-zinc-500">{ageBand(ageValue).note}</p>
+                  <p className="text-[11px] text-zinc-400">
+                    {RULES.stats
+                      .filter((stat) => ageBand(ageValue).mods[stat.key])
+                      .map((stat) => `${formatMod(ageBand(ageValue).mods[stat.key] ?? 0)} ${stat.short}`)
+                      .join(" · ") || "поправок нет"}
+                  </p>
+                </div>
+              ) : null}
+            </section>
 
             <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {RULES.stats.map((stat) => {
@@ -2057,6 +2291,37 @@ export function CharacterSheet({
             </div>
             {renderCoins()}
 
+            <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
+                  Стартовые монеты
+                </h3>
+                <button
+                  type="button"
+                  disabled={!editing}
+                  onClick={() => grantStartingCoins()}
+                  title="Максимальный модификатор характеристики × d6 × 10 золотых денариев"
+                  className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
+                >
+                  🎲 Выдать по формуле
+                </button>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                Формула: <b>максимальный модификатор характеристики × d6 × 10</b> золотых денариев.
+                Если все характеристики ниже 10, модификатор считается за +1. Кнопка переписывает
+                количество золотых денариев, остальные номиналы не трогает.
+              </p>
+              {coinsRoll ? (
+                <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
+                  {coinsRoll.formula} = {coinsRoll.coins} зм
+                </p>
+              ) : null}
+              <p className="text-[11px] text-zinc-400">
+                В кошеле сейчас: <span className="font-mono text-zinc-200">{money.toFixed(2)} зм</span> в
+                пересчёте на золото ({coinQty} монет).
+              </p>
+            </section>
+
             <section className="space-y-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                 Каталог предметов
@@ -2146,7 +2411,8 @@ export function CharacterSheet({
                 ) : null}
               </div>
               <p className="text-[11px] text-zinc-600">
-                Цены даны для справки. Стартовые деньги — 100 зм; покупка и сбыт — через Ведущего.
+                Цены даны для справки. Стартовые деньги — по формуле «максимальный модификатор
+                характеристики × d6 × 10» (кнопка выше); покупка и сбыт — через Ведущего.
               </p>
             </section>
           </div>

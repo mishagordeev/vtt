@@ -1,4 +1,5 @@
 import { canEdit, draftFromCharacter, normalizeDraft } from "./characters";
+import { worldClock } from "./calendar";
 import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
@@ -18,6 +19,7 @@ import type {
   RoomState,
   StorageHealth,
   StorageMode,
+  WorldState,
 } from "./types";
 
 
@@ -34,6 +36,9 @@ const MAX_MAP_POINTS = 600;
 const MAX_MUSIC_TRACKS = 20;
 const MAX_MUSIC_POSITION = 86_400;
 const MAX_DELETED_MESSAGES = 400;
+/** Кампания: не больше двадцати лет по календарю — дальше уже не игра, а хроника. */
+const MAX_WORLD_DAY = 365 * 20;
+const MAX_WEATHER_SEED = 100_000;
 /** Цвет игрока — только #rrggbb, чтобы не протащить произвольную строку в стили. */
 const PLAYER_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
@@ -43,6 +48,43 @@ export function emptyMap(): MapState {
 
 export function emptyMusic(): MusicState {
   return { tracks: [], updatedAt: Date.now() };
+}
+
+/**
+ * Часы кампании: старт — 1 Сеятеля 943 года, 8 утра, идут в темпе реального
+ * времени. Погода считается от зерна, а не хранится: так она одинакова у всех.
+ */
+export function emptyWorld(): WorldState {
+  const now = Date.now();
+  return {
+    day: 0,
+    hour: 8,
+    minute: 0,
+    startedAt: now,
+    running: true,
+    weatherSeed: 0,
+    updatedAt: now,
+  };
+}
+
+/** Комнаты, созданные до календаря, получают часы при первом чтении. */
+function ensureWorld(doc: RoomState): RoomState {
+  if (!doc.world || typeof doc.world !== "object") {
+    doc.world = emptyWorld();
+    return doc;
+  }
+  const world = doc.world;
+  world.day = Math.max(0, Math.min(MAX_WORLD_DAY, Math.round(Number(world.day) || 0)));
+  world.hour = Math.max(0, Math.min(23, Math.round(Number(world.hour) || 0)));
+  world.minute = Math.max(0, Math.min(59, Math.round(Number(world.minute) || 0)));
+  world.weatherSeed = Math.max(
+    0,
+    Math.min(MAX_WEATHER_SEED, Math.round(Number(world.weatherSeed) || 0)),
+  );
+  world.running = world.running !== false;
+  if (!Number.isFinite(world.startedAt) || world.startedAt <= 0) world.startedAt = Date.now();
+  if (!Number.isFinite(world.updatedAt) || world.updatedAt <= 0) world.updatedAt = Date.now();
+  return doc;
 }
 
 function ensureMap(doc: RoomState): RoomState {
@@ -369,7 +411,9 @@ async function readDoc(code: string): Promise<RoomState | null> {
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
-      return ensurePlayers(ensureMusic(ensureMap(JSON.parse(payload.result) as RoomState)));
+      return ensurePlayers(
+        ensureMusic(ensureMap(ensureWorld(JSON.parse(payload.result) as RoomState))),
+      );
     } catch {
       return null;
     }
@@ -381,7 +425,9 @@ async function readDoc(code: string): Promise<RoomState | null> {
     memoryRooms.delete(code);
     return null;
   }
-  return ensurePlayers(ensureMusic(ensureMap(JSON.parse(JSON.stringify(entry.doc)) as RoomState)));
+  return ensurePlayers(
+    ensureMusic(ensureMap(ensureWorld(JSON.parse(JSON.stringify(entry.doc)) as RoomState))),
+  );
 }
 
 async function writeDoc(doc: RoomState): Promise<void> {
@@ -482,6 +528,7 @@ export async function createRoom(): Promise<RoomState> {
       characters: [],
       map: emptyMap(),
       music: emptyMusic(),
+      world: emptyWorld(),
       deletedMessages: [],
       seq: 1,
     };
@@ -533,6 +580,7 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     messages,
     map: doc.map,
     music: doc.music,
+    world: doc.world,
     deletedMessages: doc.deletedMessages ?? [],
     serverNow: Date.now(),
     seq: doc.seq,
@@ -1037,6 +1085,82 @@ export async function updateMusic(
 
     music.updatedAt = now;
     return { music, serverNow: now };
+  });
+}
+
+/** Сколько минут прошло внутри суток — с учётом хода реального времени. */
+function worldMinutes(world: WorldState, now: number): { day: number; hour: number; minute: number } {
+  const clock = worldClock(world, now);
+  return {
+    day: Math.max(0, Math.min(MAX_WORLD_DAY, clock.day)),
+    hour: clock.hour,
+    minute: clock.minute,
+  };
+}
+
+function worldNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+/**
+ * Часы и погода кампании: ведёт мастер.
+ *
+ * `set` — выставить день и время, `advance` — сдвинуть на часы и минуты,
+ * `running` — идут ли часы в темпе реального времени,
+ * `weather` — перебросить погоду (меняем зерно).
+ */
+export async function updateWorld(
+  code: string,
+  rawActor: unknown,
+  rawAction: unknown,
+): Promise<{ world: WorldState; serverNow: number }> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  const action =
+    rawAction && typeof rawAction === "object" ? (rawAction as Record<string, unknown>) : {};
+
+  return withRoom(code, (doc) => {
+    if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    touchPlayer(doc, actor);
+    if (!isGm(doc, actor)) throw new AppError(403, "Часы и погоду ведёт мастер");
+
+    const now = Date.now();
+    const world = doc.world;
+    const current = worldMinutes(world, now);
+    const kind = String(action.action ?? "");
+
+    if (kind === "advance") {
+      const hours = worldNumber(action.hours, 0, -24 * 20, 24 * 20);
+      const minutes = worldNumber(action.minutes, 0, -1440, 1440);
+      const total = current.hour * 60 + current.minute + hours * 60 + minutes;
+      const days = Math.floor(total / 1440);
+      world.day = Math.max(0, Math.min(MAX_WORLD_DAY, current.day + days));
+      world.hour = Math.floor((((total % 1440) + 1440) % 1440) / 60);
+      world.minute = ((total % 60) + 60) % 60;
+    } else if (kind === "set") {
+      world.day = worldNumber(action.day, current.day, 0, MAX_WORLD_DAY);
+      world.hour = worldNumber(action.hour, current.hour, 0, 23);
+      world.minute = worldNumber(action.minute, current.minute, 0, 59);
+    } else if (kind === "running") {
+      world.day = current.day;
+      world.hour = current.hour;
+      world.minute = current.minute;
+      world.running = action.value !== false;
+    } else if (kind === "weather") {
+      const requested = Number(action.seed);
+      world.weatherSeed = Number.isFinite(requested)
+        ? Math.max(0, Math.min(MAX_WEATHER_SEED, Math.round(requested)))
+        : (world.weatherSeed + 1) % MAX_WEATHER_SEED;
+    } else {
+      throw new AppError(400, "Неизвестное действие с часами");
+    }
+
+    // Часы переставляем «с этой минуты»: время у всех считается от startedAt.
+    world.startedAt = now;
+    world.updatedAt = now;
+    return { world, serverNow: now };
   });
 }
 

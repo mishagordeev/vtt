@@ -131,6 +131,29 @@ export interface MusicState {
   updatedAt: number;
 }
 
+/**
+ * Мир стола: часы кампании и зерно погоды.
+ *
+ * Время хранится «снимком»: когда мастер выставил часы (`startedAt` по серверу)
+ * и шли ли они (`running`). Остальные считают текущее время сами, поэтому
+ * запись в хранилище нужна только на действие мастера.
+ */
+export interface WorldState {
+  /** Номер дня от начала календаря: 0 — 1 Сеятеля 943 г. от Ворот. */
+  day: number;
+  /** Час 0–23. */
+  hour: number;
+  /** Минута 0–59. */
+  minute: number;
+  /** Время сервера, на которое выставлены часы. */
+  startedAt: number;
+  /** Идут ли часы в темпе реального времени. */
+  running: boolean;
+  /** Зерно погоды: мастер «перебрасывает» погоду, меняя его. */
+  weatherSeed: number;
+  updatedAt: number;
+}
+
 export interface RoomState {
   code: string;
   title: string;
@@ -141,6 +164,7 @@ export interface RoomState {
   characters: Character[];
   map: MapState;
   music: MusicState;
+  world: WorldState;
   /** id удалённых сообщений: клиент вычищает их из своей ленты. */
   deletedMessages: string[];
   seq: number;
@@ -197,9 +221,10 @@ export interface RoomSnapshot {
   messages: ChatMessage[];
   map: MapState;
   music: MusicState;
+  world: WorldState;
   /** id удалённых сообщений — чтобы убрать их из уже загруженной ленты. */
   deletedMessages: string[];
-  /** Время сервера на момент ответа — для синхронизации музыки. */
+  /** Время сервера на момент ответа — для синхронизации музыки и часов кампании. */
   serverNow: number;
   seq: number;
 }

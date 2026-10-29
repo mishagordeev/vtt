@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { initials } from "@/lib/client";
-import type { Character, MapState, Player, StorageHealth } from "@/lib/types";
+import type { Character, MapState, Player, StorageHealth, WorldState } from "@/lib/types";
 import { MapBoard } from "./MapBoard";
+import { WorldClock } from "./WorldClock";
 
 interface DeskPanelProps {
   code: string;
@@ -12,9 +13,14 @@ interface DeskPanelProps {
   players: Player[];
   characters: Character[];
   map: MapState;
+  /** Часы кампании и погода. */
+  world: WorldState;
+  /** Разница «сервер − браузер»: по ней часы одинаковы у всех. */
+  clockOffset: number;
   /** Цвет профиля игрока — им рисуется метка на карте. */
   myColor?: string;
   onMapAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
+  onWorldAction: (payload: Record<string, unknown>) => Promise<WorldState | null>;
   /** Открыть профиль игрока: цвет и привязанные персонажи. */
   onOpenProfile: (name: string) => void;
 }
@@ -84,8 +90,11 @@ export function DeskPanel({
   players,
   characters,
   map,
+  world,
+  clockOffset,
   myColor,
   onMapAction,
+  onWorldAction,
   onOpenProfile,
 }: DeskPanelProps) {
   const [now, setNow] = useState<number>(() => Date.now());
@@ -119,6 +128,7 @@ export function DeskPanel({
   }, []);
 
   const storageBadge = describeStorage(storage);
+  const isGM = me.trim().toLowerCase() === gm.trim().toLowerCase();
 
   async function copyLink() {
     const link = `${window.location.origin}/r/${code}`;
@@ -133,6 +143,8 @@ export function DeskPanel({
   return (
     <div className="scroll-thin h-full overflow-y-auto px-4 py-4">
       <div className="space-y-5">
+        <WorldClock world={world} clockOffset={clockOffset} gm={isGM} onAction={onWorldAction} />
+
         <MapBoard me={me} gm={gm} map={map} pingColor={myColor} onAction={onMapAction} />
 
         <section className="space-y-2">

@@ -833,6 +833,19 @@ export const RESOURCES: ResourceDef[] = [
 
 export const FIELDS: TextFieldDef[] = [
   { key: "notes", label: "Заметки", placeholder: "Шрамы, обеты, репутация, важные мелочи", maxLength: 2000, multiline: true },
+  {
+    key: "birth",
+    label: "День рождения",
+    placeholder: "день.месяц по календарю Кас-Хатара — например 14.04",
+    maxLength: 12,
+  },
+  { key: "age", label: "Возраст", placeholder: "лет", maxLength: 6 },
+  {
+    key: "ageMods",
+    label: "Поправки возраста",
+    placeholder: "служебное поле: dex+1,con+1,wis-1",
+    maxLength: 60,
+  },
 ];
 
 export interface CharacterRules {
@@ -996,6 +1009,131 @@ export function skillAvailable(skillName: string, stats: Record<string, number>)
 /** Подпись модификатора: +3, +0, −1. */
 export function formatMod(value: number): string {
   return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
+/* ------------------------------------------------- возраст и стартовые монеты */
+
+export interface AgeBand {
+  key: string;
+  /** Подпись полосы: «В расцвете». */
+  label: string;
+  /** Нижняя и верхняя границы включительно. */
+  from: number;
+  to: number;
+  /** Поправки к характеристикам; применяются один раз при броске возраста. */
+  mods: Partial<Record<StatKey, number>>;
+  /** Что это значит за столом. */
+  note: string;
+}
+
+/**
+ * Бросок возраста: два d6 на десятки, d10 на единицы — 21–130 лет.
+ * Возраст меняет характеристики: молодость даёт тело и забирает голову,
+ * старость наоборот.
+ */
+export const AGE_BANDS: AgeBand[] = [
+  { key: "young", label: "Молодой", from: 21, to: 29, mods: { dex: 1, con: 1, wis: -1 }, note: "Тело слушается, голова ещё нет: спешит, лезет первым, плохо считает последствия." },
+  { key: "prime", label: "В расцвете", from: 30, to: 39, mods: {}, note: "Ни убавить, ни прибавить: всё как есть, зато без поправок." },
+  { key: "seasoned", label: "Опытный", from: 40, to: 49, mods: { int: 1, wis: 1, str: -1 }, note: "Сила пошла на убыль, зато появились привычка думать и чутьё на людей." },
+  { key: "grey", label: "Седой", from: 50, to: 59, mods: { int: 1, wis: 1, str: -1, dex: -1 }, note: "Руки медленнее, память цепче; в драке держится опытом, а не прытью." },
+  { key: "old", label: "Старик", from: 60, to: 69, mods: { int: 1, wis: 2, str: -2, dex: -2 }, note: "Тяжёлый пояс, ломкие кости — и репутация, которая иной раз важнее меча." },
+  { key: "ancient", label: "Древний", from: 70, to: 130, mods: { int: 2, wis: 2, str: -3, dex: -3, con: -1 }, note: "Таких в Пограничье мало: либо очень везучий, либо очень умный, либо не человек." },
+];
+
+export function ageBand(age: number): AgeBand {
+  const safe = Math.max(1, Math.round(Number(age) || 0));
+  return (
+    AGE_BANDS.find((band) => safe >= band.from && safe <= band.to) ??
+    (safe < AGE_BANDS[0].from ? AGE_BANDS[0] : AGE_BANDS[AGE_BANDS.length - 1])
+  );
+}
+
+export interface AgeRoll {
+  /** Два кубика на десятки. */
+  tens: [number, number];
+  /** d10 на единицы: 1–10. */
+  unit: number;
+  /** Итог: (десятки) × 10 + единицы. */
+  age: number;
+  band: AgeBand;
+}
+
+/** Бросок возраста: 2d6 на десятки, d10 на единицы. */
+export function rollAge(random: () => number = Math.random): AgeRoll {
+  const d6 = () => 1 + Math.floor(random() * 6);
+  const d10 = () => 1 + Math.floor(random() * 10);
+  const tens: [number, number] = [d6(), d6()];
+  const unit = d10();
+  const age = (tens[0] + tens[1]) * 10 + unit;
+  return { tens, unit, age, band: ageBand(age) };
+}
+
+/** Снимает прежние поправки возраста с характеристик: перед новым броском. */
+export function shiftStats(
+  stats: Record<string, number>,
+  mods: Partial<Record<StatKey, number>>,
+  sign = 1,
+): Record<string, number> {
+  const next = { ...stats };
+  for (const stat of STATS) {
+    const delta = (mods[stat.key] ?? 0) * sign;
+    if (!delta) continue;
+    const current = statValue(stats, stat.key);
+    next[stat.key] = Math.max(stat.min, Math.min(stat.max, current + delta));
+  }
+  return next;
+}
+
+/** Запись поправок возраста для листа: «dex+1,con+1,wis-1». */
+export function encodeMods(mods: Partial<Record<StatKey, number>>): string {
+  return STATS.filter((stat) => mods[stat.key])
+    .map((stat) => `${stat.key}${mods[stat.key]! > 0 ? "+" : ""}${mods[stat.key]}`)
+    .join(",");
+}
+
+/** Разбирает запись поправок возраста обратно в объект. */
+export function decodeMods(text: string | undefined): Partial<Record<StatKey, number>> {
+  const result: Partial<Record<StatKey, number>> = {};
+  if (!text) return result;
+  for (const chunk of text.split(",")) {
+    const match = chunk.trim().match(/^(str|dex|con|int|wis|cha)([+-]\d+)$/);
+    if (!match) continue;
+    result[match[1] as StatKey] = Number(match[2]);
+  }
+  return result;
+}
+
+export interface CoinsRoll {
+  /** Самый высокий модификатор среди характеристик. */
+  maxMod: number;
+  /** Выпавшая кость. */
+  die: number;
+  /** Итог в золотых денариях. */
+  coins: number;
+  /** Готовая формула для показа: «+3 × d6(4) × 10». */
+  formula: string;
+}
+
+/**
+ * Стартовые монеты: максимальный модификатор характеристики × d6 × 10.
+ * Если все характеристики ниже 10, модификатор считается за единицу —
+ * без гроша за стол не садятся.
+ */
+export function rollStartingCoins(
+  stats: Record<string, number>,
+  random: () => number = Math.random,
+): CoinsRoll {
+  const maxMod = Math.max(...STATS.map((stat) => abilityMod(statValue(stats, stat.key))));
+  const bonus = Math.max(1, maxMod);
+  const die = 1 + Math.floor(random() * 6);
+  const coins = bonus * die * 10;
+  const clamped = bonus === maxMod ? "" : " (модификатор считается за +1)";
+  return {
+    maxMod,
+    die,
+    coins,
+    formula: `${formatMod(maxMod)} × d6(${die}) × 10${clamped}`,
+  };
 }
 
 /** Три способа генерации характеристик из 1.1. */

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
-import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot } from "@/lib/types";
+import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
 import { CharactersPanel } from "./CharactersPanel";
 import { DebugPanel } from "./DebugPanel";
@@ -19,6 +19,15 @@ import { PlayerProfile } from "./PlayerProfile";
 
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
+const EMPTY_WORLD: WorldState = {
+  day: 0,
+  hour: 8,
+  minute: 0,
+  startedAt: 0,
+  running: false,
+  weatherSeed: 0,
+  updatedAt: 0,
+};
 const MUSIC_VOLUME_KEY = "pp:music:volume";
 const DEFAULT_MUSIC_VOLUME = 50;
 
@@ -43,6 +52,7 @@ export default function RoomScreen({ code }: { code: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [map, setMap] = useState<MapState>(EMPTY_MAP);
   const [music, setMusic] = useState<MusicState>(EMPTY_MUSIC);
+  const [world, setWorld] = useState<WorldState>(EMPTY_WORLD);
   const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -111,6 +121,7 @@ export default function RoomScreen({ code }: { code: string }) {
       setCharacters(snapshot.characters);
       setMap(snapshot.map ?? EMPTY_MAP);
       setMusic(snapshot.music ?? EMPTY_MUSIC);
+      setWorld(snapshot.world ?? EMPTY_WORLD);
       if (Number.isFinite(snapshot.serverNow)) {
         setClockOffset(snapshot.serverNow - Date.now());
       }
@@ -323,6 +334,29 @@ export default function RoomScreen({ code }: { code: string }) {
           setClockOffset(result.serverNow - Date.now());
         }
         return result.music;
+      } catch {
+        return null;
+      }
+    },
+    [code],
+  );
+
+  /** Часы кампании и погоду ведёт мастер; ответ приходит целиком. */
+  const worldAction = useCallback(
+    async (payload: Record<string, unknown>): Promise<WorldState | null> => {
+      try {
+        const result = await api<{ world: WorldState; serverNow: number }>(
+          `/api/rooms/${code}/world`,
+          {
+            method: "POST",
+            body: JSON.stringify({ actor: meRef.current, ...payload }),
+          },
+        );
+        setWorld(result.world);
+        if (Number.isFinite(result.serverNow)) {
+          setClockOffset(result.serverNow - Date.now());
+        }
+        return result.world;
       } catch {
         return null;
       }
@@ -582,8 +616,11 @@ export default function RoomScreen({ code }: { code: string }) {
               players={players}
               characters={characters}
               map={map}
+              world={world}
+              clockOffset={clockOffset}
               myColor={myColor}
               onMapAction={mapAction}
+              onWorldAction={worldAction}
               onOpenProfile={(name) => setProfileFor(name)}
             />
           ) : tab === "music" ? (

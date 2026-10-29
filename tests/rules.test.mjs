@@ -8,9 +8,12 @@ import {
   SKILLS,
   STARTER_KITS,
   abilityMod,
+  ageBand,
   carryCapacity,
   coinCount,
   coinSlotsFor,
+  decodeMods,
+  encodeMods,
   itemSlots,
   coinsAmount,
   derive,
@@ -25,6 +28,9 @@ import {
   rankBonus,
   rankLabel,
   rollAbilityScores,
+  rollAge,
+  rollStartingCoins,
+  shiftStats,
   skillSlotBudget,
   skillsSlotUsage,
   zeroSlotCount,
@@ -219,7 +225,7 @@ test("у каждого элемента каталога есть коротк�
   }
 });
 
-test("схема листа: шесть характеристик, ОЗ и заметки", () => {
+test("схема листа: шесть характеристик, ОЗ, заметки, день рождения и возраст", () => {
   assert.deepEqual(
     RULES.stats.map((stat) => stat.key),
     ["str", "dex", "con", "int", "wis", "cha"],
@@ -231,7 +237,7 @@ test("схема листа: шесть характеристик, ОЗ и за
   assert.equal(RULES.flaws.length, 15);
   assert.deepEqual(
     RULES.fields.map((field) => field.key),
-    ["notes"],
+    ["notes", "birth", "age", "ageMods"],
   );
 });
 
@@ -368,5 +374,76 @@ test("вес без слотов: мелочь занимает дробные �
   const over = overloadedIds(heavy, stats);
   assert.ok(over.has("b"));
   assert.ok(!over.has("a"));
+});
+
+
+test("бросок возраста: два d6 на десятки и d10 на единицы", () => {
+  // Заглушка вместо Math.random: 0 → «1» на любой кости, 0.999… → максимум.
+  const low = rollAge(() => 0);
+  assert.deepEqual(low.tens, [1, 1]);
+  assert.equal(low.unit, 1);
+  assert.equal(low.age, 21);
+  assert.equal(low.band.key, "young");
+
+  const high = rollAge(() => 0.999);
+  assert.deepEqual(high.tens, [6, 6]);
+  assert.equal(high.unit, 10);
+  assert.equal(high.age, 130);
+  assert.equal(high.band.key, "ancient");
+
+  const middle = rollAge(() => 0.5);
+  assert.deepEqual(middle.tens, [4, 4]);
+  assert.equal(middle.unit, 6);
+  assert.equal(middle.age, 86);
+});
+
+test("полосы возраста дают поправки и не выходят за границы", () => {
+  assert.equal(ageBand(21).key, "young");
+  assert.equal(ageBand(29).key, "young");
+  assert.equal(ageBand(30).key, "prime");
+  assert.deepEqual(ageBand(35).mods, {});
+  assert.equal(ageBand(45).key, "seasoned");
+  assert.equal(ageBand(70).key, "ancient");
+  assert.equal(ageBand(500).key, "ancient");
+
+  const stats = { str: 18, dex: 3, con: 10, int: 10, wis: 10, cha: 10 };
+  const older = shiftStats(stats, ageBand(65).mods, 1);
+  assert.equal(older.str, 16); // −2, но не ниже минимума характеристики
+  assert.equal(older.dex, 3); // −2 обрезается до минимума 3
+  assert.equal(older.wis, 12);
+  const back = shiftStats(older, ageBand(65).mods, -1);
+  assert.equal(back.wis, 10);
+});
+
+test("поправки возраста читаются обратно из поля листа", () => {
+  const mods = { dex: 1, con: 1, wis: -1 };
+  const encoded = encodeMods(mods);
+  assert.equal(encoded, "dex+1,con+1,wis-1");
+  assert.deepEqual(decodeMods(encoded), mods);
+  assert.deepEqual(decodeMods(""), {});
+  assert.deepEqual(decodeMods("мусор"), {});
+});
+
+test("стартовые монеты: максимальный модификатор × d6 × 10", () => {
+  const stats = { str: 16, dex: 12, con: 10, int: 8, wis: 10, cha: 10 };
+  const roll = rollStartingCoins(stats, () => 0); // d6 = 1
+  assert.equal(roll.maxMod, 3);
+  assert.equal(roll.die, 1);
+  assert.equal(roll.coins, 30);
+  assert.equal(roll.formula, "+3 × d6(1) × 10");
+
+  const best = rollStartingCoins(stats, () => 0.999); // d6 = 6
+  assert.equal(best.die, 6);
+  assert.equal(best.coins, 180);
+
+  // Все характеристики ниже 10 — модификатор считается за +1, игрок не остаётся без монет.
+  const weak = rollStartingCoins(
+    { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 },
+    () => 0.5,
+  );
+  assert.equal(weak.maxMod, -1);
+  assert.equal(weak.die, 4);
+  assert.equal(weak.coins, 40);
+  assert.match(weak.formula, /считается за \+1/);
 });
 
