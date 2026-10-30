@@ -11,26 +11,35 @@ const scriptPath = path.join(projectDir, "tools", "sync-books.cjs");
 const booksDir = path.resolve(projectDir, "..", "books", "Vtorye");
 
 const CATALOG = "ВТОРЫЕ_Каталоги.md";
-const RULES_BOOK = "ВТОРЫЕ_Книга_правил.md";
 const PLAYER_BOOK = "ВТОРЫЕ_Книга_игрока.md";
-const FILES = [CATALOG, RULES_BOOK, PLAYER_BOOK];
+/** Книга правил удалена при уборке 30.10.2026; если вернётся, тест её тоже скопирует. */
+const RULES_BOOK = "ВТОРЫЕ_Книга_правил.md";
+
+/** Каталог и книга игрока обязательны, книга правил — нет. */
+const REQUIRED = [CATALOG, PLAYER_BOOK];
+
+/** Все файлы, которые есть в папке книг. */
+const filesIn = (dir) =>
+  [CATALOG, PLAYER_BOOK, RULES_BOOK].filter((name) => fs.existsSync(path.join(dir, name)));
 
 /** Книги, которые скрипт переписывает: каталог он только читает. */
-const BOOKS = [RULES_BOOK, PLAYER_BOOK];
+const booksIn = (dir) => filesIn(dir).filter((name) => name !== CATALOG);
 
 /**
- * Минимумы навыков как `SKILL_FIXES` в `tools/sync-books.cjs`:
- * навык, старый минимум, новый. Тест откатывает их и проверяет выравнивание.
+ * Минимумы навыков и знаний, которые `tools/sync-books.cjs` берёт из каталога:
+ * раздел книги, имя, старое значение, новое. Тест откатывает их и проверяет,
+ * что прогон вернул значения каталога. Откат идёт только в таблицах разделов —
+ * там скрипт и правит (в таблице 1.4.4 книги свои значения, их он не трогает).
  */
 const SKILL_MINIMUMS = [
-  ["**Верховая езда**", "Лов 9", "Лов 10"],
-  ["**Грамота**", "Инт 9", "Инт 10"],
-  ["**Природа и звери**", "Мдр 10", "Мдр 12"],
+  ["## 6.6. Небоевые навыки", "Верховая езда", "Лов 9", "Лов 10"],
+  ["## 6.6. Небоевые навыки", "Грамота", "Инт 9", "Инт 10"],
+  ["### 6.7.2. Список знаний", "Природа и звери", "Мдр 10", "Мдр 12"],
 ];
 
 /** Временная копия каталога и книг: рабочие файлы тест не трогает. */
 function sandbox(t) {
-  const missing = FILES.filter((name) => !fs.existsSync(path.join(booksDir, name)));
+  const missing = REQUIRED.filter((name) => !fs.existsSync(path.join(booksDir, name)));
   if (missing.length > 0) {
     t.skip(`нет книг «Вторых» рядом с репозиторием (${booksDir}) — синхронизация недоступна`);
     return null;
@@ -38,7 +47,7 @@ function sandbox(t) {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vtt-sync-books-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  for (const name of FILES) {
+  for (const name of filesIn(booksDir)) {
     fs.copyFileSync(path.join(booksDir, name), path.join(dir, name));
   }
   return dir;
@@ -58,7 +67,7 @@ function runSync(dir) {
 /** Снимок содержимого копии — для сравнения прогонов между собой. */
 function snapshot(dir) {
   return Object.fromEntries(
-    FILES.map((name) => [name, fs.readFileSync(path.join(dir, name), "utf8")]),
+    filesIn(dir).map((name) => [name, fs.readFileSync(path.join(dir, name), "utf8")]),
   );
 }
 
@@ -95,22 +104,91 @@ function insertSection(file, before, heading, body) {
   fs.writeFileSync(file, [...lines.slice(0, at), ...block, ...lines.slice(at)].join("\n"), "utf8");
 }
 
+/** Срез раздела: от `prefix` до следующего заголовка того же или старшего уровня. */
+function sectionRange(lines, prefix) {
+  const start = lines.findIndex((line) => line.startsWith(prefix));
+  assert.ok(start >= 0, `в книге нет раздела «${prefix}»`);
+
+  const level = /^(#{1,6}) /.exec(lines[start]);
+  const depth = level ? level[1].length : 0;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const current = /^(#{1,6}) /.exec(lines[index]);
+    if (current && current[1].length <= depth) {
+      end = index;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+/** Удаляет строку таблицы с именем `name` из раздела `prefix`. */
+function dropRow(file, prefix, name) {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const { start, end } = sectionRange(lines, prefix);
+  const at = lines.findIndex(
+    (line, index) => index >= start && index < end && line.startsWith(`| **${name}**`),
+  );
+  assert.ok(at >= 0, `в разделе «${prefix}» нет строки «${name}»`);
+
+  fs.writeFileSync(file, [...lines.slice(0, at), ...lines.slice(at + 1)].join("\n"), "utf8");
+}
+
+/** Вставляет строку `row` в конец последней таблицы раздела `prefix`. */
+function insertRow(file, prefix, row) {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const { start, end } = sectionRange(lines, prefix);
+  let at = -1;
+  for (let index = start; index < end; index += 1) {
+    if (lines[index].startsWith("|")) at = index;
+  }
+  assert.ok(at >= 0, `в разделе «${prefix}» нет таблицы`);
+
+  lines.splice(at + 1, 0, row);
+  fs.writeFileSync(file, lines.join("\n"), "utf8");
+}
+
+/** Заменяет фрагмент `from` на `to` в строке таблицы с именем `name`. */
+function editRow(file, prefix, name, from, to) {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const { start, end } = sectionRange(lines, prefix);
+  const at = lines.findIndex(
+    (line, index) => index >= start && index < end && line.startsWith(`| **${name}**`),
+  );
+  assert.ok(at >= 0, `в разделе «${prefix}» нет строки «${name}»`);
+  assert.ok(lines[at].includes(from), `в строке «${name}» нет «${from}»: ${lines[at]}`);
+
+  lines[at] = lines[at].split(from).join(to);
+  fs.writeFileSync(file, lines.join("\n"), "utf8");
+}
+
+/** Строка таблицы с именем `name` в разделе `prefix` — для сверки «до и после». */
+function rowOf(file, prefix, name) {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const { start, end } = sectionRange(lines, prefix);
+  const line = lines.slice(start, end).find((item) => item.startsWith(`| **${name}**`));
+  assert.ok(line !== undefined, `в разделе «${prefix}» нет строки «${name}»`);
+  return line;
+}
+
 /**
- * Откатывает минимумы навыков к старым значениям: в строках, где рядом с навыком
- * стоит новый минимум, он меняется на старый. Возвращает список правок —
+ * Откатывает минимумы навыков и знаний к старым значениям: в таблицах своего
+ * раздела значение каталога меняется на прежнее. Возвращает список правок —
  * по ним тест строит ожидаемые строки отчёта.
  */
 function rollbackSkillMinimums(file) {
   const rolled = [];
-  const lines = fs.readFileSync(file, "utf8").split("\n").map((line) => {
-    for (const [skill, oldValue, newValue] of SKILL_MINIMUMS) {
-      if (line.includes(skill) && line.includes(newValue)) {
-        rolled.push({ skill, oldValue, newValue });
-        return line.split(newValue).join(oldValue);
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+
+  for (const [prefix, name, oldValue, newValue] of SKILL_MINIMUMS) {
+    const { start, end } = sectionRange(lines, prefix);
+    for (let index = start; index < end; index += 1) {
+      if (lines[index].startsWith(`| **${name}**`) && lines[index].includes(newValue)) {
+        rolled.push({ name, oldValue, newValue });
+        lines[index] = lines[index].split(newValue).join(oldValue);
       }
     }
-    return line;
-  });
+  }
 
   fs.writeFileSync(file, lines.join("\n"), "utf8");
   return rolled;
@@ -167,20 +245,20 @@ test(
     const original = snapshot(dir);
     const rolled = [];
     const expected = new Set();
-    for (const book of BOOKS) {
+    for (const book of booksIn(dir)) {
       for (const item of rollbackSkillMinimums(path.join(dir, book))) {
         rolled.push({ book, ...item });
-        expected.add(`~ ${book}: ${item.skill} ${item.oldValue} → ${item.newValue}`);
+        expected.add(`~ ${book}: «${item.name}»: ${item.oldValue} → ${item.newValue}`);
       }
     }
     assert.ok(
       rolled.length > 0,
       "в книгах нет строк навыков с текущими минимумами — выравнивать нечего",
     );
-    for (const [skill] of SKILL_MINIMUMS) {
+    for (const [, name] of SKILL_MINIMUMS) {
       assert.ok(
-        rolled.some((item) => item.skill === skill),
-        `в книгах не нашлось строки навыка «${skill}» с текущим минимумом`,
+        rolled.some((item) => item.name === name),
+        `в книгах не нашлось строки навыка «${name}» с текущим минимумом`,
       );
     }
 
@@ -211,20 +289,22 @@ test("sync-books удаляет устаревший раздел «2.7. Уто�
   if (!dir) return;
 
   const before = snapshot(dir);
-  // В книгах этого раздела уже нет: возвращаем его в копию правил, чтобы проверить удаление.
+  // В книге игрока такого раздела нет: возвращаем его в копию, чтобы проверить удаление.
   const marker = "Строка устаревшего раздела, которой не должно остаться.";
-  const rulesPath = path.join(dir, RULES_BOOK);
-  insertSection(rulesPath, "## 3.1. ", "## 2.7. Уточнения каталогов", marker);
+  const target = path.join(
+    dir,
+    fs.existsSync(path.join(dir, RULES_BOOK)) ? RULES_BOOK : PLAYER_BOOK,
+  );
+  insertSection(target, "## 3.1. ", "## 2.7. Уточнения каталогов", marker);
   assert.ok(
-    fs.readFileSync(rulesPath, "utf8").includes(marker),
-    "раздел 2.7 не вставился в копию книги правил — проверять нечего",
+    fs.readFileSync(target, "utf8").includes(marker),
+    "раздел 2.7 не вставился в копию книги — проверять нечего",
   );
 
   const { code, out } = runSync(dir);
   assert.equal(code, 0, `прогон завершился ошибкой:\n${out}`);
-  assert.match(
-    out,
-    /~ ВТОРЫЕ_Книга_правил\.md: удалён устаревший раздел 2\.7/,
+  assert.ok(
+    out.includes(`~ ${path.basename(target)}: удалён устаревший раздел 2.7`),
     `в отчёте нет строки об удалении раздела:\n${out}`,
   );
   assert.match(out, /расхождений: 0/, `сверка после удаления раздела не сошлась:\n${out}`);
@@ -287,7 +367,7 @@ test("sync-books без каталога в папке книг падает с 
     /! Не найден каталог «ВТОРЫЕ_Каталоги\.md»: /,
     `в ошибке нет названия пропавшего каталога:\n${withoutCatalog.out}`,
   );
-  for (const book of BOOKS) {
+  for (const book of booksIn(dir)) {
     assert.equal(
       fs.readFileSync(path.join(dir, book), "utf8"),
       before[book],
@@ -314,8 +394,127 @@ test("sync-books падает с понятной ошибкой, если в к
   );
 
   const after = snapshot(dir);
-  for (const book of BOOKS) {
+  for (const book of booksIn(dir)) {
     assert.equal(after[book], before[book], `«${book}» изменилась, хотя синхронизация упала`);
   }
+});
+
+test("sync-books сверяет навыки, знания, особенности и изъяны с каталогом", (t) => {
+  const dir = sandbox(t);
+  if (!dir) return;
+
+  // По одной пропавшей строке из четырёх разделов: сверка обязана назвать каждый.
+  const file = path.join(dir, PLAYER_BOOK);
+  dropRow(file, "## 6.6. Небоевые навыки", "Верховая езда");
+  dropRow(file, "### 1.3.3. Особенности", "Обаяние");
+  dropRow(file, "### 1.3.4. Изъяны", "Лень");
+
+  const { code, out } = runSync(dir);
+  assert.equal(code, 1, `сверка должна была завершиться кодом 1:\n${out}`);
+  assert.match(
+    out,
+    /! ВТОРЫЕ_Книга_игрока\.md \/ небоевые навыки: «Верховая езда» есть в каталогах, нет в книге/,
+    `сверка не заметила пропавший навык:\n${out}`,
+  );
+  assert.match(
+    out,
+    /! ВТОРЫЕ_Книга_игрока\.md \/ особенности: «Обаяние» есть в каталогах, нет в книге/,
+    `сверка не заметила пропавшую особенность:\n${out}`,
+  );
+  assert.match(
+    out,
+    /! ВТОРЫЕ_Книга_игрока\.md \/ изъяны: «Лень» есть в каталогах, нет в книге/,
+    `сверка не заметила пропавший изъян:\n${out}`,
+  );
+  assert.match(
+    out,
+    /небоевые навыки: в каталогах 50, в книге 49/,
+    `в отчёте нет счёта небоевых навыков:\n${out}`,
+  );
+  assert.match(
+    out,
+    /имён в навыках и списках: 123/,
+    `в итоговой строке нет числа имён (10 + 50 + 23 + 25 + 15):\n${out}`,
+  );
+  assert.match(out, /расхождений: [1-9]\d*/, `в итоговой строке нет расхождений:\n${out}`);
+
+  // Обратная сторона: лишняя строка в книге тоже расхождение.
+  const extra = sandbox(t);
+  if (!extra) return;
+  insertRow(
+    path.join(extra, PLAYER_BOOK),
+    "### 1.3.3. Особенности",
+    "| **Лишнее** | Черта, которой нет в каталоге. |",
+  );
+
+  const second = runSync(extra);
+  assert.equal(second.code, 1, `лишняя особенность должна ломать сверку:\n${second.out}`);
+  assert.match(
+    second.out,
+    /особенности: «Лишнее» есть в книге, нет в каталогах/,
+    `сверка не заметила лишнюю особенность:\n${second.out}`,
+  );
+});
+
+test("sync-books выравнивает метку ★ навыков и знаний по каталогу", (t) => {
+  const dir = sandbox(t);
+  if (!dir) return;
+
+  const file = path.join(dir, PLAYER_BOOK);
+  // В каталоге «Плавание» со звёздочкой, «Грубая сила» — без: проверяем обе стороны правки.
+  editRow(file, "## 6.6. Небоевые навыки", "Плавание", "| свободно | ★ |", "| свободно | |");
+  editRow(file, "## 6.6. Небоевые навыки", "Грубая сила", "| свободно | |", "| свободно | ★ |");
+
+  const { code, out } = runSync(dir);
+  assert.equal(code, 0, `прогон завершился ошибкой:\n${out}`);
+  assert.match(
+    out,
+    /~ ВТОРЫЕ_Книга_игрока\.md: «Плавание»: ★ добавлена/,
+    `в отчёте нет возврата ★ у «Плавания»:\n${out}`,
+  );
+  assert.match(
+    out,
+    /~ ВТОРЫЕ_Книга_игрока\.md: «Грубая сила»: ★ убрана/,
+    `в отчёте нет снятия ★ у «Грубой силы»:\n${out}`,
+  );
+  assert.match(
+    rowOf(file, "## 6.6. Небоевые навыки", "Плавание"),
+    /\| свободно \| ★ \|/,
+    `у «Плавания» не вернулась ★: ${rowOf(file, "## 6.6. Небоевые навыки", "Плавание")}`,
+  );
+  assert.match(
+    rowOf(file, "## 6.6. Небоевые навыки", "Грубая сила"),
+    /\| свободно \| \|/,
+    `у «Грубой силы» не снялась ★: ${rowOf(file, "## 6.6. Небоевые навыки", "Грубая сила")}`,
+  );
+  assert.match(out, /расхождений: 0/, `сверка после правки ★ не сошлась:\n${out}`);
+
+  const second = runSync(dir);
+  assert.equal(second.code, 0, `повторный прогон завершился ошибкой:\n${second.out}`);
+  assert.doesNotMatch(
+    second.out,
+    /★ (добавлена|убрана)/,
+    `повторный прогон снова правил ★:\n${second.out}`,
+  );
+});
+
+test("sync-books пропускает отсутствующую книгу правил, а не падает с ENOENT", (t) => {
+  const dir = sandbox(t);
+  if (!dir) return;
+
+  fs.rmSync(path.join(dir, RULES_BOOK), { force: true });
+  const { code, out } = runSync(dir);
+  assert.equal(code, 0, `прогон без книги правил завершился ошибкой:\n${out}`);
+  assert.match(
+    out,
+    /= ВТОРЫЕ_Книга_правил\.md: книги нет — синхронизация пропущена/,
+    `в выводе нет пометки о пропущенной книге правил:\n${out}`,
+  );
+  assert.doesNotMatch(
+    out,
+    /ENOENT|node:internal\/fs|at .*sync-books\.cjs:\d+/,
+    `вместо пометки печатается стек чтения файла:\n${out}`,
+  );
+  assert.match(out, /расхождений: 0/, `сверка книги игрока не сошлась:\n${out}`);
 });
 
