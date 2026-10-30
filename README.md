@@ -154,6 +154,11 @@ node tools/export-rules.cjs ../мой.md   # или в свой файл
 Файл `ВТОРЫЕ_Каталоги.md` — снимок данных для вычитки и сверки с книгой.
 Источник правды остаётся в `lib/rules.ts` и `lib/notes.ts`: правите код — повторяете выгрузку.
 
+В шапке каталога стоит версия VTT, из которой он выгружен. `npm test` сверяет её с
+`package.json` (`tests/catalog-version.test.mjs`), поэтому после подъёма версии каталог
+нужно пересобрать: `npm run rules:books`. Если папки `books/` рядом с репозиторием нет
+(чистый клон, Docker), проверка пропускается.
+
 ### Книги и каталог совпадают дословно
 
 Обе книги «Вторые» берут таблицы снаряжения из каталога, а не хранят свою копию.
@@ -201,12 +206,14 @@ npm run dev
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs
+npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-version.test.mjs
 npm run build       # production-сборка, как на Vercel
 ```
 
 `npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts` и `lib/youtube.ts` напрямую, поэтому нужен
-Node 22.18+ (встроенное стирание типов). На Vercel тесты не запускаются — только сборка.
+Node 22.18+ (встроенное стирание типов). `tests/catalog-version.test.mjs` читает
+`../books/Vtorye/ВТОРЫЕ_Каталоги.md` с диска и сверяет версию в его шапке с `package.json`;
+если каталога рядом нет, тест помечается пропущенным. На Vercel тесты не запускаются — только сборка.
 
 Без переменных окружения комнаты живут в памяти процесса — удобно для разработки,
 но данные пропадают при перезапуске и не делятся между инстансами.
@@ -349,6 +356,7 @@ tests/
   rules.test.mjs               модификаторы, ОЗ, КБ, испытания, каталог навыков, возраст, монеты
   calendar.test.mjs            календарь, знаки, натальная карта, погода, часы кампании
   youtube.test.mjs             ссылки YouTube и канонические URL
+  catalog-version.test.mjs     версия в шапке «ВТОРЫЕ_Каталоги.md» против package.json
 ```
 
 ## API
