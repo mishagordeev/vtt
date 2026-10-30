@@ -530,17 +530,27 @@ export const COMBAT_SKILLS: SkillDef[] = [
   { name: "Кулачный бой и захваты", kind: "combat", stat: "str", min: 8 },
 ];
 
-/** Небоевые навыки (6.6): минимумы и ★ — как в книге. */
+/**
+ * Небоевые навыки (6.6): минимумы и ★ — как в книге.
+ *
+ * ★ — только там, где без ранга действие невозможно по замыслу: ремесло и
+ * специальные знания (Кузнечное дело, Взлом замков, Поиск и снятие ловушек,
+ * Огранка, Грамота, Картография, Оружейное и доспешное дело, Механика и
+ * архитектура, Алхимия, Полевая медицина, Травничество, Теология), документы
+ * и связи (Уличная сеть и жаргон, Ложь и подлоги). Телесные умения —
+ * Скалолазание, Плавание, Гребля, Верховая езда, Ловкость рук, Терпение —
+ * без ★: без ранга их можно попробовать со штрафом −5 (6.4.4).
+ */
 export const NONCOMBAT_SKILLS: SkillDef[] = [
   { name: "Скалолазание и такелаж", kind: "noncombat", stat: "str", min: 9 },
-  { name: "Плавание", kind: "noncombat", stat: "str", min: 9, starred: true },
+  { name: "Плавание", kind: "noncombat", stat: "str", min: 9 },
   { name: "Гребля", kind: "noncombat", stat: "str", min: 9 },
   { name: "Возничество и обозы", kind: "noncombat", stat: "str", min: 8 },
   { name: "Борьба и захваты", kind: "noncombat", stat: "str", min: 10 },
   { name: "Грубая сила", kind: "noncombat", stat: "str", min: 12 },
   { name: "Копание и расчистка", kind: "noncombat", stat: "str", min: 10 },
   { name: "Кузнечное дело", kind: "noncombat", stat: "str", min: 12, starred: true },
-  { name: "Верховая езда", kind: "noncombat", stat: "dex", min: 10, starred: true },
+  { name: "Верховая езда", kind: "noncombat", stat: "dex", min: 10 },
   { name: "Скрытность", kind: "noncombat", stat: "dex", min: 10 },
   { name: "Маскировка и грим", kind: "noncombat", stat: "dex", min: 10 },
   { name: "Взлом замков", kind: "noncombat", stat: "dex", min: 12, starred: true },
