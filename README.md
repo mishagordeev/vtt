@@ -155,10 +155,16 @@ node tools/export-rules.cjs ../мой.md   # или в свой файл
 Источник правды остаётся в `lib/rules.ts` и `lib/notes.ts`: правите код — повторяете выгрузку.
 
 В шапке каталога и в шапке «Кас-Хатар_Календарь_и_небо.md» стоит версия VTT, из которой
-они выгружены. `npm test` сверяет обе шапки с `package.json` (`tests/catalog-version.test.mjs`),
+они выгружены. `npm test` сверяет обе шапки с `package.json` (`tests/catalog-export.test.mjs`),
 поэтому после подъёма версии выгрузки нужно повторить: `npm run rules:books` и
 `npm run calendar:book`. Если папки `books/` рядом с репозиторием нет (чистый клон, Docker),
 проверки пропускаются.
+
+Строка «Состав: …» в шапке каталога — счётчики происхождений, боевых и небоевых навыков,
+знаний, особенностей, изъянов, предметов и видов монет. Тот же тест сверяет их с массивами
+`lib/rules.ts`, поэтому правка каталога без пересборки не проходит незамеченной, даже если
+версия в `package.json` не менялась. Ловятся изменения количества; переименование или
+правка описания при тех же числах — нет, для этого есть `tools/sync-books.cjs` и вычитка.
 
 ### Книги и каталог совпадают дословно
 
@@ -203,7 +209,7 @@ npm run calendar:book   # tools/export-calendar.cjs
 
 В шапке книги стоит версия VTT, из которой она выгружена: `Выгрузка из VTT Poison Press
 vX.Y.Z (файл lib/calendar.ts)`. `npm test` сверяет её с `package.json`
-(`tests/catalog-version.test.mjs`), так что после подъёма версии книгу нужно пересобрать
+(`tests/catalog-export.test.mjs`), так что после подъёма версии книгу нужно пересобрать
 той же командой.
 
 ## Локальный запуск
@@ -218,14 +224,15 @@ npm run dev
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-version.test.mjs tests/sync-books.test.mjs
+npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/sync-books.test.mjs
 npm run build       # production-сборка, как на Vercel
 ```
 
 `npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts` и `lib/youtube.ts` напрямую, поэтому нужен
-Node 22.18+ (встроенное стирание типов). `tests/catalog-version.test.mjs` читает
-`../books/Vtorye/ВТОРЫЕ_Каталоги.md` и `Кас-Хатар_Календарь_и_небо.md` с диска и сверяет
-`Выгрузка из VTT Poison Press vX.Y.Z` в шапках обоих файлов с `package.json`;
+Node 22.18+ (встроенное стирание типов). `tests/catalog-export.test.mjs` читает
+`../books/Vtorye/ВТОРЫЕ_Каталоги.md` и `Кас-Хатар_Календарь_и_небо.md` с диска, сверяет
+`Выгрузка из VTT Poison Press vX.Y.Z` в шапках обоих файлов с `package.json`, а строку
+«Состав: …» каталога — со счётчиками массивов `lib/rules.ts`;
 `tests/sync-books.test.mjs` гоняет `tools/sync-books.cjs` на временной копии книг
 (идемпотентность и негативная ветка сверки). Если книг или каталога рядом нет,
 оба теста помечаются пропущенными. На Vercel тесты не запускаются — только сборка.
@@ -371,7 +378,7 @@ tests/
   rules.test.mjs               модификаторы, ОЗ, КБ, испытания, каталог навыков, возраст, монеты
   calendar.test.mjs            календарь, знаки, натальная карта, погода, часы кампании
   youtube.test.mjs             ссылки YouTube и канонические URL
-  catalog-version.test.mjs     версия в шапках каталога и календаря против package.json
+  catalog-export.test.mjs      версия в шапках каталога и календаря и состав каталога против lib/rules.ts
   sync-books.test.mjs          синхронизация книг на копии: идемпотентность и расхождения
 ```
 
