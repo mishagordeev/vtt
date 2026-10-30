@@ -43,6 +43,7 @@ const OUT_PATH = path.resolve(
   projectDir,
   "..",
   "..",
+  "..",
   "Poison_Crew",
   "Vtorye",
   "Кас-Хатар_Календарь_и_небо.md",

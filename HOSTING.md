@@ -19,7 +19,7 @@
 
 ```bash
 # на сервере: Node 20+, пользователь для сервиса
-git clone <репозиторий> /srv/vtt && cd /srv/vtt/02_Projects/Poison_Press/vtt
+git clone <репозиторий> /srv/vtt && cd /srv/vtt/02_Projects/Poison_Press/books/vtt
 printf 'UPSTASH_REDIS_REST_URL=...\nUPSTASH_REDIS_REST_TOKEN=...\n' > .env.local
 npm ci
 npm run build
@@ -34,8 +34,8 @@ Description=Poison Press VTT
 After=network.target
 
 [Service]
-WorkingDirectory=/srv/vtt/02_Projects/Poison_Press/vtt
-EnvironmentFile=/srv/vtt/02_Projects/Poison_Press/vtt/.env.local
+WorkingDirectory=/srv/vtt/02_Projects/Poison_Press/books/vtt
+EnvironmentFile=/srv/vtt/02_Projects/Poison_Press/books/vtt/.env.local
 ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000
 Restart=always
 User=vtt

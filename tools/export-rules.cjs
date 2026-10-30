@@ -279,7 +279,9 @@ out(
   "",
 );
 
-const target = process.argv[2] ?? path.join(projectDir, "..", "..", "Poison_Crew", "Vtorye", "ВТОРЫЕ_Каталоги.md");
+const target =
+  process.argv[2] ??
+  path.join(projectDir, "..", "..", "..", "Poison_Crew", "Vtorye", "ВТОРЫЕ_Каталоги.md");
 const absolute = path.resolve(projectDir, target);
 fs.mkdirSync(path.dirname(absolute), { recursive: true });
 fs.writeFileSync(absolute, md.join("\n"), "utf8");

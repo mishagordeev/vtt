@@ -18,7 +18,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const base = path.resolve(__dirname, "..", "..", "..", "Poison_Crew", "Vtorye");
+const base = path.resolve(__dirname, "..", "..", "..", "..", "Poison_Crew", "Vtorye");
 const catalogPath = path.join(base, "ВТОРЫЕ_Каталоги.md");
 const catalog = fs.readFileSync(catalogPath, "utf8").split(/\r?\n/);
 
