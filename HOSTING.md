@@ -107,6 +107,27 @@ docker compose up -d --build
 
 Наружу порт не открываем: `127.0.0.1:3000` смотрит только Nginx.
 
+### Что проверить после `up`
+
+```bash
+docker compose ps                                  # vtt — Up, healthcheck не ругается
+curl -s http://127.0.0.1:3000/api/health           # {"ok":true,...}
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/   # 200
+docker compose logs --tail=50 vtt                  # старт без ошибок
+```
+
+Что должно быть в ответе `/api/health`: `ok: true` и `storage.mode` = `redis`, если
+в `.env` вписаны URL и токен Upstash. Пустой `.env` тоже поднимает стол, но
+`storage.mode` будет `memory` — комнаты исчезнут при перезапуске контейнера.
+
+**Про статику.** `output: "standalone"` в `next.config.ts` кладёт в `.next/standalone`
+только сервер и нужные зависимости — без `.next/static` и без `public`. Поэтому в
+`Dockerfile` есть отдельные шаги `COPY --from=build /app/.next/static ./.next/static`
+и `COPY --from=build /app/public ./public`: без них страница приедет без CSS и без
+карты города. Шаги Dockerfile проверены локально на standalone-сборке v0.4.9
+(в 0.4.10 менялась только эта документация): `/_next/static/css/*.css` отдаётся с
+кодом 200, при отсутствии скопированной статики — 400.
+
 ## Хранилище: три варианта
 
 | Вариант | Что делать | Правки в коде |
