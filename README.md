@@ -215,6 +215,17 @@ npm run calendar:book   # tools/export-calendar.cjs
 Правите текст — правьте `lib/calendar.ts` и повторяйте выгрузку, иначе лист персонажа
 и книга разойдутся.
 
+Проверить, не разошлась ли книга с кодом, можно без записи:
+
+```bash
+npm run calendar:check   # node tools/export-calendar.cjs --check
+```
+
+Сверка собирает текст заново и сравнивает его с файлом на диске: если файла нет или он
+отличается, печатается первая разошедшаяся строка (что стоит в книге и что в
+`lib/calendar.ts`) и скрипт выходит с кодом 1, ничего не записывая. Переменная
+`VTT_BOOKS_DIR` задаёт другую папку книг — на этом построен `tests/export-calendar.test.mjs`.
+
 В шапке книги стоит версия VTT, из которой она выгружена: `Выгрузка из VTT Poison Press
 vX.Y.Z (файл lib/calendar.ts)`. `npm test` сверяет её с `package.json`
 (`tests/catalog-export.test.mjs`), так что после подъёма версии книгу нужно пересобрать
@@ -232,7 +243,7 @@ npm run dev
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/sync-books.test.mjs
+npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs
 npm run build       # production-сборка, как на Vercel
 ```
 
@@ -241,10 +252,15 @@ Node 22.18+ (встроенное стирание типов). `tests/catalog-e
 `../books/Vtorye/ВТОРЫЕ_Каталоги.md` и `Кас-Хатар_Календарь_и_небо.md` с диска, сверяет
 `Выгрузка из VTT Poison Press vX.Y.Z` в шапках обоих файлов с `package.json`, а строку
 «Состав: …» каталога — со счётчиками массивов `lib/rules.ts`;
+`tests/export-calendar.test.mjs` гоняет `tools/export-calendar.cjs` на временной папке книг
+через `VTT_BOOKS_DIR`: первый прогон собирает книгу заново, второй ничего в ней не меняет
+(идемпотентность), `--check` падает с кодом 1 и печатает разошедшуюся строку, если книгу
+поправили мимо `lib/calendar.ts`, и не создаёт файл, если книги нет; на рабочей книге базы
+та же сверка проверяет, что она собрана из текущего `lib/calendar.ts`;
 `tests/sync-books.test.mjs` гоняет `tools/sync-books.cjs` на временной копии книг
 (идемпотентность, негативная ветка сверки, минимумы навыков, удаление раздела 2.7,
 ошибка на пропавшем блоке каталога и ошибка без самого каталога). Если книг или каталога рядом нет,
-оба теста помечаются пропущенными. На Vercel тесты не запускаются — только сборка.
+эти тесты помечаются пропущенными. На Vercel тесты не запускаются — только сборка.
 
 Без переменных окружения комнаты живут в памяти процесса — удобно для разработки,
 но данные пропадают при перезапуске и не делятся между инстансами.
@@ -381,13 +397,14 @@ lib/
   http.ts, client.ts, ids.ts   мелкие утилиты
 tools/
   export-rules.cjs             выгрузка каталогов правил в Markdown (см. ниже)
-  export-calendar.cjs          выгрузка календаря и неба в «Кас-Хатар_Календарь_и_небо.md»
+  export-calendar.cjs          выгрузка календаря и неба в «Кас-Хатар_Календарь_и_небо.md» (`--check` — только сверка)
 tests/
   dice.test.mjs                формулы и броски
   rules.test.mjs               модификаторы, ОЗ, КБ, испытания, каталог навыков, возраст, монеты
   calendar.test.mjs            календарь, знаки, натальная карта, погода, часы кампании
   youtube.test.mjs             ссылки YouTube и канонические URL
   catalog-export.test.mjs      версия в шапках каталога и календаря и состав каталога против lib/rules.ts
+  export-calendar.test.mjs     выгрузка календаря на копии книг: идемпотентность, --check и расхождение с lib/calendar.ts
   sync-books.test.mjs          книги на копии: идемпотентность, расхождения, минимумы навыков, 2.7, пропавший блок и пропавший каталог
 ```
 

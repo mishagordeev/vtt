@@ -6,7 +6,12 @@
  * пишет приложение к путеводителю.
  *
  * Запуск (из папки vtt):
- *   node tools/export-calendar.cjs
+ *   node tools/export-calendar.cjs            # пересобрать книгу
+ *   node tools/export-calendar.cjs --check    # только сверить, без записи
+ *   VTT_BOOKS_DIR=/tmp/копия node tools/export-calendar.cjs   # прогон на копии книг
+ *
+ * `--check` нужен вместо ручной сверки: он собирает текст заново и сравнивает его
+ * с книгой на диске, а при расхождении печатает номер строки и выходит с кодом 1.
  */
 const fs = require("node:fs");
 const os = require("node:os");
@@ -39,13 +44,14 @@ execFileSync(
 
 const calendar = require(path.join(outDir, "calendar.js"));
 
-const OUT_PATH = path.resolve(
-  projectDir,
-  "..",
-  "books",
-  "Vtorye",
-  "Кас-Хатар_Календарь_и_небо.md",
-);
+// VTT_BOOKS_DIR позволяет прогнать выгрузку на временной копии книг:
+// так tests/export-calendar.test.mjs сверяет скрипт, не трогая рабочий файл базы.
+const booksDir = process.env.VTT_BOOKS_DIR
+  ? path.resolve(process.env.VTT_BOOKS_DIR)
+  : path.resolve(projectDir, "..", "books", "Vtorye");
+
+const BOOK_NAME = "Кас-Хатар_Календарь_и_небо.md";
+const OUT_PATH = path.join(booksDir, BOOK_NAME);
 
 const pkg = require(path.join(projectDir, "package.json"));
 const version = process.env.VTT_VERSION || pkg.version;
@@ -224,6 +230,41 @@ push(
 );
 
 const text = lines.join("\n");
+
+/** Строка для сообщения о расхождении: без хвостовых пробелов и не длиннее 120 знаков. */
+const short = (value) => {
+  const line = String(value ?? "").replace(/\s+$/, "");
+  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+};
+
+/** Сверка вместо записи: `--check` ничего не меняет, только говорит, разошлась ли книга. */
+if (process.argv.includes("--check")) {
+  if (!fs.existsSync(OUT_PATH)) {
+    console.error(`! Нет выгрузки «${BOOK_NAME}»: ${OUT_PATH}`);
+    console.error("  Соберите её: npm run calendar:book (или node tools/export-calendar.cjs)");
+    process.exit(1);
+  }
+
+  const current = fs.readFileSync(OUT_PATH, "utf8");
+  if (current === text) {
+    console.log("Книга совпадает с lib/calendar.ts:", OUT_PATH);
+    process.exit(0);
+  }
+
+  const expected = text.split("\n");
+  const actual = current.split("\n");
+  let at = 0;
+  while (at < expected.length && at < actual.length && expected[at] === actual[at]) at += 1;
+
+  console.error(`! Книга разошлась с lib/calendar.ts: ${OUT_PATH}`);
+  console.error(`  Первое расхождение — строка ${at + 1}:`);
+  console.error(`    в книге: ${short(actual[at] ?? "(конец файла)") || "(пустая строка)"}`);
+  console.error(`    в lib/calendar.ts: ${short(expected[at] ?? "(конец файла)") || "(пустая строка)"}`);
+  console.error(`  Строк: в книге ${actual.length}, в lib/calendar.ts ${expected.length}.`);
+  console.error("  Пересоберите книгу: npm run calendar:book");
+  process.exit(1);
+}
+
 fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
 fs.writeFileSync(OUT_PATH, text, "utf8");
 console.log("Готово:", OUT_PATH);
