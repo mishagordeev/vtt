@@ -318,10 +318,8 @@ function syncListValues(bookName, lines) {
     if (section.statCheck !== "exact") continue;
 
     const bounds = slice(lines, section.book);
-    if (!bounds) {
-      report.push(`! ${bookName}: нет раздела «${section.book}»`);
-      continue;
-    }
+    // Пропавший раздел ловит сверка состава (verifyList) — здесь только значения.
+    if (!bounds) continue;
 
     const found = new Map();
     for (const table of tables(lines, bounds.start, bounds.end)) {
@@ -341,6 +339,7 @@ function syncListValues(bookName, lines) {
       const stat = row.cells[data.stat];
       const short = STAT_SHORT[stat];
       if (!short) {
+        problems += 1;
         report.push(`! ${bookName}: «${name}» — неизвестная характеристика «${stat}»`);
         continue;
       }
