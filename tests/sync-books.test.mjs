@@ -104,6 +104,16 @@ function insertSection(file, before, heading, body) {
   fs.writeFileSync(file, [...lines.slice(0, at), ...block, ...lines.slice(at)].join("\n"), "utf8");
 }
 
+/** Вставляет заголовок `heading` и пустую строку после него перед строкой `before`. */
+function insertHeadingBefore(file, before, heading) {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const at = lines.findIndex((line) => line.startsWith(before));
+  assert.ok(at >= 0, `в книге нет раздела «${before}»`);
+
+  lines.splice(at, 0, heading, "");
+  fs.writeFileSync(file, lines.join("\n"), "utf8");
+}
+
 /** Срез раздела: от `prefix` до следующего заголовка того же или старшего уровня. */
 function sectionRange(lines, prefix) {
   const start = lines.findIndex((line) => line.startsWith(prefix));
@@ -210,6 +220,46 @@ test("sync-books идемпотентен: повторный прогон не 
   const second = runSync(dir);
   assert.equal(second.code, 0, `повторный прогон завершился ошибкой:\n${second.out}`);
   assert.deepEqual(snapshot(dir), afterFirst, "повторный прогон изменил книги или каталог");
+});
+
+test("sync-books сохраняет заголовок главы h1 перед таблицами 7.3–7.6", (t) => {
+  const dir = sandbox(t);
+  if (!dir) return;
+
+  // Таблица 7.6 — последний раздел главы 7: сразу за ним идёт заголовок главы 8.
+  // Раньше диапазон замены кончался только на `##`, поэтому h1 стирался.
+  const target = path.join(dir, PLAYER_BOOK);
+  const heading = "# Глава 8. Магия";
+  const lines = fs
+    .readFileSync(target, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== heading);
+  fs.writeFileSync(target, lines.join("\n"), "utf8");
+  insertHeadingBefore(target, "## 8.1. ", heading);
+
+  const { code, out } = runSync(dir);
+  assert.equal(code, 0, `прогон завершился ошибкой:\n${out}`);
+  assert.match(
+    out,
+    /~ ВТОРЫЕ_Книга_игрока\.md: ## 7\.6\. .*таблицы обновлены/,
+    `таблицы 7.6 не обновлялись — проверять нечего:\n${out}`,
+  );
+
+  const after = fs.readFileSync(target, "utf8").split("\n");
+  const chapter = after.indexOf(heading);
+  assert.ok(chapter >= 0, `заголовок главы пропал после синхронизации:\n${out}`);
+  const section = after.findIndex((line) => line.startsWith("## 8.1. "));
+  assert.ok(
+    section > chapter,
+    `заголовок главы оказался не перед разделом 8.1: ${chapter} / ${section}\n${out}`,
+  );
+
+  const second = runSync(dir);
+  assert.equal(second.code, 0, `повторный прогон завершился ошибкой:\n${second.out}`);
+  assert.ok(
+    fs.readFileSync(target, "utf8").includes(`${heading}\n`),
+    "повторный прогон убрал заголовок главы",
+  );
 });
 
 test("sync-books ловит расхождение: пропавший раздел монет ломает сверку", (t) => {
