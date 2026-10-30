@@ -1,0 +1,43 @@
+# VTT «Вторых» как системная служба (Ubuntu/Debian).
+#
+#   sudo git clone https://github.com/mishagordeev/vtt.git /srv/vtt
+#   sudo useradd --system --home /srv/vtt --shell /usr/sbin/nologin vtt   # если ещё нет
+#   sudo chown -R vtt:vtt /srv/vtt
+#   cd /srv/vtt && sudo -u vtt npm ci && sudo -u vtt npm run build
+#   sudo cp /srv/vtt/deploy/vtt.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now vtt
+#
+# Корень клона VTT — сразу проект: app/, lib/, package.json лежат в /srv/vtt.
+# Папки 02_Projects/... на сервере нет: это путь внутри базы «Луна», а VTT —
+# отдельный репозиторий (github.com/mishagordeev/vtt), в luna он в .gitignore.
+# Секреты Upstash — в /srv/vtt/.env.local: файл читают и Next.js, и systemd.
+
+[Unit]
+Description=Poison Press VTT (виртуальный стол «Вторые»)
+Documentation=file:/srv/vtt/HOSTING.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vtt
+Group=vtt
+# next start ищет .next рядом с package.json, а .env.local читается из корня проекта.
+WorkingDirectory=/srv/vtt
+EnvironmentFile=/srv/vtt/.env.local
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+# npm не должен писать в домашний каталог (он под ProtectHome).
+Environment=npm_config_update_notifier=false
+ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000
+Restart=always
+RestartSec=3
+# Пишет только .next (кеш картинок и fetch) — /srv остаётся доступным на запись.
+ProtectSystem=full
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

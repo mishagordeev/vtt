@@ -17,31 +17,61 @@
 
 ## Вариант 1: VPS + Node (самый простой)
 
+VTT — **отдельный репозиторий** `github.com/mishagordeev/vtt`. Путь `02_Projects/Poison_Press/vtt`
+существует только внутри базы «Луна», где папка VTT стоит в `.gitignore`. Поэтому на сервер
+клонируется сам VTT, и **корень клона — сразу проект**: `app/`, `lib/`, `package.json` лежат прямо
+в `/srv/vtt`, никакого `02_Projects/...` внутри нет.
+
 ```bash
-# на сервере: Node 20+, пользователь для сервиса
-git clone <репозиторий> /srv/vtt && cd /srv/vtt/02_Projects/Poison_Press/vtt
+# на сервере: Node 20+ (в Dockerfile — node:22), отдельный пользователь для сервиса
+git clone https://github.com/mishagordeev/vtt.git /srv/vtt
+cd /srv/vtt
 printf 'UPSTASH_REDIS_REST_URL=...\nUPSTASH_REDIS_REST_TOKEN=...\n' > .env.local
 npm ci
 npm run build
 npm run start -- -H 127.0.0.1 -p 3000
 ```
 
-`systemd`-юнит `/etc/systemd/system/vtt.service`:
+`npm ci` ставит и `devDependencies`, а они нужны самой сборке (TypeScript, Tailwind): не ставьте
+перед ним `NODE_ENV=production` и не добавляйте `--omit=dev`.
+
+Книги «Вторых» (каталог, «Книга правил», календарь) живут в другом репозитории и на сервере не нужны:
+сборка и рантайм их не читают — свежий клон без папки `books/` собирается, `/api/health` отвечает.
+`npm run rules:books` и `npm run calendar:book` — это выгрузка из `lib/rules.ts` и `lib/calendar.ts`
+в книги, запускается на машине с базой, а не на сервере.
+
+`systemd`-юнит лежит в репозитории — `deploy/vtt.service`, пути в нём уже правильные:
+
+```bash
+sudo cp /srv/vtt/deploy/vtt.service /etc/systemd/system/vtt.service
+sudo systemctl daemon-reload && sudo systemctl enable --now vtt
+```
+
+Ключевые строки (полный файл — `deploy/vtt.service`):
 
 ```ini
-[Unit]
-Description=Poison Press VTT
-After=network.target
-
 [Service]
-WorkingDirectory=/srv/vtt/02_Projects/Poison_Press/vtt
-EnvironmentFile=/srv/vtt/02_Projects/Poison_Press/vtt/.env.local
+User=vtt
+WorkingDirectory=/srv/vtt
+EnvironmentFile=/srv/vtt/.env.local
 ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000
 Restart=always
-User=vtt
+```
 
-[Install]
-WantedBy=multi-user.target
+`WorkingDirectory` и `EnvironmentFile` смотрят в **корень клона** `/srv/vtt`: `next start` ищет
+`.next` рядом с `package.json`, а `.env.local` Next.js читает из корня проекта.
+
+При старте в журнале будет предупреждение `"next start" does not work with "output: standalone"
+configuration`. Сборка идёт в standalone-режиме (`output: "standalone"` в `next.config.ts`, так же
+собирается `Dockerfile`), но `next start` стол обслуживает: проверено — `/` отдаёт 200, `/api/health`
+отвечает `ok: true`. Хотите без предупреждения — запускайте standalone-сервер, только скопируйте
+статику, иначе страница приедет без CSS и картинок:
+
+```bash
+cp -r public .next/standalone/public
+mkdir -p .next/standalone/.next
+cp -r .next/static .next/standalone/.next/
+PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js
 ```
 
 Nginx спереди (HTTPS обязателен: без него не работает буфер обмена для ссылки на комнату,
@@ -62,7 +92,8 @@ server {
 }
 ```
 
-Обновление: `git pull && npm ci && npm run build && systemctl restart vtt`.
+Обновление: `cd /srv/vtt && git pull --ff-only && npm ci && npm run build && sudo systemctl restart vtt`.
+Скрипты `rules:books` и `calendar:book` в обновление не входят — книги лежат в другом репозитории.
 
 ## Вариант 2: Docker
 
@@ -118,10 +149,12 @@ docker compose up -d --build
 
 - [ ] Домен и DNS.
 - [ ] Node 20+ на сервере или Docker.
+- [ ] Клон VTT-репозитория в `/srv/vtt` (корень клона = корень проекта), ветка `main`.
 - [ ] `.env.local` с `UPSTASH_REDIS_REST_URL` и `UPSTASH_REDIS_REST_TOKEN`
       (полный токен, не Readonly).
-- [ ] `npm ci && npm run build` без ошибок.
-- [ ] Сервис поднят, `curl http://127.0.0.1:3000/api/health?deep=1` отвечает `canWrite: true`.
+- [ ] `npm ci && npm run build` в `/srv/vtt` без ошибок.
+- [ ] `deploy/vtt.service` установлен: `systemctl status vtt` — active,
+      `curl http://127.0.0.1:3000/api/health?deep=1` отвечает `canWrite: true`.
 - [ ] Nginx + HTTPS, проверка ссылки `/r/<КОД>` в браузере.
 - [ ] Проверить музыку: YouTube IFrame требует, чтобы домен был тем же, что в адресной строке.
 - [ ] Настроить бэкап Redis (RDB/snapshot) и ротацию логов.
@@ -129,4 +162,4 @@ docker compose up -d --build
 
 ---
 
-_Написано: 28.10.2026_
+_Написано: 28.10.2026, деплой по новому пути проверен 30.10.2026._
