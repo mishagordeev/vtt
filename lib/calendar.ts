@@ -15,7 +15,7 @@
  * Климат Пограничья — резко континентальная степь: см. `CLIMATE_NOTE`.
  *
  * Тот же текст выгружается в базу знаний: `npm run calendar:book`
- * (`tools/export-calendar.cjs` → `../../../Poison_Crew/Vtorye/Кас-Хатар_Календарь_и_небо.md`).
+ * (`tools/export-calendar.cjs` → `../../books/Vtorye/Кас-Хатар_Календарь_и_небо.md`).
  */
 
 export type Alignment = "Порядок" | "Равновесие" | "Хаос";

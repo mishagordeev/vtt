@@ -42,9 +42,7 @@ const calendar = require(path.join(outDir, "calendar.js"));
 const OUT_PATH = path.resolve(
   projectDir,
   "..",
-  "..",
-  "..",
-  "Poison_Crew",
+  "books",
   "Vtorye",
   "Кас-Хатар_Календарь_и_небо.md",
 );
