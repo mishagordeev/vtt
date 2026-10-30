@@ -13,7 +13,7 @@
  *  2. дополняет разделы про монеты (2.1 / 7.1) и нагрузку (2.2 / 7.2);
  *  3. выравнивает минимумы навыков (Грамота 10, Верховая езда 10, Природа и звери 12);
  *  4. удаляет устаревший раздел «2.7. Уточнения каталогов», если он ещё есть;
- *  5. проверяет, что каждая строка таблиц каталога есть в обеих книгах.
+ *  5. после записи обеих книг сверяет, что каждая строка таблиц каталога есть в книгах.
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -112,8 +112,9 @@ const TABLE_TITLES = [
 
 const report = [];
 
-
 for (const book of BOOKS) {
+  // Отчёт по текущей книге: заметки предыдущей книги не смешиваются с ней.
+  report.length = 0;
   const file = path.join(base, book.name);
   let lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
 
@@ -168,6 +169,12 @@ for (const book of BOOKS) {
     report.push(`~ ${book.name}: удалён устаревший раздел 2.7`);
   }
 
+  fs.writeFileSync(file, lines.join("\n"), "utf8");
+  console.log(report.join("\n"));
+}
+
+// Сверка — после цикла: книги уже записаны, читаем актуальные файлы.
+report.length = 0;
 let rows = 0;
 let problems = 0;
 for (const title of TABLE_TITLES) {
@@ -192,7 +199,3 @@ for (const title of TABLE_TITLES) {
 report.push(`Строк таблиц в каталоге: ${rows}; расхождений: ${problems}`);
 console.log(report.join("\n"));
 if (problems > 0) process.exitCode = 1;
-
-
-  fs.writeFileSync(file, lines.join("\n"), "utf8");
-}

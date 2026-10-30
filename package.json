@@ -1,6 +1,6 @@
 {
   "name": "poison-press",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "private": true,
   "description": "VTT для настольной игры «Вторые»: чат, броски, персонажи",
   "scripts": {
