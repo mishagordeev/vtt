@@ -12,6 +12,7 @@ import {
   WEATHER_KINDS,
   WEEKDAYS,
   YEAR_DAYS,
+  composeBirth,
   dayIndex,
   describeDay,
   describeClock,
@@ -278,3 +279,15 @@ test("часы кампании: стоят, идут и показывают ч
     new RegExp(`1 Нисана ${FIRST_YEAR}`),
   );
 });
+
+test("день рождения собирается из половин, только когда обе заполнены и допустимы", () => {
+  assert.equal(composeBirth("14", "4"), "14.04");
+  assert.equal(composeBirth(" 7 ", "12"), "07.12");
+  assert.equal(composeBirth("", "4"), "");
+  assert.equal(composeBirth("14", ""), "");
+  assert.equal(composeBirth("0", "4"), "");
+  assert.equal(composeBirth("31", "4"), "");
+  assert.equal(composeBirth("14", "13"), "");
+  assert.equal(composeBirth("14.03", "4"), "");
+});
+

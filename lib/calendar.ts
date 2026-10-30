@@ -404,6 +404,21 @@ export function formatBirth(day: number, month: number): string {
   return `${pad2(day)}.${pad2(month)}`;
 }
 
+/**
+ * Собирает дату из двух половин формы: «14» + «4» → «14.04».
+ * Пусто — если хотя бы одна половина не заполнена или выходит за календарь:
+ * тогда дата в лист не пишется, а набранное остаётся в полях.
+ */
+export function composeBirth(dayText: string, monthText: string): string {
+  if (dayText.trim() === "" || monthText.trim() === "") return "";
+  const day = Number(dayText);
+  const month = Number(monthText);
+  if (!Number.isInteger(day) || !Number.isInteger(month)) return "";
+  if (month < 1 || month > MONTHS.length) return "";
+  if (day < 1 || day > DAYS_PER_MONTH) return "";
+  return formatBirth(day, month);
+}
+
 export interface NatalChart {
   birth: BirthDate;
   /** «12 Симана». */

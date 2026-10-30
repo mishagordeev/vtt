@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "@/lib/notes";
-import { MONTHS, formatBirth, natalChart, parseBirth } from "@/lib/calendar";
+import { DAYS_PER_MONTH, MONTHS, composeBirth, natalChart, parseBirth } from "@/lib/calendar";
 import {
   ABILITY_METHODS,
   COIN_TYPES,
@@ -192,14 +192,43 @@ interface NatalCardProps {
  * поэтому весь круг — из `lib/calendar.ts` (дополнение «Календарь и небо»).
  */
 function NatalCard({ birth, editing, onChange }: NatalCardProps) {
+  // День и месяц держим текстом: пока не заполнены оба поля, в лист ничего не
+  // пишем, но и набранное не сбрасываем — иначе ввод пропадает на первом нажатии.
+  const [dayText, setDayText] = useState(() => {
+    const start = parseBirth(birth);
+    return start ? String(start.day) : "";
+  });
+  const [monthText, setMonthText] = useState(() => {
+    const start = parseBirth(birth);
+    return start ? String(start.month) : "";
+  });
+  /** Последнее значение, записанное в лист нами же: по нему отличаем свой ввод от чужого. */
+  const emitted = useRef(birth);
+
+  useEffect(() => {
+    // Свой ввод не перечитываем: birth меняется от наших же onChange. А чужое
+    // изменение — загрузка листа, отмена правки, ответ сервера — подхватываем.
+    if (editing && birth === emitted.current) return;
+    emitted.current = birth;
+    const next = parseBirth(birth);
+    setDayText(next ? String(next.day) : "");
+    setMonthText(next ? String(next.month) : "");
+  }, [editing, birth]);
+
   const parsed = parseBirth(birth);
   const chart = parsed ? natalChart(parsed.day, parsed.month) : null;
-  const day = parsed?.day ?? 0;
-  const month = parsed?.month ?? 0;
 
-  function setDate(nextDay: number, nextMonth: number) {
-    if (nextDay >= 1 && nextMonth >= 1) onChange(formatBirth(nextDay, nextMonth));
-    else onChange("");
+  /** Что-то набрано, но полной даты ещё нет — подсказываем, почему она не пишется. */
+  const incomplete = (dayText.trim() !== "" || monthText !== "") && composeBirth(dayText, monthText) === "";
+
+  function setDate(nextDay: string, nextMonth: string) {
+    const day = nextDay.trim();
+    setDayText(day);
+    setMonthText(nextMonth);
+    const value = composeBirth(day, nextMonth);
+    if (value === birth) return;
+    emitted.current = value;
+    onChange(value);
   }
 
   return (
@@ -216,36 +245,46 @@ function NatalCard({ birth, editing, onChange }: NatalCardProps) {
       </div>
 
       {editing ? (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-zinc-600">День</span>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={day || ""}
-              onChange={(event) => setDate(Number(event.target.value), month)}
-              className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-zinc-600">Месяц</span>
-            <select
-              value={month || ""}
-              onChange={(event) => setDate(day || 1, Number(event.target.value))}
-              className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
-            >
-              <option value="">— не выбран —</option>
-              {MONTHS.map((entry) => (
-                <option key={entry.index} value={entry.index}>
-                  {entry.name} ({entry.imperial})
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="pb-1 text-[10px] text-zinc-600">
-            в месяце 30 дней; если дата неизвестна — оставьте пусто
-          </span>
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="space-y-1">
+              <span className="block text-[10px] uppercase tracking-wide text-zinc-600">День</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={2}
+                value={dayText}
+                placeholder="14"
+                onChange={(event) =>
+                  setDate(event.target.value.replace(/\D/g, "").slice(0, 2), monthText)
+                }
+                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="block text-[10px] uppercase tracking-wide text-zinc-600">Месяц</span>
+              <select
+                value={monthText}
+                onChange={(event) => setDate(dayText, event.target.value)}
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
+              >
+                <option value="">— не выбран —</option>
+                {MONTHS.map((entry) => (
+                  <option key={entry.index} value={entry.index}>
+                    {entry.name} ({entry.imperial})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="pb-1 text-[10px] text-zinc-600">
+              в месяце 30 дней; если дата неизвестна — оставьте пусто
+            </span>
+          </div>
+          {incomplete ? (
+            <p className="text-[11px] text-amber-200/80">
+              Дата попадёт в лист, когда указаны день (1–{DAYS_PER_MONTH}) и месяц.
+            </p>
+          ) : null}
         </div>
       ) : (
         <p className="text-xs text-zinc-400">

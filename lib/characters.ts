@@ -13,7 +13,7 @@ import {
   findItem,
   findSkill,
   skillKind,
-} from "./rules";
+} from "./rules.ts";
 import type { Character, CharacterDraft, InventoryItem, ItemLocation, ResourceState, Skill, SkillKind } from "./types";
 
 const DEFAULT_COINS = 100;
@@ -27,6 +27,21 @@ const KIT_ITEM_NAMES = new Set(Object.values(STARTER_KITS).flat());
 
 function defaultFieldValue(field: (typeof FIELDS)[number]): string {
   return field.options?.[0] ?? "";
+}
+
+/**
+ * Поля листа по схеме FIELDS: только известные ключи, без лишних пробелов,
+ * обрезанные по длине. В `fields` живут не только заметки, но и день рождения,
+ * возраст и поправки возраста, поэтому все поля читаются и пишутся одной функцией.
+ */
+function fieldsFrom(raw: Record<string, unknown> | undefined): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const field of FIELDS) {
+    const value = cleanText(raw?.[field.key], field.maxLength);
+    fields[field.key] =
+      field.options && !field.options.includes(value) ? defaultFieldValue(field) : value;
+  }
+  return fields;
 }
 
 function cleanImage(value: unknown, maxLength: number): string {
@@ -188,10 +203,12 @@ export function draftFromCharacter(character: Character): CharacterDraft {
   inventory.length = 0;
   inventory.push(...mergedInventory);
 
-  let notes = character.fields?.notes ?? "";
+  // Поля листа читаем целиком по схеме: день рождения и возраст живут в тех же
+  // `fields`, что и заметки, и раньше терялись при каждом перечитывании листа.
+  const fields = fieldsFrom(character.fields);
   const legacyGear = character.fields?.gear;
   if (legacyGear && legacyGear.trim()) {
-    notes = notes ? `${notes}\n\nСнаряжение: ${legacyGear}` : `Снаряжение: ${legacyGear}`;
+    fields.notes = fields.notes ? `${fields.notes}\n\nСнаряжение: ${legacyGear}` : `Снаряжение: ${legacyGear}`;
   }
 
   const legacy = character as { trait?: string; flaw?: string };
@@ -217,7 +234,7 @@ export function draftFromCharacter(character: Character): CharacterDraft {
     flaws,
     languages,
     inventory,
-    fields: { notes },
+    fields,
   };
 }
 
@@ -363,11 +380,7 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   draft.inventory = merged;
 
   const rawFields = (raw.fields ?? {}) as Record<string, unknown>;
-  for (const field of FIELDS) {
-    const value = cleanText(rawFields[field.key], field.maxLength);
-    draft.fields[field.key] =
-      field.options && !field.options.includes(value) ? defaultFieldValue(field) : value;
-  }
+  draft.fields = fieldsFrom(rawFields);
 
   return draft;
 }

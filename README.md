@@ -108,7 +108,9 @@ Next.js 15 (App Router) + TypeScript + Tailwind CSS 4, деплой на Vercel.
   `npm run calendar:book` пишет `../books/Vtorye/Кас-Хатар_Календарь_и_небо.md`.
 - **День рождения и натальная карта.** На вкладке «Основное» — день и месяц рождения;
   лист показывает знак, стихию Порядка/Равновесия/Хаоса, покровителя, положение обеих лун,
-  ближайший праздник и маленькую выгоду знака.
+  ближайший праздник и маленькую выгоду знака. Дата лежит в `fields.birth` («дд.мм») и
+  записывается, только когда выбраны и день, и месяц; пока вторая половина пуста, набранное
+  остаётся в полях, но в лист не пишется.
 - **Бросок возраста.** На вкладке «Характеристики»: два d6 на десятки и d10 на единицы
   (21–130 лет). Возраст даёт поправки к характеристикам — они применяются один раз, видны
   на листе и снимаются кнопкой «Снять».
@@ -243,12 +245,14 @@ npm run dev
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs
+npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/characters.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs
 npm run build       # production-сборка, как на Vercel
 ```
 
-`npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts` и `lib/youtube.ts` напрямую, поэтому нужен
-Node 22.18+ (встроенное стирание типов). `tests/catalog-export.test.mjs` читает
+`npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts`, `lib/characters.ts`
+и `lib/youtube.ts` напрямую, поэтому нужен
+Node 22.18+ (встроенное стирание типов); по этой же причине `lib/characters.ts` подключает
+`./rules.ts` с расширением (в `tsconfig.json` включён `allowImportingTsExtensions`). `tests/catalog-export.test.mjs` читает
 `../books/Vtorye/ВТОРЫЕ_Каталоги.md` и `Кас-Хатар_Календарь_и_небо.md` с диска, сверяет
 `Выгрузка из VTT Poison Press vX.Y.Z` в шапках обоих файлов с `package.json`, а строку
 «Состав: …» каталога — со счётчиками массивов `lib/rules.ts`;
@@ -402,6 +406,7 @@ tests/
   dice.test.mjs                формулы и броски
   rules.test.mjs               модификаторы, ОЗ, КБ, испытания, каталог навыков, возраст, монеты
   calendar.test.mjs            календарь, знаки, натальная карта, погода, часы кампании
+  characters.test.mjs          поля листа (день рождения, возраст, заметки) переживают чтение и сохранение
   youtube.test.mjs             ссылки YouTube и канонические URL
   catalog-export.test.mjs      версия в шапках каталога и календаря и состав каталога против lib/rules.ts
   export-calendar.test.mjs     выгрузка календаря на копии книг: идемпотентность, --check и расхождение с lib/calendar.ts
