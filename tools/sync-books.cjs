@@ -25,6 +25,18 @@ const base = process.env.VTT_BOOKS_DIR
   ? path.resolve(process.env.VTT_BOOKS_DIR)
   : path.resolve(__dirname, "..", "..", "books", "Vtorye");
 const catalogPath = path.join(base, "ВТОРЫЕ_Каталоги.md");
+
+// Без каталога readFileSync печатает сырой ENOENT со стеком: подсказываем,
+// какую папку проверять и как собрать каталог заново.
+if (!fs.existsSync(catalogPath)) {
+  console.error(`! Не найден каталог «ВТОРЫЕ_Каталоги.md»: ${catalogPath}`);
+  console.error(
+    "  Проверьте папку книг (VTT_BOOKS_DIR или ../books/Vtorye рядом с репозиторием)" +
+      " и соберите каталог: node tools/export-rules.cjs",
+  );
+  process.exit(1);
+}
+
 const catalog = fs.readFileSync(catalogPath, "utf8").split(/\r?\n/);
 
 function block(headlineStart) {

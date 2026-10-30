@@ -243,6 +243,59 @@ test("sync-books удаляет устаревший раздел «2.7. Уто�
   );
 });
 
+test("sync-books без каталога в папке книг падает с понятной ошибкой, а не стеком ENOENT", (t) => {
+  // Пустая папка книг: так проверяется и VTT_BOOKS_DIR, указывающий не туда.
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "vtt-sync-books-no-catalog-"));
+  t.after(() => fs.rmSync(empty, { recursive: true, force: true }));
+
+  const missing = runSync(empty);
+  assert.equal(missing.code, 1, `прогон без каталога должен завершиться кодом 1:\n${missing.out}`);
+  assert.match(
+    missing.out,
+    /! Не найден каталог «ВТОРЫЕ_Каталоги\.md»: /,
+    `в ошибке нет названия пропавшего каталога:\n${missing.out}`,
+  );
+  assert.ok(
+    missing.out.includes(empty),
+    `в ошибке нет папки книг «${empty}» — непонятно, куда смотрел скрипт:\n${missing.out}`,
+  );
+  assert.match(
+    missing.out,
+    /VTT_BOOKS_DIR/,
+    `в ошибке нет подсказки про VTT_BOOKS_DIR и пересборку каталога:\n${missing.out}`,
+  );
+  assert.doesNotMatch(
+    missing.out,
+    /ENOENT|node:internal\/fs|at .*sync-books\.cjs:\d+/,
+    `вместо сообщения печатается стек чтения файла:\n${missing.out}`,
+  );
+
+  // Книги на месте, пропал только каталог: скрипт обязан упасть до любой записи.
+  const dir = sandbox(t);
+  if (!dir) return;
+
+  const before = snapshot(dir);
+  fs.rmSync(path.join(dir, CATALOG));
+  const withoutCatalog = runSync(dir);
+  assert.equal(
+    withoutCatalog.code,
+    1,
+    `прогон без каталога должен завершиться кодом 1:\n${withoutCatalog.out}`,
+  );
+  assert.match(
+    withoutCatalog.out,
+    /! Не найден каталог «ВТОРЫЕ_Каталоги\.md»: /,
+    `в ошибке нет названия пропавшего каталога:\n${withoutCatalog.out}`,
+  );
+  for (const book of BOOKS) {
+    assert.equal(
+      fs.readFileSync(path.join(dir, book), "utf8"),
+      before[book],
+      `«${book}» изменилась, хотя каталога нет и синхронизация не начиналась`,
+    );
+  }
+});
+
 test("sync-books падает с понятной ошибкой, если в каталоге нет блока", (t) => {
   const dir = sandbox(t);
   if (!dir) return;
