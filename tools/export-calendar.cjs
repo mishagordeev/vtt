@@ -47,6 +47,9 @@ const OUT_PATH = path.resolve(
   "Кас-Хатар_Календарь_и_небо.md",
 );
 
+const pkg = require(path.join(projectDir, "package.json"));
+const version = process.env.VTT_VERSION || pkg.version;
+
 const esc = (value) => String(value ?? "").replace(/\|/g, "\\|").replace(/\n+/g, " ");
 
 /** «+26°», «0°», «−7°» — как температура пишется в книге. */
@@ -75,6 +78,8 @@ const push = (...chunks) => lines.push(...chunks);
 
 push(
   "# Кас-Хатар: календарь и небо",
+  "",
+  `Выгрузка из VTT Poison Press v${version} (файл \`lib/calendar.ts\`).`,
   "",
   "> Приложение к путеводителю для игроков. В книгах по сеттингу есть только счёт «по событиям»",
   "> («до великой суши», «при последнем наместнике»): месяцев, праздников, гороскопа и небесных",
