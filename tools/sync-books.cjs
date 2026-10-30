@@ -6,6 +6,7 @@
  *   node tools/export-rules.cjs
  * Затем:
  *   node tools/sync-books.cjs
+ *   VTT_BOOKS_DIR=/tmp/копия node tools/sync-books.cjs   # прогон на копии книг
  *
  * Что делает:
  *  1. вставляет таблицы снаряжения из каталога в разделы 2.3–2.6 (книга правил)
@@ -18,7 +19,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const base = path.resolve(__dirname, "..", "..", "books", "Vtorye");
+// VTT_BOOKS_DIR позволяет прогнать синхронизацию на временной копии книг:
+// так tests/sync-books.test.mjs проверяет скрипт, не трогая рабочие файлы.
+const base = process.env.VTT_BOOKS_DIR
+  ? path.resolve(process.env.VTT_BOOKS_DIR)
+  : path.resolve(__dirname, "..", "..", "books", "Vtorye");
 const catalogPath = path.join(base, "ВТОРЫЕ_Каталоги.md");
 const catalog = fs.readFileSync(catalogPath, "utf8").split(/\r?\n/);
 

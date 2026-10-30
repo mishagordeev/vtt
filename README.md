@@ -175,6 +175,12 @@ npm run rules:books     # = export-rules.cjs + sync-books.cjs
 проверяет, что каждая строка таблицы каталога присутствует в обеих книгах.
 Если расхождения есть, команда завершается с кодом 1 и печатает список.
 
+Скрипт умеет работать не только с рабочими книгами: переменная `VTT_BOOKS_DIR`
+задаёт другую папку с `ВТОРЫЕ_Каталоги.md` и двумя книгами. На этом построен
+`tests/sync-books.test.mjs` — он копирует книги во временную папку и проверяет,
+что второй прогон ничего не меняет (идемпотентность), а пропавший раздел ломает
+сверку и даёт код 1. Рабочие файлы тест не трогает.
+
 Старый лист (Тело / Реакция / Разум / Воля / Эмпатия / Тень, Здоровье и Стресс)
 читается по совместимости: ОЗ подхватывается из прежнего ресурса `health`, навыки —
 из поля `level`, старые `money`, доспех и щит переносятся в монеты и инвентарь; при первом
@@ -206,14 +212,16 @@ npm run dev
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-version.test.mjs
+npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/youtube.test.mjs tests/catalog-version.test.mjs tests/sync-books.test.mjs
 npm run build       # production-сборка, как на Vercel
 ```
 
 `npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts` и `lib/youtube.ts` напрямую, поэтому нужен
 Node 22.18+ (встроенное стирание типов). `tests/catalog-version.test.mjs` читает
 `../books/Vtorye/ВТОРЫЕ_Каталоги.md` с диска и сверяет версию в его шапке с `package.json`;
-если каталога рядом нет, тест помечается пропущенным. На Vercel тесты не запускаются — только сборка.
+`tests/sync-books.test.mjs` гоняет `tools/sync-books.cjs` на временной копии книг
+(идемпотентность и негативная ветка сверки). Если книг или каталога рядом нет,
+оба теста помечаются пропущенными. На Vercel тесты не запускаются — только сборка.
 
 Без переменных окружения комнаты живут в памяти процесса — удобно для разработки,
 но данные пропадают при перезапуске и не делятся между инстансами.
@@ -357,6 +365,7 @@ tests/
   calendar.test.mjs            календарь, знаки, натальная карта, погода, часы кампании
   youtube.test.mjs             ссылки YouTube и канонические URL
   catalog-version.test.mjs     версия в шапке «ВТОРЫЕ_Каталоги.md» против package.json
+  sync-books.test.mjs          синхронизация книг на копии: идемпотентность и расхождения
 ```
 
 ## API
