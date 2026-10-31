@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  AGE_BANDS,
   ITEMS,
   LANGUAGES,
   ORIGINS,
@@ -9,6 +10,7 @@ import {
   STARTER_KITS,
   abilityMod,
   ageBand,
+  ageModTotals,
   carryCapacity,
   coinCount,
   coinSlotsFor,
@@ -377,42 +379,65 @@ test("вес без слотов: мелочь занимает дробные �
 });
 
 
-test("бросок возраста: два d6 на десятки и d10 на единицы", () => {
-  // Заглушка вместо Math.random: 0 → «1» на любой кости, 0.999… → максимум.
+test("бросок возраста: 1d100, выпавшее число — возраст в годах", () => {
+  // Заглушка вместо Math.random: 0 → «1» на кубике, 0.999… → максимум.
   const low = rollAge(() => 0);
-  assert.deepEqual(low.tens, [1, 1]);
-  assert.equal(low.unit, 1);
-  assert.equal(low.age, 21);
-  assert.equal(low.band.key, "young");
+  assert.equal(low.die, 1);
+  assert.equal(low.age, 1);
+  assert.equal(low.band.key, "child");
 
   const high = rollAge(() => 0.999);
-  assert.deepEqual(high.tens, [6, 6]);
-  assert.equal(high.unit, 10);
-  assert.equal(high.age, 130);
-  assert.equal(high.band.key, "ancient");
+  assert.equal(high.die, 100);
+  assert.equal(high.age, 100);
+  assert.equal(high.band.key, "old");
 
   const middle = rollAge(() => 0.5);
-  assert.deepEqual(middle.tens, [4, 4]);
-  assert.equal(middle.unit, 6);
-  assert.equal(middle.age, 86);
+  assert.equal(middle.die, 51);
+  assert.equal(middle.age, 51);
+  assert.equal(middle.band.key, "middle");
+  assert.deepEqual(middle.mods, { int: 1, wis: 1 });
 });
 
-test("полосы возраста дают поправки и не выходят за границы", () => {
-  assert.equal(ageBand(21).key, "young");
-  assert.equal(ageBand(29).key, "young");
-  assert.equal(ageBand(30).key, "prime");
-  assert.deepEqual(ageBand(35).mods, {});
-  assert.equal(ageBand(45).key, "seasoned");
-  assert.equal(ageBand(70).key, "ancient");
-  assert.equal(ageBand(500).key, "ancient");
+test("стадии возраста и сложенный итог поправок", () => {
+  assert.equal(AGE_BANDS.length, 6);
+  assert.equal(ageBand(1).key, "child");
+  assert.equal(ageBand(13).key, "child");
+  assert.equal(ageBand(14).key, "young");
+  assert.equal(ageBand(20).key, "young");
+  assert.equal(ageBand(21).key, "prime");
+  assert.equal(ageBand(40).key, "prime");
+  assert.equal(ageBand(41).key, "middle");
+  assert.equal(ageBand(60).key, "middle");
+  assert.equal(ageBand(61).key, "elder");
+  assert.equal(ageBand(90).key, "elder");
+  assert.equal(ageBand(91).key, "old");
+  assert.equal(ageBand(100).key, "old");
+  assert.equal(ageBand(500).key, "old");
 
+  // Детские поправки действуют только до 14 лет и в сложение не идут.
+  assert.deepEqual(ageModTotals(7), { str: -2, dex: 1, con: -2, wis: -1, cha: 1 });
+  assert.deepEqual(ageModTotals(17), { con: 1, wis: -1 });
+  assert.deepEqual(ageModTotals(30), { str: 1, con: 1 });
+  // Проверка сложения из книги: 63 = юность + зрелость + средние лета + пожилой.
+  assert.deepEqual(ageModTotals(63), { str: -2, dex: -2, con: -1, int: 1, wis: 2 });
+  assert.deepEqual(ageModTotals(100), { str: -3, dex: -3, con: -2, int: 2, wis: 3 });
+});
+
+test("поправки возраста применяются и снимаются без двойного счёта", () => {
   const stats = { str: 18, dex: 3, con: 10, int: 10, wis: 10, cha: 10 };
-  const older = shiftStats(stats, ageBand(65).mods, 1);
-  assert.equal(older.str, 16); // −2, но не ниже минимума характеристики
-  assert.equal(older.dex, 3); // −2 обрезается до минимума 3
+  const mods = ageModTotals(63);
+  const older = shiftStats(stats, mods, 1);
+  assert.equal(older.str, 16); // −2
+  assert.equal(older.dex, 3); // −2 обрезается до минимума характеристики
   assert.equal(older.wis, 12);
-  const back = shiftStats(older, ageBand(65).mods, -1);
+  const back = shiftStats(older, mods, -1);
+  assert.equal(back.str, 18);
   assert.equal(back.wis, 10);
+
+  // Старость поднимает характеристику выше обычных 18, но не выше 19.
+  const wise = shiftStats({ ...stats, str: 10, wis: 18 }, { wis: 3 }, 1);
+  assert.equal(wise.wis, 19);
+  assert.equal(shiftStats({ ...stats, str: 10, wis: 19 }, { wis: 3 }, 1).wis, 19);
 });
 
 test("поправки возраста читаются обратно из поля листа", () => {

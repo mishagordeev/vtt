@@ -13,8 +13,10 @@ import {
   RULES,
   SKILLS,
   TRAITS,
+  AGE_MAX,
   abilityMod,
   ageBand,
+  ageModTotals,
   carryCapacity,
   coinCount,
   coinsGoldValue,
@@ -390,7 +392,7 @@ export function CharacterSheet({
   const money = coinsGoldValue(draft.inventory);
   const coinQty = coinCount(draft.inventory);
   /** Возраст из поля листа: 0 — не указан. */
-  const ageValue = Math.max(0, Math.min(130, Number(draft.fields.age) || 0));
+  const ageValue = Math.max(0, Math.min(AGE_MAX, Number(draft.fields.age) || 0));
   const overloaded = overloadedIds(draft.inventory, draft.stats);
   const origin = findOrigin(draft.origin);
   const languageBudget = languageSlots(draft.stats);
@@ -733,22 +735,23 @@ export function CharacterSheet({
 
   /**
    * Возраст меняет характеристики: прежние поправки снимаем, новые накладываем,
-   * поэтому повторный бросок не считается дважды. Запись поправок живёт в
-   * `fields.ageMods` — по ней же их можно снять вручную.
+   * поэтому повторный бросок не считается дважды. В лист идёт сложенный итог
+   * стадий (`ageModTotals`): к девяноста годам Сила −3, а не −1 от «старого».
+   * Запись поправок живёт в `fields.ageMods` — по ней же их можно снять вручную.
    */
   function applyAge(value: number) {
     if (!editing) return;
-    const band = ageBand(value);
+    const mods = ageModTotals(value);
     const previous = decodeMods(draft.fields.ageMods);
     const base = shiftStats(draft.stats, previous, -1);
-    const stats = shiftStats(base, band.mods, 1);
+    const stats = shiftStats(base, mods, 1);
     patch({
       stats,
-      fields: { ...draft.fields, age: String(value), ageMods: encodeMods(band.mods) },
+      fields: { ...draft.fields, age: String(value), ageMods: encodeMods(mods) },
     });
   }
 
-  /** Бросок возраста: два d6 на десятки, d10 на единицы. */
+  /** Бросок возраста: 1d100, выпавшее число — возраст в годах. */
   function rollCharacterAge() {
     if (!editing) return;
     const roll = rollAge();
@@ -1541,86 +1544,6 @@ export function CharacterSheet({
             </section>
 
 
-            <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
-                  Возраст
-                </h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="flex items-center gap-1 text-[11px] text-zinc-400">
-                    лет
-                    <input
-                      type="number"
-                      min={1}
-                      max={130}
-                      disabled={!editing}
-                      value={draft.fields.age ?? ""}
-                      onChange={(event) =>
-                        patch({ fields: { ...draft.fields, age: event.target.value.slice(0, 6) } })
-                      }
-                      className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-amber-400/60 disabled:opacity-70"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    disabled={!editing}
-                    onClick={() => rollCharacterAge()}
-                    title="Два d6 на десятки и d10 на единицы; поправки сразу идут в характеристики"
-                    className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
-                  >
-                    🎲 Бросить возраст
-                  </button>
-                  {editing && draft.fields.age ? (
-                    <button
-                      type="button"
-                      onClick={() => applyAge(Number(draft.fields.age))}
-                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-amber-200"
-                    >
-                      Применить поправки
-                    </button>
-                  ) : null}
-                  {editing && draft.fields.ageMods ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        patch({
-                          stats: shiftStats(draft.stats, decodeMods(draft.fields.ageMods), -1),
-                          fields: { ...draft.fields, ageMods: "" },
-                        })
-                      }
-                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-500 hover:text-rose-200"
-                    >
-                      Снять
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <p className="text-[11px] leading-relaxed text-zinc-500">
-                Бросок: два d6 на десятки и d10 на единицы — от 21 до 130 лет. Поправки возраста
-                прибавляются к характеристикам один раз и снимаются кнопкой «Снять».
-              </p>
-              {ageRoll ? (
-                <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
-                  d6: {ageRoll.tens.join(" + ")} → {ageRoll.tens[0] + ageRoll.tens[1]} дес. · d10:{" "}
-                  {ageRoll.unit} → {ageRoll.age} лет
-                </p>
-              ) : null}
-              {ageValue ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-zinc-300">
-                    {ageValue} лет · {ageBand(ageValue).label}
-                  </p>
-                  <p className="text-[11px] leading-snug text-zinc-500">{ageBand(ageValue).note}</p>
-                  <p className="text-[11px] text-zinc-400">
-                    {RULES.stats
-                      .filter((stat) => ageBand(ageValue).mods[stat.key])
-                      .map((stat) => `${formatMod(ageBand(ageValue).mods[stat.key] ?? 0)} ${stat.short}`)
-                      .join(" · ") || "поправок нет"}
-                  </p>
-                </div>
-              ) : null}
-            </section>
-
             <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {RULES.stats.map((stat) => {
                 const value = draft.stats[stat.key] ?? stat.defaultValue;
@@ -1668,6 +1591,91 @@ export function CharacterSheet({
               })}
             </section>
 
+            <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
+                  Возраст
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1 text-[11px] text-zinc-400">
+                    лет
+                    <input
+                      type="number"
+                      min={1}
+                      max={AGE_MAX}
+                      disabled={!editing}
+                      value={draft.fields.age ?? ""}
+                      onChange={(event) =>
+                        patch({ fields: { ...draft.fields, age: event.target.value.slice(0, 6) } })
+                      }
+                      className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-amber-400/60 disabled:opacity-70"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!editing}
+                    onClick={() => rollCharacterAge()}
+                    title="1d100: выпавшее число — возраст в годах; поправки стадий сразу идут в характеристики"
+                    className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
+                  >
+                    🎲 Бросить 1d100
+                  </button>
+                  {editing && draft.fields.age ? (
+                    <button
+                      type="button"
+                      onClick={() => applyAge(Number(draft.fields.age))}
+                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-amber-200"
+                    >
+                      Применить поправки
+                    </button>
+                  ) : null}
+                  {editing && draft.fields.ageMods ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          stats: shiftStats(draft.stats, decodeMods(draft.fields.ageMods), -1),
+                          fields: { ...draft.fields, ageMods: "" },
+                        })
+                      }
+                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-500 hover:text-rose-200"
+                    >
+                      Снять
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                Возраст бросают <b>1d100</b> — выпавшее число и есть годы героя. Стадии: 1–13
+                детский, 14–20 юный, 21–40 зрелый, 41–60 средних лет, 61–90 пожилой, 91–100 старый.
+                Поправки стадий складываются (детская действует только до 14 лет), прибавляются к
+                характеристикам один раз и снимаются кнопкой «Снять». Если стол играет без детей,
+                1–13 перебрасываются.
+              </p>
+              {ageRoll ? (
+                <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
+                  d100: {ageRoll.die} → {ageRoll.age} лет · {ageRoll.band.label}
+                </p>
+              ) : null}
+              {ageValue ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-zinc-300">
+                    {ageValue} лет · {ageBand(ageValue).label}
+                  </p>
+                  <p className="text-[11px] leading-snug text-zinc-500">{ageBand(ageValue).note}</p>
+                  <p className="text-[11px] text-zinc-400">
+                    Итог стадий:{" "}
+                    {RULES.stats
+                      .filter((stat) => ageModTotals(ageValue)[stat.key])
+                      .map((stat) => `${formatMod(ageModTotals(ageValue)[stat.key] ?? 0)} ${stat.short}`)
+                      .join(" · ") || "поправок нет"}
+                  </p>
+                  <p className="text-[10px] text-zinc-600">
+                    Внесено в лист: {draft.fields.ageMods || "ничего"}
+                  </p>
+                </div>
+              ) : null}
+            </section>
 
             <section className="space-y-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">

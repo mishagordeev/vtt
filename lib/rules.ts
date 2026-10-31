@@ -1025,31 +1025,76 @@ export function formatMod(value: number): string {
 
 export interface AgeBand {
   key: string;
-  /** Подпись полосы: «В расцвете». */
+  /** Подпись стадии: «Юный». */
   label: string;
   /** Нижняя и верхняя границы включительно. */
   from: number;
   to: number;
-  /** Поправки к характеристикам; применяются один раз при броске возраста. */
+  /**
+   * Поправки самой стадии. В лист уходят не они, а сложенный итог
+   * (`ageModTotals`) — стадии складываются, кроме детской.
+   */
   mods: Partial<Record<StatKey, number>>;
   /** Что это значит за столом. */
   note: string;
 }
 
-/**
- * Бросок возраста: два d6 на десятки, d10 на единицы — 21–130 лет.
- * Возраст меняет характеристики: молодость даёт тело и забирает голову,
- * старость наоборот.
- */
+/** Возраст бросают 1d100: выпавшее число — годы героя. */
+export const AGE_MAX = 100;
+
+/** Стадии возраста из книги игрока, 1.1 «Возраст и старение». */
 export const AGE_BANDS: AgeBand[] = [
-  { key: "young", label: "Молодой", from: 21, to: 29, mods: { dex: 1, con: 1, wis: -1 }, note: "Тело слушается, голова ещё нет: спешит, лезет первым, плохо считает последствия." },
-  { key: "prime", label: "В расцвете", from: 30, to: 39, mods: {}, note: "Ни убавить, ни прибавить: всё как есть, зато без поправок." },
-  { key: "seasoned", label: "Опытный", from: 40, to: 49, mods: { int: 1, wis: 1, str: -1 }, note: "Сила пошла на убыль, зато появились привычка думать и чутьё на людей." },
-  { key: "grey", label: "Седой", from: 50, to: 59, mods: { int: 1, wis: 1, str: -1, dex: -1 }, note: "Руки медленнее, память цепче; в драке держится опытом, а не прытью." },
-  { key: "old", label: "Старик", from: 60, to: 69, mods: { int: 1, wis: 2, str: -2, dex: -2 }, note: "Тяжёлый пояс, ломкие кости — и репутация, которая иной раз важнее меча." },
-  { key: "ancient", label: "Древний", from: 70, to: 130, mods: { int: 2, wis: 2, str: -3, dex: -3, con: -1 }, note: "Таких в Пограничье мало: либо очень везучий, либо очень умный, либо не человек." },
+  {
+    key: "child",
+    label: "Детский",
+    from: 1,
+    to: 13,
+    mods: { str: -2, dex: 1, con: -2, wis: -1, cha: 1 },
+    note: "Ребёнок при артели: слаб и хрупок, зато верток и умеет остаться незамеченным — взрослые не ждут удара от ребёнка.",
+  },
+  {
+    key: "young",
+    label: "Юный",
+    from: 14,
+    to: 20,
+    mods: { con: 1, wis: -1 },
+    note: "Ещё растёт: быстрый и цепкий, но зелёный — тело крепнет, а рассудительности пока не хватает.",
+  },
+  {
+    key: "prime",
+    label: "Зрелый",
+    from: 21,
+    to: 40,
+    mods: { str: 1, wis: 1 },
+    note: "Сила и ум впервые сходятся в одном человеке: и в работе, и в драке есть на что опереться.",
+  },
+  {
+    key: "middle",
+    label: "Средних лет",
+    from: 41,
+    to: 60,
+    mods: { str: -1, con: -1, int: 1, wis: 1 },
+    note: "Опыта больше, спины меньше: голова работает лучше, чем руки.",
+  },
+  {
+    key: "elder",
+    label: "Пожилой",
+    from: 61,
+    to: 90,
+    mods: { str: -2, dex: -2, con: -1, wis: 1 },
+    note: "Знает больше, чем может унести: тяжесть и скорость уходят, чутьё остаётся.",
+  },
+  {
+    key: "old",
+    label: "Старый",
+    from: 91,
+    to: 100,
+    mods: { str: -1, dex: -1, con: -1, int: 1, wis: 1 },
+    note: "Живая память города: таких в Кас-Хатаре единицы, и держатся они умом, а не силой.",
+  },
 ];
 
+/** Стадия возраста; значения вне 1–100 прижимаются к крайним стадиям. */
 export function ageBand(age: number): AgeBand {
   const safe = Math.max(1, Math.round(Number(age) || 0));
   return (
@@ -1058,27 +1103,49 @@ export function ageBand(age: number): AgeBand {
   );
 }
 
+/**
+ * Итоговые поправки возраста: стадии складываются, детская не наследуется —
+ * тело догоняет в юности, и взрослый не носит на себе детскую слабость.
+ * 63 года: Сила −2, Ловкость −2, Телосложение −1, Интеллект +1, Мудрость +2.
+ */
+export function ageModTotals(age: number): Partial<Record<StatKey, number>> {
+  const band = ageBand(age);
+  if (band.key === "child") return { ...band.mods };
+  const totals: Partial<Record<StatKey, number>> = {};
+  for (const stage of AGE_BANDS) {
+    if (stage.key === "child" || stage.from > band.to) continue;
+    for (const [key, value] of Object.entries(stage.mods) as [StatKey, number][]) {
+      totals[key] = (totals[key] ?? 0) + value;
+    }
+  }
+  // Стадии гасят друг друга (Сила: +1 в зрелости и −1 в средних летах) —
+  // нулевые поправки в лист не пишем.
+  for (const key of Object.keys(totals) as StatKey[]) {
+    if (!totals[key]) delete totals[key];
+  }
+  return totals;
+}
+
 export interface AgeRoll {
-  /** Два кубика на десятки. */
-  tens: [number, number];
-  /** d10 на единицы: 1–10. */
-  unit: number;
-  /** Итог: (десятки) × 10 + единицы. */
+  /** Выпавшее на d100 число — оно же возраст в годах. */
+  die: number;
   age: number;
   band: AgeBand;
+  /** Итоговые поправки с учётом сложения стадий. */
+  mods: Partial<Record<StatKey, number>>;
 }
 
-/** Бросок возраста: 2d6 на десятки, d10 на единицы. */
+/** Бросок возраста: 1d100, выпавшее число — возраст героя в годах. */
 export function rollAge(random: () => number = Math.random): AgeRoll {
-  const d6 = () => 1 + Math.floor(random() * 6);
-  const d10 = () => 1 + Math.floor(random() * 10);
-  const tens: [number, number] = [d6(), d6()];
-  const unit = d10();
-  const age = (tens[0] + tens[1]) * 10 + unit;
-  return { tens, unit, age, band: ageBand(age) };
+  const die = Math.max(1, Math.min(AGE_MAX, 1 + Math.floor(random() * AGE_MAX)));
+  return { die, age: die, band: ageBand(die), mods: ageModTotals(die) };
 }
 
-/** Снимает прежние поправки возраста с характеристик: перед новым броском. */
+/**
+ * Снимает прежние поправки возраста с характеристик: перед новым броском.
+ * Потолок возраста — 19 (книга 1.1): старость может поднять характеристику
+ * выше обычных 18, но не выше 19; минимум характеристики — 3.
+ */
 export function shiftStats(
   stats: Record<string, number>,
   mods: Partial<Record<StatKey, number>>,
@@ -1089,7 +1156,8 @@ export function shiftStats(
     const delta = (mods[stat.key] ?? 0) * sign;
     if (!delta) continue;
     const current = statValue(stats, stat.key);
-    next[stat.key] = Math.max(stat.min, Math.min(stat.max, current + delta));
+    const ceiling = Math.max(stat.max, 19);
+    next[stat.key] = Math.max(stat.min, Math.min(ceiling, current + delta));
   }
   return next;
 }

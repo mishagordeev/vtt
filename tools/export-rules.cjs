@@ -44,6 +44,8 @@ const notes = require(path.join(outDir, "notes.js"));
 const pkg = require(path.join(projectDir, "package.json"));
 
 const STAT_LABEL = Object.fromEntries(rules.RULES.stats.map((stat) => [stat.key, stat.label]));
+/** Колонки таблиц возраста — в порядке листа, как в книге игрока. */
+const AGE_COLUMNS = rules.RULES.stats.map((stat) => stat.label);
 const KIND_TITLE = {
   combat: "Боевые навыки",
   noncombat: "Небоевые навыки",
@@ -63,6 +65,9 @@ const ITEM_GROUPS = [
 
 const esc = (value) => String(value ?? "").replace(/\|/g, "\\|").replace(/\n+/g, " ");
 const minus = (value) => (value > 0 ? `+${value}` : `−${Math.abs(value)}`);
+/** Ячейка поправки: положительная и отрицательная со знаком, ноль — как в книге. */
+const ageCell = (value, zero = "—") =>
+  value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : zero;
 
 /** Русское склонение по числу: 1 навык, 2 навыка, 5 навыков. */
 function plural(count, one, few, many) {
@@ -268,6 +273,30 @@ rules.MERCENARIES.forEach((merc) => {
 });
 rules.MERCENARIES.forEach((merc) => {
   if (merc.note) out("", `**${esc(merc.name)}.** ${esc(merc.note)}`);
+});
+out("");
+
+out("---", "", `## 9. Возраст и старение (${rules.AGE_BANDS.length} стадий)`, "");
+out(
+  "Возраст определяется броском **1d100**: выпавшее число — возраст героя в годах.",
+  "Поправки стадий складываются; детская строка в сложении не участвует — тело догоняет",
+  "в юности, и взрослый не носит на себе детскую слабость. Возраст не опускает",
+  "характеристику ниже 3 и не поднимает выше 19.",
+  "",
+  "### Что даёт каждая стадия",
+  "",
+  `| Стадия | ${AGE_COLUMNS.join(" | ")} |`,
+  `| --- | ${AGE_COLUMNS.map(() => "---").join(" | ")} |`,
+);
+rules.AGE_BANDS.forEach((band) => {
+  const cells = rules.RULES.stats.map((stat) => ageCell(band.mods[stat.key] ?? 0));
+  out(`| ${esc(band.label)} | ${cells.join(" | ")} |`);
+});
+out("", "### Сложенный итог", "", `| Возраст | ${AGE_COLUMNS.join(" | ")} |`, `| --- | ${AGE_COLUMNS.map(() => "---").join(" | ")} |`);
+rules.AGE_BANDS.forEach((band) => {
+  const totals = rules.ageModTotals(band.from);
+  const cells = rules.RULES.stats.map((stat) => ageCell(totals[stat.key] ?? 0, "0"));
+  out(`| ${band.from}–${band.to} | ${cells.join(" | ")} |`);
 });
 out("");
 
