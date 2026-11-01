@@ -132,6 +132,10 @@ test(".htaccess: API в mod_wsgi, комната файлом, служебно�
   );
   assert.match(conf, /^\s*RewriteRule \^python\(\/\|\$\) - \[F,L\]$/m, "python/ с ключами закрываем");
   assert.match(conf, /^\s*RewriteRule \^keys\\\.env\$ - \[F,L\]$/m, "keys.env наружу не отдаём");
+  assert.ok(
+    !/RewriteRule \^ \/404\.html/m.test(conf),
+    "общее правило 404 перехватит запросы к api.wsgi — хватит ErrorDocument",
+  );
   assert.match(conf, /max-age=31536000, immutable/, "хешированная статика Next кэшируется навсегда");
 });
 

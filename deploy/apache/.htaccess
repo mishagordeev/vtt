@@ -27,11 +27,6 @@ ErrorDocument 404 /404.html
   # не меняется, код комнаты страница берёт из пути (статический экспорт не умеет
   # динамические маршруты).
   RewriteRule ^r/[A-Za-z0-9]+/?$ r/index.html [L]
-
-  # Неизвестный адрес — страница 404 из сборки, а не список каталогов.
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^ /404.html [L]
 </IfModule>
 
 <IfModule mod_headers.c>
