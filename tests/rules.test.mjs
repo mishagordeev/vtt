@@ -141,7 +141,9 @@ test("вес монет зависит от металла", () => {
 test("уточнения языков и традиций находят базовую запись", () => {
   assert.equal(findSkill("Язык: шуари")?.kind, "knowledge");
   assert.equal(findSkill("Язык: шуари")?.stat, "int");
-  assert.equal(findSkill("Арканная теория: огонь")?.name, "Арканная теория (одна традиция)");
+  assert.equal(findSkill("Традиция: огонь")?.name, "Традиция (каждая отдельно)");
+  assert.equal(findSkill("Традиция: огонь")?.kind, "noncombat");
+  assert.equal(findSkill("Принципы магии")?.kind, "knowledge");
   assert.equal(findSkill("Несуществующий навык"), undefined);
 });
 

@@ -714,7 +714,7 @@ export const STARTER_KITS: Record<string, string[]> = {
   "Травничество": ["Набор трав"],
   "Теология и оккультные запреты": ["Символ бога", "Святая вода"],
   "Знание духов и знамений": ["Ладан и соль"],
-  "Погребальные обряды": ["Лопата сапёрная / кирка", "Святая вода"],
+  "Обряды и ритуалы": ["Символ бога", "Святая вода", "Ладан и соль"],
   "Дрессировка животных": ["Поводок и намордник"],
   // Харизма
   "Убеждение и торг": ["Образцы монет"],
@@ -730,7 +730,8 @@ export const STARTER_KITS: Record<string, string[]> = {
   "Язык (каждый отдельно)": ["Словарь и таблички"],
   "История Империи": ["Исторические хроники"],
   "Древние наречия": ["Словарь и таблички"],
-  "Арканная теория (одна традиция)": ["Арканные таблицы"],
+  "Принципы магии": ["Арканные таблицы"],
+  "Традиция (каждая отдельно)": ["Арканные таблицы"],
   "Арканная археология": ["Мел (коробок)"],
   "Богословие и сферы": ["Символ бога"],
   "Обычаи и запреты": ["Парадная накидка"],
@@ -820,6 +821,7 @@ export const NONCOMBAT_SKILLS_MENTAL: SkillDef[] = [
   { name: "Установка ловушек", kind: "noncombat", stat: "int", min: 12 },
   { name: "Алхимия и минералогия", kind: "noncombat", stat: "int", min: 13, starred: true },
   { name: "Оценка и сбыт", kind: "noncombat", stat: "int", min: 10 },
+  { name: "Традиция (каждая отдельно)", kind: "noncombat", stat: "int", min: 12, starred: true },
   { name: "Внимание и бдительность", kind: "noncombat", stat: "wis", min: 8 },
   { name: "Выживание", kind: "noncombat", stat: "wis", min: 10 },
   { name: "Погодное чутьё", kind: "noncombat", stat: "wis", min: 10 },
@@ -829,7 +831,7 @@ export const NONCOMBAT_SKILLS_MENTAL: SkillDef[] = [
   { name: "Травничество", kind: "noncombat", stat: "wis", min: 12, starred: true },
   { name: "Теология и оккультные запреты", kind: "noncombat", stat: "wis", min: 12, starred: true },
   { name: "Знание духов и знамений", kind: "noncombat", stat: "wis", min: 12 },
-  { name: "Погребальные обряды", kind: "noncombat", stat: "wis", min: 10 },
+  { name: "Обряды и ритуалы", kind: "noncombat", stat: "wis", min: 12, starred: true },
   { name: "Дрессировка животных", kind: "noncombat", stat: "wis", min: 10 },
   { name: "Убеждение и торг", kind: "noncombat", stat: "cha", min: 8 },
   { name: "Сбор слухов", kind: "noncombat", stat: "cha", min: 8 },
@@ -848,7 +850,7 @@ export const KNOWLEDGE: SkillDef[] = [
   { name: "Язык (каждый отдельно)", kind: "knowledge", stat: "int", min: 8 },
   { name: "История Империи", kind: "knowledge", stat: "int", min: 10 },
   { name: "Древние наречия", kind: "knowledge", stat: "int", min: 12, starred: true },
-  { name: "Арканная теория (одна традиция)", kind: "knowledge", stat: "int", min: 12, starred: true },
+  { name: "Принципы магии", kind: "knowledge", stat: "int", min: 12, starred: true },
   { name: "Арканная археология", kind: "knowledge", stat: "int", min: 12, starred: true },
   { name: "Богословие и сферы", kind: "knowledge", stat: "wis", min: 12, starred: true },
   { name: "Обычаи и запреты", kind: "knowledge", stat: "wis", min: 10 },
@@ -879,10 +881,11 @@ export const SKILLS: SkillDef[] = [
 
 const SKILL_INDEX = new Map<string, SkillDef>(SKILLS.map((skill) => [skill.name.toLowerCase(), skill]));
 
-/** Уточнения, которые книга требует вписывать отдельно: «Язык: шуари», «Арканная теория: огонь». */
+/** Уточнения, которые книга требует вписывать отдельно: «Язык: шуари», «Традиция: огонь». */
 export const SKILL_ALIASES: { prefix: string; name: string }[] = [
   { prefix: "язык", name: "Язык (каждый отдельно)" },
-  { prefix: "арканная теория", name: "Арканная теория (одна традиция)" },
+  { prefix: "традиция", name: "Традиция (каждая отдельно)" },
+  { prefix: "принципы магии", name: "Принципы магии" },
 ];
 
 export function findSkill(name: string): SkillDef | undefined {
@@ -1646,8 +1649,8 @@ export const MERCENARIES: MercenaryDef[] = [
     role: "Служитель",
     level: 1,
     wage: "1 зм в день",
-    skills: ["Богословие и сферы", "Полевая медицина"],
-    randomSkills: ["Травничество", "Погребальные обряды", "Знание духов и знамений"],
+    skills: ["Богословие и сферы", "Обряды и ритуалы", "Полевая медицина"],
+    randomSkills: ["Травничество", "Знание духов и знамений", "Этикет и приличия"],
     equipment: ["Символ бога", "Святая вода", "Аптечка полевая"],
     note: "Лечит, освящает и знает, кого нельзя трогать.",
   },
@@ -1656,8 +1659,8 @@ export const MERCENARIES: MercenaryDef[] = [
     role: "Настоятель",
     level: 2,
     wage: "2 зм 5 см в день",
-    skills: ["Богословие и сферы", "Полевая медицина", "Теология и оккультные запреты"],
-    randomSkills: ["Травничество", "Убеждение и торг", "Этикет и приличия"],
+    skills: ["Богословие и сферы", "Обряды и ритуалы", "Полевая медицина"],
+    randomSkills: ["Теология и оккультные запреты", "Травничество", "Убеждение и торг"],
     equipment: ["Символ бога", "Святая вода", "Набор трав", "Ладан и соль"],
     note: "Держит общину и говорит с духами места.",
   },
