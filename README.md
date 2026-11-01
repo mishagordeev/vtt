@@ -328,8 +328,19 @@ KV_REST_API_TOKEN=...
 Tunnel): шаги, лимиты 128 МБ RAM / 10 % CPU и запас по памяти (~25 МБ) описаны в
 `HOSTING.md`, раздел «Без VPS».
 
+### Без Node вообще: бэкенд на Python
+
+`python/` — перенос серверной части на Python 3 (mod_wsgi), тот же JSON-контракт и та же
+база Upstash, поэтому Node-версия и Python-версия видят одни и те же комнаты. Локальный
+запуск — `py -3.13 python/devserver.py --port 8788`, справочники правил обновляются
+`npm run python:data` (сверка — `npm run python:check`), проверки — в
+`tests/python-backend.test.mjs` (входят в `npm test`). Разворачивание на хостинге
+(`api.wsgi`, `keys.env`, `.htaccess`) и оставшийся шаг — статическая сборка фронта —
+описаны в `python/README.md`.
+
 Без Redis приложение тоже поднимется (`storage.mode: "memory"`), но комнаты исчезнут
 при перезапуске службы — это режим для локальной разработки.
+
 
 ### Vercel (если понадобится вернуться)
 

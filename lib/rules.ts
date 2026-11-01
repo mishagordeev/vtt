@@ -880,7 +880,7 @@ export const SKILLS: SkillDef[] = [
 const SKILL_INDEX = new Map<string, SkillDef>(SKILLS.map((skill) => [skill.name.toLowerCase(), skill]));
 
 /** Уточнения, которые книга требует вписывать отдельно: «Язык: шуари», «Арканная теория: огонь». */
-const SKILL_ALIASES: { prefix: string; name: string }[] = [
+export const SKILL_ALIASES: { prefix: string; name: string }[] = [
   { prefix: "язык", name: "Язык (каждый отдельно)" },
   { prefix: "арканная теория", name: "Арканная теория (одна традиция)" },
 ];

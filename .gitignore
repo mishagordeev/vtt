@@ -11,3 +11,8 @@ vtt-release.tar.gz
 next-env.d.ts
 .vercel
 .DS_Store
+# Python-бэкенд для shared-хостинга: файловое хранилище комнат и кэш байткода.
+python/data/rooms
+__pycache__
+*.pyc
+
