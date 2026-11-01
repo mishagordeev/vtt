@@ -142,7 +142,7 @@ rsync ходит по ssh и требует оболочку, а на аккау
 ├── 404.html
 ├── r/index.html
 ├── _next/static/…
-└── map/kas-khatar.jpg
+└── map/kas-khatar.jpg|webp|avif
 ```
 
 `.htaccess` делает три вещи: отправляет `/api/**` в mod_wsgi, отдаёт
@@ -150,6 +150,13 @@ rsync ходит по ssh и требует оболочку, а на аккау
 страница читает из пути) и закрывает отдачи `python/`, `keys.env` и файлов на
 точку. Неизвестные адреса отдаёт `ErrorDocument 404 /404.html` — без общего
 правила mod_rewrite, чтобы не перехватить запросы к `api.wsgi`.
+
+Карта лежит в трёх форматах (JPEG, WebP, AVIF — см. пункт «Карта Кас-Хатара на
+«Столе»» в `README.md`), и shared-хостинг может не знать расширений `.webp` и
+`.avif`: тогда браузер получит файл как `application/octet-stream` и `<picture>`
+его не покажет. Поэтому в `.htaccess` есть блок `<IfModule mod_mime.c>` с
+`AddType image/webp .webp` и `AddType image/avif .avif`, а `<FilesMatch>` кэширует
+на час все три файла.
 
 Если хостинг запрещает директивы в `.htaccess` и отдаёт 500, уберите строку
 `Options +ExecCGI -Indexes`: остальные правила `Options` не требуют, а листинг
@@ -173,6 +180,7 @@ py -3.13 python/devserver.py --port 8788 --static out
 curl -sI https://домен/            | head -1   # 200, text/html
 curl -sI https://домен/r/XXXXXX    | head -1   # 200, text/html (та же страница)
 curl -s  https://домен/api/health?deep=1       # ok: true, mode: redis
+curl -sI https://домен/map/kas-khatar.avif     # content-type: image/avif
 ```
 
 ## Чего здесь нет

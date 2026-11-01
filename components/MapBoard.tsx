@@ -14,6 +14,9 @@ interface MapBoardProps {
 }
 
 const PING_TTL = 3_000;
+/** Размер растра карты: атрибуты width/height держат место до загрузки — стол не прыгает. */
+const MAP_WIDTH = 4333;
+const MAP_HEIGHT = 3064;
 const MAX_POINTS = 600;
 const POINT_STEP = 0.0025;
 const CLICK_DISTANCE = 0.006;
@@ -246,17 +249,28 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           onPointerCancel={handlePointerUp}
           className={`map-frame relative touch-none select-none ${tool === "pen" ? "cursor-crosshair" : "cursor-cell"}`}
         >
-          <img
-            ref={imageRef}
-            src="/map/kas-khatar.jpg"
-            alt="Карта Кас-Хатара"
-            draggable={false}
-            onLoad={(event) => {
-              const { naturalWidth, naturalHeight } = event.currentTarget;
-              setPixels({ width: naturalWidth, height: naturalHeight });
-            }}
-            className="block h-auto w-full"
-          />
+          {/* Формат выбирает браузер: берётся первый поддержанный <source>, JPEG
+              остаётся запасным. Статика собирается без оптимизатора картинок
+              (images.unoptimized), поэтому здесь <picture>, а не next/image.
+              Файлы собирает `py -3.13 tools/make-map-formats.py`. */}
+          <picture className="block">
+            <source type="image/avif" srcSet="/map/kas-khatar.avif" />
+            <source type="image/webp" srcSet="/map/kas-khatar.webp" />
+            <img
+              ref={imageRef}
+              src="/map/kas-khatar.jpg"
+              alt="Карта Кас-Хатара"
+              width={MAP_WIDTH}
+              height={MAP_HEIGHT}
+              decoding="async"
+              draggable={false}
+              onLoad={(event) => {
+                const { naturalWidth, naturalHeight } = event.currentTarget;
+                setPixels({ width: naturalWidth, height: naturalHeight });
+              }}
+              className="block h-auto w-full"
+            />
+          </picture>
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
           {pings.map((ping) => (

@@ -26,6 +26,11 @@ function launcher() {
 const PY = launcher();
 const pythonReady = spawnSync(PY.command, [...PY.args, "--version"], { encoding: "utf8" }).status === 0;
 const SKIP = "нет Python 3 (py -3.13 / python3) — проверка статики недоступна";
+const pillowReady =
+  pythonReady &&
+  spawnSync(PY.command, [...PY.args, "-c", "import PIL.Image, PIL.features"], { encoding: "utf8" })
+    .status === 0;
+const SKIP_PILLOW = "нет Pillow (py -3.13 -m pip install pillow) — кадр карты не сверить";
 
 /** Все файлы каталога `app/` — от них зависит, что попадёт в статический экспорт. */
 function appFiles(dir = path.join(projectDir, "app")) {
@@ -147,6 +152,83 @@ test("вкладка персонажей и лист грузятся лени�
   );
 });
 
+test("карта отдаётся в AVIF/WebP: <picture> выбирает формат, JPEG остаётся запасным", () => {
+  const board = read("components", "MapBoard.tsx");
+
+  const avif = board.indexOf('type="image/avif"');
+  const webp = board.indexOf('type="image/webp"');
+  const img = board.indexOf("<img");
+  assert.match(board, /<picture className="block">/, "карта должна идти через <picture>");
+  assert.ok(avif > 0 && webp > avif, "AVIF идёт первым: браузер берёт первый поддержанный <source>");
+  assert.ok(img > webp, "<img> с JPEG — последний, он остаётся запасным");
+  assert.match(board, /srcSet="\/map\/kas-khatar\.avif"/, "без srcSet браузер не выберет AVIF");
+  assert.match(board, /srcSet="\/map\/kas-khatar\.webp"/, "без srcSet браузер не выберет WebP");
+  assert.match(board, /src="\/map\/kas-khatar\.jpg"/, "запасной JPEG должен остаться");
+  assert.match(
+    board,
+    /width=\{MAP_WIDTH\}[\s\S]{0,40}height=\{MAP_HEIGHT\}/,
+    "размер кадра задан атрибутами — карта не прыгает, пока формат грузится",
+  );
+  assert.ok(
+    !/from "next\/image"/.test(board),
+    "на статике нет оптимизатора (images.unoptimized): next/image отдаст тот же JPEG",
+  );
+});
+
+test("WebP и AVIF карты лежат рядом с JPEG и заметно легче", () => {
+  const dir = path.join(projectDir, "public", "map");
+  const bytes = (name) => fs.statSync(path.join(dir, name)).size;
+  const jpeg = bytes("kas-khatar.jpg");
+  const share = (name) => bytes(name) / jpeg;
+
+  // Порог не «вдвое»: WebP q82 отдаёт 54 % веса, AVIF q65 — 41 %. Оба значения
+  // подобраны по PSNR на полном кадре, ниже падает читаемость тонких линий.
+  assert.ok(
+    share("kas-khatar.webp") < 0.6,
+    `WebP занимает ${Math.round(share("kas-khatar.webp") * 100)} % JPEG — ожидалось меньше 60 %`,
+  );
+  assert.ok(
+    share("kas-khatar.avif") < 0.5,
+    `AVIF занимает ${Math.round(share("kas-khatar.avif") * 100)} % JPEG — ожидалось меньше 50 %`,
+  );
+
+  const webp = fs.readFileSync(path.join(dir, "kas-khatar.webp")).subarray(0, 12);
+  assert.equal(webp.subarray(0, 4).toString("latin1"), "RIFF", "файл должен быть контейнером RIFF");
+  assert.equal(webp.subarray(8, 12).toString("latin1"), "WEBP", "внутри RIFF должен быть WebP");
+  const avif = fs.readFileSync(path.join(dir, "kas-khatar.avif")).subarray(0, 12).toString("latin1");
+  assert.match(avif, /^.{4}ftypavif$/, "файл должен быть контейнером AVIF (ftyp avif)");
+});
+
+test(
+  "WebP и AVIF — тот же кадр и полное разрешение, что у JPEG",
+  { skip: pillowReady ? false : SKIP_PILLOW },
+  () => {
+    const dir = path.join(projectDir, "public", "map");
+    const names = ["kas-khatar.jpg", "kas-khatar.webp", "kas-khatar.avif"].map((name) =>
+      path.join(dir, name),
+    );
+    const probe = [
+      "import json, sys",
+      "from PIL import Image",
+      "sizes = []",
+      "for name in sys.argv[1:]:",
+      "    with Image.open(name) as image:",
+      "        image.load()",
+      "        sizes.append([image.size[0], image.size[1]])",
+      "print(json.dumps(sizes))",
+    ].join("\n");
+    const result = spawnSync(PY.command, [...PY.args, "-c", probe, ...names], { encoding: "utf8" });
+    assert.equal(result.status, 0, `не удалось распаковать файлы карты: ${result.stderr}`);
+    const sizes = JSON.parse(result.stdout);
+    assert.deepEqual(
+      sizes,
+      sizes.map(() => sizes[0]),
+      "WebP и AVIF должны быть тем же кадром: иначе линии и метки съедут",
+    );
+    assert.ok(sizes[0][0] >= 4000 && sizes[0][1] >= 2800, `кадр карты потерял разрешение: ${sizes[0]}`);
+  },
+);
+
 test(".htaccess: API в mod_wsgi, комната файлом, служебное закрыто", () => {
   const raw = fs.readFileSync(path.join(projectDir, "deploy", "apache", ".htaccess"), "latin1");
   assert.ok(!raw.includes("\r"), "в .htaccess не должно быть CRLF — Apache ждёт LF");
@@ -172,6 +254,21 @@ test(".htaccess: API в mod_wsgi, комната файлом, служебно�
     "общее правило 404 перехватит запросы к api.wsgi — хватит ErrorDocument",
   );
   assert.match(conf, /max-age=31536000, immutable/, "хешированная статика Next кэшируется навсегда");
+  assert.match(conf, /^<IfModule mod_mime\.c>$/m, "MIME новых форматов задаётся отдельным блоком");
+  assert.match(
+    conf,
+    /^ {2}AddType image\/webp \.webp$/m,
+    "без AddType хостинг отдаст WebP как application/octet-stream",
+  );
+  assert.match(
+    conf,
+    /^ {2}AddType image\/avif \.avif$/m,
+    "без AddType хостинг отдаст AVIF как application/octet-stream",
+  );
+  assert.ok(
+    conf.includes("|webp|avif|svg|"),
+    "AVIF тоже должен кэшироваться на час, как остальные картинки",
+  );
 });
 
 function freePort() {
@@ -198,6 +295,8 @@ function fakeOut() {
   fs.writeFileSync(path.join(root, "_next", "static", "app-abcdef123456.js"), "console.log(1)");
   fs.mkdirSync(path.join(root, "map"), { recursive: true });
   fs.writeFileSync(path.join(root, "map", "kas-khatar.jpg"), "jpg");
+  fs.writeFileSync(path.join(root, "map", "kas-khatar.webp"), "webp");
+  fs.writeFileSync(path.join(root, "map", "kas-khatar.avif"), "avif");
   fs.writeFileSync(path.join(root, "keys.env"), "UPSTASH_REDIS_REST_TOKEN=секрет");
   return root;
 }
@@ -302,9 +401,21 @@ test(
       "хешированные файлы сборки кэшируются навсегда",
     );
 
-    const map = await fetch(`${site.baseUrl}/map/kas-khatar.jpg`);
-    assert.equal(map.status, 200);
-    assert.equal(map.headers.get("cache-control"), "public, max-age=3600");
+    const mapFormats = [
+      ["kas-khatar.jpg", "image/jpeg"],
+      ["kas-khatar.webp", "image/webp"],
+      ["kas-khatar.avif", "image/avif"],
+    ];
+    for (const [name, type] of mapFormats) {
+      const map = await fetch(`${site.baseUrl}/map/${name}`);
+      assert.equal(map.status, 200, `${name} не отдаётся`);
+      assert.equal(
+        map.headers.get("content-type"),
+        type,
+        `${name}: без правильного Content-Type браузер не поймёт формат`,
+      );
+      assert.equal(map.headers.get("cache-control"), "public, max-age=3600");
+    }
   },
 );
 

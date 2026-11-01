@@ -53,6 +53,7 @@ MIME = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".avif": "image/avif",
     ".ico": "image/x-icon",
     ".woff2": "font/woff2",
     ".mp3": "audio/mpeg",
