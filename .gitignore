@@ -1,6 +1,9 @@
 node_modules
 .next
 out
+# Релиз для сервера: собирается tools/package-release.cjs, в git не нужен.
+release
+vtt-release.tar.gz
 .env
 .env.local
 .env.*.local

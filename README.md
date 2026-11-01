@@ -1,7 +1,8 @@
 # Poison Press VTT
 
 Виртуальный стол (VTT) для настольной игры «Вторые»: чат, кубики и листы персонажей.
-Next.js 15 (App Router) + TypeScript + Tailwind CSS 4, деплой на Vercel.
+Next.js 15 (App Router) + TypeScript + Tailwind CSS 4, деплой на свой VPS в SpaceWeb
+с автодеплоем из GitHub (`HOSTING.md`).
 
 Живёт в базе «Луна»: `02_Projects/Poison_Press/vtt/`. Материалы книги, заметки ведущего
 и официальный бланк персонажа — рядом, в `../books/Vtorye/`.
@@ -51,9 +52,12 @@ Next.js 15 (App Router) + TypeScript + Tailwind CSS 4, деплой на Vercel.
 - **Тема — старый пергамент.** Бежевая палитра в духе Baldur's Gate и Icewind Dale:
   тёплый фон, коричневые чернила, старое золото вместо неона, антиква в тексте.
   Переопределены палитры Tailwind (`zinc` → пергамент, `emerald` → золото) в `app/globals.css`.
-- **Свой хостинг.** Проект не привязан к Vercel: есть `Dockerfile`, `docker-compose.yml`,
-  готовый systemd-юнит `deploy/vtt.service` (расчёт на `/srv/vtt`) и инструкция `HOSTING.md`
-  (Nginx, systemd, варианты Redis, что делать с картинками).
+- **Свой хостинг с автодеплоем.** Push в `main` собирает релиз в GitHub Actions
+  (`tools/package-release.cjs`: standalone + статика + `public`), копирует его по ssh
+  на VPS и переключает `/srv/vtt/current` (`deploy/activate.sh`) с проверкой `/api/health`
+  и откатом при неудаче. На сервере стоят только Node и nginx — без npm и сборки.
+  Первичную настройку делает `deploy/bootstrap.sh`, подробности — `HOSTING.md`.
+  Для ручного пути и Docker в репозитории есть `Dockerfile` и `docker-compose.yml`.
 - **Дебаг-панель мастера внизу страницы.** Свёрнутая строка и раскрывающиеся подробности:
   сколько запросов ушло в базу, сколько байт получено и отправлено (за сессию и за день),
   последний запрос и время ответа, разбивка по адресам, режим хранилища из `/api/health`
@@ -256,9 +260,10 @@ npm run dev
 Проверки:
 
 ```bash
-npm run typecheck   # tsc --noEmit
-npm test            # node --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/characters.test.mjs tests/youtube.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs
-npm run build       # production-сборка, как на Vercel
+npm run typecheck        # tsc --noEmit
+npm test                 # правила, кубики, лист, книги, деплой
+npm run build            # production-сборка, как в GitHub Actions
+npm run release:package  # релиз для сервера: release/ и vtt-release.tar.gz
 ```
 
 `npm test` импортирует `lib/dice.ts`, `lib/rules.ts`, `lib/calendar.ts`, `lib/characters.ts`
@@ -277,15 +282,20 @@ Node 22.18+ (встроенное стирание типов); по этой ж
 (идемпотентность, негативная ветка сверки, минимумы навыков, удаление раздела 2.7,
 ошибка на пропавшем блоке каталога, ошибка без самого каталога, пропуск удалённой
 книги правил и ошибка без книги игрока). Если книг или каталога рядом нет,
-эти тесты помечаются пропущенными. На Vercel тесты не запускаются — только сборка.
+эти тесты помечаются пропущенными;
+`tests/deploy.test.mjs` собирает релиз из фиктивной сборки (`tools/package-release.cjs`),
+проверяет ошибку без `.next/standalone` и сверяет, что workflow, юнит, nginx и скрипты
+деплоя называют одни и те же пути, секреты и каталоги, а файлы деплоя лежат без CRLF.
+В GitHub Actions тесты идут перед сборкой; на CI рядом нет `books/`, поэтому сверки книг
+там пропускаются.
 
 Без переменных окружения комнаты живут в памяти процесса — удобно для разработки,
 но данные пропадают при перезапуске и не делятся между инстансами.
 
-## Хранилище и деплой на Vercel
+## Хранилище и деплой
 
-На Vercel серверные функции не хранят состояние между вызовами, поэтому нужен Redis.
-Поддерживается любой Upstash Redis (Vercel KV, Marketplace или нативный Upstash) —
+Состояние комнат живёт в Redis: служба перезапускается при каждом деплое, а столы должны
+остаться. Поддерживается любой Upstash Redis (Vercel KV, Marketplace или нативный Upstash) —
 достаточно REST-переменных, транспортные пакеты не нужны:
 
 ```
@@ -302,17 +312,27 @@ KV_REST_API_TOKEN=...
 полный **REST Token**, не **Readonly Token**. Значения из `.env` не должны содержать
 кавычек и пробелов.
 
-Порядок:
+Порядок на своём сервере (SpaceWeb VPS; подробно, с адресами и проверками — `HOSTING.md`):
 
-1. Импортируйте репозиторий в Vercel (Framework Preset определится как Next.js,
-   команды сборки менять не нужно).
-2. В проекте Vercel добавьте интеграцию Redis (Upstash) — переменные подставятся сами,
-   либо добавьте их вручную в Settings → Environment Variables.
-3. Задеплойте заново: изменения env не применяются к уже собранному деплою.
-4. Откройте корень сайта, нажмите «Создать комнату», скопируйте ссылку.
+1. `deploy/bootstrap.sh --domain <домен> --email <почта> --deploy-key <ключ.pub>` — ставит
+   Node 22, создаёт пользователя `vtt`, каталоги `/srv/vtt`, службу и nginx с HTTPS.
+2. Заполнить `/srv/vtt/shared/.env.local`: URL и токен Upstash от одной базы.
+3. В GitHub → Settings → Secrets and variables → Actions задать `SPACEWEB_HOST`,
+   `SPACEWEB_USER`, `SPACEWEB_SSH_KEY` и переменные `SPACEWEB_APP_DIR`, `SPACEWEB_PUBLIC_URL`.
+4. Push в `main`: Actions собирает релиз, копирует его по ssh, переключает
+   `/srv/vtt/current` и проверяет `/api/health`; неудачный релиз откатывается сам.
+5. Открыть адрес, нажать «Создать комнату», скопировать ссылку, проверить стол с телефона.
 
-Без Redis приложение тоже поднимется, но на Vercel комнаты будут «пропадать» между
-запросами — это режим для локальной разработки.
+Без Redis приложение тоже поднимется (`storage.mode: "memory"`), но комнаты исчезнут
+при перезапуске службы — это режим для локальной разработки.
+
+### Vercel (если понадобится вернуться)
+
+Проект по-прежнему собирается на Vercel без правок: импортировать репозиторий (Framework
+Preset определится как Next.js), добавить `UPSTASH_REDIS_REST_URL` и
+`UPSTASH_REDIS_REST_TOKEN` в Settings → Environment Variables и передеплоить — изменения env
+не применяются к уже собранному деплою. Помните, что функции Vercel не хранят состояние между
+вызовами: без Upstash комнаты «пропадают» между запросами.
 
 ### Проверка хранилища
 
@@ -347,13 +367,14 @@ KV_REST_API_TOKEN=...
 верны, но закончился лимит тарифа Upstash. Откройте Upstash Console → базу →
 **Billing/Plan** → **Upgrade** или **Enable auto upgrade**; передеплой не нужен.
 
-### Регион функций
+### Регион
 
-Регион функций Vercel выбирается отдельно от региона базы: новый проект по умолчанию
-собирается в `iad1` (Вашингтон), даже если база Upstash лежит во Франкфурте. Каждый
-запрос к Redis тогда идёт через Атлантику (~100 мс). Чтобы этого избежать, выставьте
-Settings → Functions → Function Region в регион базы (`fra1` для Frankfurt) и
-передеплойте проект.
+На своём сервере регион — это дата-центр VPS (в SpaceWeb удобно СПб: ближе к игрокам).
+База Upstash должна быть в соседнем регионе, иначе каждый запрос к комнате идёт через
+полмира и добавляет ~100 мс: в Upstash Console регион выбирается при создании базы,
+менять его у существующей нельзя — переносится только новой базой.
+Если когда-нибудь вернётесь на Vercel, там регион функций задаётся отдельно
+(Settings → Functions → Function Region) и должен совпадать с регионом базы.
 
 ### Про обновление данных
 
@@ -415,6 +436,15 @@ lib/
 tools/
   export-rules.cjs             выгрузка каталогов правил в Markdown (см. ниже)
   export-calendar.cjs          выгрузка календаря и неба в «Кас-Хатар_Календарь_и_небо.md» (`--check` — только сверка)
+  package-release.cjs          релиз для сервера: standalone + статика + public → release/ и vtt-release.tar.gz
+deploy/
+  bootstrap.sh                 первичная настройка VPS: Node 22, пользователь vtt, каталоги, nginx, systemd, HTTPS
+  activate.sh                  переключение релиза на сервере: распаковка, симлинк current, restart, healthcheck, откат
+  rollback.sh                  ручной откат на предыдущий релиз
+  vtt.service                  юнит systemd: node server.js из /srv/vtt/current
+  nginx/vtt.conf               reverse proxy на 127.0.0.1:3000 (HTTPS добавляет certbot)
+.github/workflows/
+  deploy.yml                   автодеплой из GitHub: проверки, сборка, архив, выкладка по ssh
 tests/
   dice.test.mjs                формулы и броски
   rules.test.mjs               модификаторы, ОЗ, КБ, испытания, каталог навыков, возраст, монеты
@@ -424,6 +454,7 @@ tests/
   catalog-export.test.mjs      версия в шапках каталога и календаря и состав каталога против lib/rules.ts
   export-calendar.test.mjs     выгрузка календаря на копии книг: идемпотентность, --check и расхождение с lib/calendar.ts
   sync-books.test.mjs          книги на копии: идемпотентность, расхождения, минимумы навыков, 2.7, пропавший блок и каталог, пропуск книги правил, нет книги игрока
+  deploy.test.mjs              релиз для сервера из фиктивной сборки и согласованность workflow, юнита, nginx и скриптов
 ```
 
 ## API
@@ -454,8 +485,8 @@ tests/
 
 1. **Сеть.** Пропал Wi-Fi, VPN, мобильный интернет — обновите страницу и нажмите `⟳` в шапке.
 2. **Свой сервер выключен или перезапускается.** На VPS: `systemctl status vtt`,
-   логи `journalctl -u vtt -n 50`. На Vercel: проект → Deployments, не идёт ли пересборка
-   и не приостановлен ли проект из-за лимитов.
+   логи `journalctl -u vtt -n 50`. Если идёт деплой — посмотрите Actions → «Деплой VTT
+   на SpaceWeb»: переключение релиза ждёт `/api/health` и само откатывается при сбое.
 3. **Страница по http, а API по https** (или наоборот) — mixed content браузер режет.
    Схема у страницы и у API должна быть одна.
 4. **Блокировщики и прокси.** uBlock/AdGuard/корпоративный прокси иногда режут `POST`

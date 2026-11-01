@@ -1,0 +1,157 @@
+name: Деплой VTT на SpaceWeb
+
+# Автодеплой из GitHub на свой VPS в SpaceWeb.
+#
+# Каждый push в main: проверки → сборка → архив релиза (tools/package-release.cjs)
+# → копирование по ssh → переключение релиза (deploy/activate.sh) → healthcheck.
+# Сервер только запускает готовый server.js, ему не нужны ни npm, ни сборка.
+#
+# Что должно быть настроено в репозитории (Settings → Secrets and variables → Actions):
+#   секреты:  SPACEWEB_HOST (IP), SPACEWEB_USER (vtt), SPACEWEB_SSH_KEY (приватный ключ),
+#             SPACEWEB_PORT (по умолчанию 22)
+#   переменные: SPACEWEB_APP_DIR (/srv/vtt), SPACEWEB_PUBLIC_URL (https://домен)
+# Пока секретов нет, job «Выкладка» просто пропускается — сборка и тесты всё равно идут.
+# Полная инструкция — HOSTING.md, раздел «SpaceWeb: VPS + автодеплой из GitHub».
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Два деплоя одновременно не запускаем: релизы пишут в один каталог на сервере.
+concurrency:
+  group: deploy-spaceweb
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Секреты деплоя
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Проверить, настроен ли сервер
+        id: check
+        env:
+          HOST: ${{ secrets.SPACEWEB_HOST }}
+          DEPLOY_USER: ${{ secrets.SPACEWEB_USER }}
+          SSH_KEY: ${{ secrets.SPACEWEB_SSH_KEY }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$DEPLOY_USER" ] && [ -n "$SSH_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Секреты на месте, деплой пойдёт на $HOST."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Деплой не настроен::Добавьте секреты SPACEWEB_HOST, SPACEWEB_USER и SPACEWEB_SSH_KEY — см. HOSTING.md."
+          fi
+
+  build:
+    name: Проверки и сборка
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Типы
+        run: npm run typecheck
+
+      # На CI рядом нет папки books/, поэтому сверки книг помечаются пропущенными —
+      # остальные тесты (правила, кубики, календарь, лист) проверяются полностью.
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка
+        run: npm run build
+
+      - name: Архив релиза
+        run: node tools/package-release.cjs
+
+      - name: Версия
+        run: node -e "console.log('Версия ' + require('./package.json').version + ', коммит ' + process.env.GITHUB_SHA)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vtt-release
+          path: vtt-release.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    name: Выкладка на SpaceWeb
+    needs: [preflight, build]
+    if: needs.preflight.outputs.configured == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      APP_DIR: ${{ vars.SPACEWEB_APP_DIR || '/srv/vtt' }}
+      SSH_PORT: ${{ secrets.SPACEWEB_PORT || '22' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vtt-release
+
+      - name: Ключ и отпечаток сервера
+        env:
+          SSH_KEY: ${{ secrets.SPACEWEB_SSH_KEY }}
+          HOST: ${{ secrets.SPACEWEB_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          # tr -d '\r': ключ, вставленный из Windows, иначе приедет с CRLF и ssh его не примет.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" -H "$HOST" 2>/dev/null >> ~/.ssh/known_hosts || true
+          chmod 600 ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts || { echo "::error::ssh-keyscan не получил ключ $HOST:$SSH_PORT"; exit 1; }
+
+      - name: Выложить архив
+        env:
+          DEPLOY_USER: ${{ secrets.SPACEWEB_USER }}
+          HOST: ${{ secrets.SPACEWEB_HOST }}
+        run: |
+          set -euo pipefail
+          SSH="ssh -i $HOME/.ssh/id_deploy -p $SSH_PORT -o BatchMode=yes"
+          $SSH "$DEPLOY_USER@$HOST" "mkdir -p '$APP_DIR/incoming' '$APP_DIR/releases' '$APP_DIR/shared'"
+          scp -i "$HOME/.ssh/id_deploy" -P "$SSH_PORT" -o BatchMode=yes \
+            vtt-release.tar.gz "$DEPLOY_USER@$HOST:$APP_DIR/incoming/$GITHUB_SHA.tar.gz"
+
+      - name: Переключить релиз и проверить стол
+        env:
+          DEPLOY_USER: ${{ secrets.SPACEWEB_USER }}
+          HOST: ${{ secrets.SPACEWEB_HOST }}
+        run: |
+          set -euo pipefail
+          SSH="ssh -i $HOME/.ssh/id_deploy -p $SSH_PORT -o BatchMode=yes"
+          # Скрипт уезжает по stdin: на сервере не нужен git-клон, достаточно архива.
+          $SSH "$DEPLOY_USER@$HOST" \
+            "APP_DIR='$APP_DIR' RELEASE_ID='$GITHUB_SHA' ARCHIVE='$APP_DIR/incoming/$GITHUB_SHA.tar.gz' bash -s" \
+            < deploy/activate.sh
+
+      - name: Проверить сайт снаружи
+        if: vars.SPACEWEB_PUBLIC_URL != ''
+        env:
+          PUBLIC_URL: ${{ vars.SPACEWEB_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 10); do
+            if curl -fsS --max-time 5 "$PUBLIC_URL/api/health" >/dev/null; then
+              echo "Сайт отвечает: $PUBLIC_URL"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::$PUBLIC_URL/api/health не ответил за 30 секунд после деплоя"
+          exit 1

@@ -1,20 +1,22 @@
-# VTT «Вторых» как системная служба (Ubuntu/Debian).
+# VTT «Вторых» как системная служба (Ubuntu/Debian, SpaceWeb VPS).
 #
-#   sudo git clone https://github.com/mishagordeev/vtt.git /srv/vtt
-#   sudo useradd --system --home /srv/vtt --shell /usr/sbin/nologin vtt   # если ещё нет
-#   sudo chown -R vtt:vtt /srv/vtt
-#   cd /srv/vtt && sudo -u vtt npm ci && sudo -u vtt npm run build
-#   sudo cp /srv/vtt/deploy/vtt.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now vtt
+# Раскладка на сервере (её создаёт deploy/bootstrap.sh):
+#   /srv/vtt/releases/<хэш>/    распакованная сборка: server.js, .next/static, public
+#   /srv/vtt/current            симлинк на действующий релиз (его меняет deploy/activate.sh)
+#   /srv/vtt/shared/.env.local  секреты Upstash; деплой этот файл не трогает
+#   /srv/vtt/incoming/          архивы релизов от GitHub Actions
 #
-# Корень клона VTT — сразу проект: app/, lib/, package.json лежат в /srv/vtt.
-# Папки 02_Projects/... на сервере нет: это путь внутри базы «Луна», а VTT —
-# отдельный репозиторий (github.com/mishagordeev/vtt), в luna он в .gitignore.
-# Секреты Upstash — в /srv/vtt/.env.local: файл читают и Next.js, и systemd.
+# Ставится один раз:
+#   sudo cp deploy/vtt.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable vtt
+#
+# Сборка идёт в GitHub Actions (`tools/package-release.cjs`), на сервере npm не нужен:
+# запускается готовый `server.js` из standalone-сборки. Секреты читаются из
+# shared/.env.local, потому что .env.local нет в архиве (он в .gitignore).
 
 [Unit]
 Description=Poison Press VTT (виртуальный стол «Вторые»)
-Documentation=file:/srv/vtt/HOSTING.md
+Documentation=https://github.com/mishagordeev/vtt/blob/main/HOSTING.md
 After=network-online.target
 Wants=network-online.target
 
@@ -22,21 +24,24 @@ Wants=network-online.target
 Type=simple
 User=vtt
 Group=vtt
-# next start ищет .next рядом с package.json, а .env.local читается из корня проекта.
-WorkingDirectory=/srv/vtt
-EnvironmentFile=/srv/vtt/.env.local
+# server.js ищет .next рядом с собой, поэтому рабочая папка — конкретный релиз.
+WorkingDirectory=/srv/vtt/current
 Environment=NODE_ENV=production
+Environment=PORT=3000
+# Только localhost: снаружи — nginx (deploy/nginx/vtt.conf).
+Environment=HOSTNAME=127.0.0.1
 Environment=NEXT_TELEMETRY_DISABLED=1
-# npm не должен писать в домашний каталог (он под ProtectHome).
-Environment=npm_config_update_notifier=false
-ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000
+# Минус перед путём — файла может не быть (тогда комнаты живут в памяти процесса).
+EnvironmentFile=-/srv/vtt/shared/.env.local
+ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=3
-# Пишет только .next (кеш картинок и fetch) — /srv остаётся доступным на запись.
-ProtectSystem=full
-ProtectHome=yes
 NoNewPrivileges=yes
 PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Пишет Next.js (кеш .next) и сам релиз — только внутри /srv/vtt.
+ReadWritePaths=/srv/vtt
 UMask=0027
 
 [Install]
