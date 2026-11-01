@@ -1165,6 +1165,12 @@ export function CharacterSheet({
         </div>
       ) : null}
 
+      {error ? (
+        <div className="shrink-0 border-b border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300">
+          {error}
+        </div>
+      ) : null}
+
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 xl:overflow-hidden">
         <div className="grid gap-4 xl:h-full xl:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)]">
           {/* Левая половина листа: всё о самом герое. */}
@@ -2281,8 +2287,6 @@ export function CharacterSheet({
             </div>
           </aside>
         </div>
-
-        {error ? <p className="pt-3 text-sm text-rose-400">{error}</p> : null}
       </div>
 
       {portraitFile ? (
