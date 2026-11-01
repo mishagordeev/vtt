@@ -621,3 +621,65 @@ test(
   },
 );
 
+test(
+  "deploy.py --archive собирает комплект одним zip для панели хостинга",
+  {
+    skip: !pythonReady
+      ? SKIP
+      : !fs.existsSync(path.join(projectDir, "out", "index.html"))
+        ? "нет out/ — статика не собрана (npm run build:static)"
+        : false,
+  },
+  () => {
+    const script = path.join(projectDir, "deploy", "apache", "deploy.py");
+    const keys = path.join(os.tmpdir(), `vtt-keys-archive-${process.pid}.env`);
+    const target = path.join(os.tmpdir(), `vtt-site-archive-${process.pid}.zip`);
+    fs.writeFileSync(keys, "UPSTASH_REDIS_REST_URL=\nUPSTASH_REDIS_REST_TOKEN=\n");
+    const probe = [
+      "import importlib.util, json, pathlib, sys, zipfile",
+      "spec = importlib.util.spec_from_file_location('vtt_deploy', sys.argv[1])",
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "args = module.parse_args(['--archive', '--keys', sys.argv[2]])",
+      "target, count = module.build_archive(args, pathlib.Path(sys.argv[3]))",
+      "names = zipfile.ZipFile(target).namelist()",
+      "print(json.dumps({'count': count, 'names': names}))",
+    ].join("\n");
+    const result = spawnSync(PY.command, [...PY.args, "-c", probe, script, keys, target], {
+      encoding: "utf8",
+    });
+    fs.rmSync(keys, { force: true });
+    assert.equal(result.status, 0, `не удалось собрать архив deploy.py: ${result.stderr}`);
+    const { count, names } = JSON.parse(result.stdout);
+
+    assert.equal(count, names.length, "счётчик файлов разошёлся со списком в архиве");
+    for (const part of [
+      "index.html",
+      "r/index.html",
+      "api.wsgi",
+      ".htaccess",
+      "keys.env",
+      "python/wsgi.py",
+      "python/data/rules.json",
+    ]) {
+      assert.ok(names.includes(part), `в архиве нет ${part}: панель распакует неполный комплект`);
+    }
+    assert.ok(
+      names.some((name) => name.startsWith("_next/static/")),
+      "чанки сборки не попали в архив",
+    );
+    assert.ok(
+      names.some((name) => name.startsWith("map/")),
+      "карта не попала в архив — на «Столе» не будет рисунка",
+    );
+    for (const forbidden of ["__pycache__", ".pyc", "data/rooms/"]) {
+      assert.ok(
+        !names.some((name) => name.includes(forbidden)),
+        `в архиве оказался ${forbidden}: серверные данные затирать нельзя`,
+      );
+    }
+    assert.ok(fs.statSync(target).size > 1024, "архив пустой");
+    fs.rmSync(target, { force: true });
+  },
+);
+

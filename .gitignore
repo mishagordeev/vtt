@@ -17,4 +17,6 @@ keys.env
 python/data/rooms
 __pycache__
 *.pyc
+# Комплект для файлового менеджера панели: собирается deploy.py --archive.
+deploy/apache/vtt-site-*.zip
 

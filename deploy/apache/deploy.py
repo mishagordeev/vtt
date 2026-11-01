@@ -7,22 +7,27 @@
     py -3.13 deploy/apache/deploy.py --check        # только проверка комплекта
     py -3.13 deploy/apache/deploy.py --dry-run      # показать команды выгрузки
     py -3.13 deploy/apache/deploy.py --build        # пересобрать out/ и выложить
+    py -3.13 deploy/apache/deploy.py --archive      # комплект одним zip для панели
 
 Параметры по умолчанию — аккаунт `onitselfgm` на `77.222.40.251`
 (ключ `~/.ssh/sweb_deploy`), корень сайта `mishagordeev.com/public_html`.
 
-Транспортов два:
+Транспортов три:
 
-- `scp` (по умолчанию) — копирует всё заново, оболочка на сервере не нужна:
-  на виртуальном хостинге SpaceWeb она выключена (`nologin`), а SFTP-подсистема
-  как раз работает. Права после загрузки выставляются отдельным `ssh`, и если
-  оболочки нет — скрипт предупреждает, а не падает.
+- `scp` (по умолчанию) — копирует всё заново, файлы уходят через тот же ssh,
+  поэтому на аккаунте должна работать оболочка. Права после загрузки
+  выставляются отдельным `ssh`, и если оболочки нет — скрипт предупреждает,
+  а не падает.
 - `--rsync` — инкрементальная выгрузка (`out/` и `python/`), устаревшие
   хешированные чанки удаляются, серверные `python/`, `api.wsgi`, `keys.env` и
   `.htaccess` защищены от `--delete`, а после выгрузки скрипт делает
   `touch api.wsgi`: mod_wsgi перечитывает приложение. Этот режим требует
   оболочки на аккаунте и rsync на обеих сторонах — им пользуется CI
   (`.github/workflows/static.yml`).
+- `--archive` — ничего не отправляет, а собирает тот же комплект одним
+  `vtt-site-<версия>.zip` для файлового менеджера панели SpaceWeb. Это
+  единственный путь, когда ssh на аккаунте закрыт совсем: загрузить 1400 файлов
+  по одному нечем, а распаковать архив панель умеет.
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +61,9 @@ RSYNC_PROTECT = ("/python/", "/api.wsgi", "/keys.env", "/.htaccess", "/.well-kno
 
 # В python/ своё: байткод, ключи и комнаты файлового хранилища — они серверные.
 PYTHON_SKIP = ("__pycache__/", "*.pyc", "/keys.env", "/data/rooms/")
+
+# В архиве уже сжатое не пережимаем: deflate на jpeg/webp/avif только тратит время.
+ARCHIVE_STORE = (".jpg", ".jpeg", ".png", ".webp", ".avif", ".ico", ".woff2", ".mp3", ".zip", ".gz")
 
 ROOM_CODE = "A7K2QM"
 
@@ -327,6 +336,73 @@ def deploy(args: argparse.Namespace) -> None:
         note(f"ssh недоступен ({error}); выставите права в панели хостинга")
 
 
+def archive_path() -> Path:
+    """Куда складывается комплект одним архивом для файлового менеджера панели."""
+    return APACHE_DIR / f"vtt-site-{project_version()}.zip"
+
+
+def archive_members(python_stage: Path, *, keys_file: Path) -> list[tuple[Path, str]]:
+    """Пары «файл на диске → путь в архиве» в той же раскладке, что у `scp`.
+
+    Архив распаковывается прямо в `public_html`, поэтому пути внутри плоские:
+    содержимое `out/` в корень, рядом `python/`, `api.wsgi`, `keys.env` и
+    `.htaccess` (он в архиве есть — файловый менеджер скрытые файлы сохраняет).
+    """
+    members: list[tuple[Path, str]] = []
+    for path in sorted(STATIC_DIR.rglob("*")):
+        if path.is_file():
+            members.append((path, path.relative_to(STATIC_DIR).as_posix()))
+    for path in sorted(python_stage.rglob("*")):
+        if path.is_file():
+            members.append((path, "python/" + path.relative_to(python_stage).as_posix()))
+    members.append((APACHE_DIR / "api.wsgi", "api.wsgi"))
+    if keys_file.exists():
+        members.append((keys_file, "keys.env"))
+    members.append((APACHE_DIR / ".htaccess", ".htaccess"))
+    return members
+
+
+def build_archive(args: argparse.Namespace, target: Path | None = None) -> tuple[Path, int]:
+    """Комплект `public_html` одним zip: путь к архиву и число файлов внутри.
+
+    Нужен, когда ssh на аккаунте закрыт (`nologin`): `scp`, `sftp` и `rsync`
+    там не работают вовсе, а панель SpaceWeb умеет загрузить архив и распаковать
+    его в нужный каталог. Байткод и серверные комнаты в архив не попадают —
+    их отсекает `stage_python`.
+    """
+    target = target or archive_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        python_stage = stage_python(Path(tmp))
+        with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for source, arcname in archive_members(python_stage, keys_file=args.keys):
+                method = (
+                    zipfile.ZIP_STORED
+                    if source.suffix.lower() in ARCHIVE_STORE
+                    else zipfile.ZIP_DEFLATED
+                )
+                archive.write(source, arcname, compress_type=method)
+                count += 1
+    return target, count
+
+
+def deploy_archive(args: argparse.Namespace) -> None:
+    """Собирает архив и печатает, что с ним делать в панели хостинга."""
+    log("\nАрхив для файлового менеджера панели")
+    if args.dry_run:
+        note(f"{archive_path().name} не пишется: в режиме --dry-run архива нет")
+        return
+    target, count = build_archive(args)
+    ok(f"{target.name} — {count} файлов, {target.stat().st_size // 1024} КБ")
+    log(f"  {target}")
+    log("  дальше в панели SpaceWeb, без ssh:")
+    log(f"  1. Файлы → {args.target} → загрузить {target.name} в корень каталога")
+    log("  2. распаковать архив там же и удалить zip")
+    log("  3. если в архиве есть keys.env — выставить ему права 600")
+    log(f"  4. открыть {args.url.rstrip('/')}/api/health?deep=1 — ждём ok и mode")
+
+
 def fetch(url: str) -> tuple[int, str, str]:
     """GET без падений: код, тип и тело даже у ошибок."""
     request = urllib.request.Request(url, headers={"User-Agent": "vtt-deploy/1.0"})
@@ -434,6 +510,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="выгружать инкрементально rsync-ом и перезапускать mod_wsgi (нужна оболочка SSH)",
     )
     parser.add_argument("--build", action="store_true", help="пересобрать статику (npm run build:static)")
+    parser.add_argument(
+        "--archive",
+        action="store_true",
+        help="собрать комплект одним zip для файлового менеджера панели (ssh не нужен)",
+    )
     parser.add_argument("--skip-verify", action="store_true", help="не проверять живой сайт после выкладки")
     return parser.parse_args(argv)
 
@@ -460,6 +541,11 @@ def main(argv: list[str]) -> int:
             problem(item)
         die("комплект не готов — см. список выше")
     ok("комплект готов")
+
+    if args.archive:
+        deploy_archive(args)
+        log("\nАрхив готов: пока его не распакуют в панели, сайт не меняется.")
+        return 0
 
     if args.check:
         log("\nРежим --check: на сервер ничего не отправлено.")
