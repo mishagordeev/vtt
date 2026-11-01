@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 import pkg from "./package.json";
 
+// Заплатка на баг Next с кастомными pageExtensions: `next.config.ts`
+// компилируется в CommonJS, поэтому обычный require здесь работает.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { RouteClientReferenceManifestPlugin } = require("./tools/route-manifests.cjs") as {
+  RouteClientReferenceManifestPlugin: new (options?: { serverAppDir?: string }) => unknown;
+};
+
 /**
  * Из одного кода собираются две версии:
  *
@@ -10,6 +17,12 @@ import pkg from "./package.json";
  *   Python через mod_wsgi (каталог `python/`).
  */
 const staticExport = process.env.VTT_STATIC_EXPORT === "1";
+
+/**
+ * На Vercel сборку упаковывает сама платформа, `standalone` там не нужен
+ * (он для своего хостинга) и только добавляет лишнюю стадию копирования.
+ */
+const onVercel = process.env.VERCEL === "1";
 
 /**
  * Какие файлы Next считает страницами и обработчиками API.
@@ -36,8 +49,23 @@ const nextConfig: NextConfig = {
         images: { unoptimized: true },
       }
     : {
-        output: "standalone" as const,
+        // `standalone` нужен своему хостингу (VPS, Docker), а на Vercel сборку
+        // упаковывает платформа — там этот режим только мешает.
+        ...(onVercel ? {} : { output: "standalone" as const }),
       }),
+  /**
+   * Заплатка бага Next: при кастомном `pageExtensions` обработчикам API не
+   * достаётся `route_client-reference-manifest.js`, и сборка падает на
+   * «Collecting build traces» — подробности в `tools/route-manifests.cjs`.
+   * В статике обработчиков нет, в dev сборка ни при чём.
+   */
+  webpack(config, { dev, isServer }) {
+    if (!staticExport && isServer && !dev) {
+      config.plugins = config.plugins ?? [];
+      config.plugins.push(new RouteClientReferenceManifestPlugin());
+    }
+    return config;
+  },
   // Версия видна в интерфейсе: поднимается при каждом коммите (package.json).
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,

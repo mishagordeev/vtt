@@ -402,6 +402,16 @@ Preset определится как Next.js), добавить `UPSTASH_REDIS_R
 не применяются к уже собранному деплою. Помните, что функции Vercel не хранят состояние между
 вызовами: без Upstash комнаты «пропадают» между запросами.
 
+Две вещи в конфиге сделаны именно ради Vercel. Первая: `output: "standalone"` включается
+только вне Vercel (`VERCEL=1` его выключает) — сборку там упаковывает платформа, а лишняя
+стадия копирования только добавляет шансов на ошибку. Вторая: заплатка на баг Next
+([#76955](https://github.com/vercel/next.js/issues/76955)) — при кастомном `pageExtensions`
+обработчики API остаются без `<route>_client-reference-manifest.js`, и сборка падает на
+`ENOENT` при копировании traced files в `.next/standalone` и при упаковке функций Vercel.
+Плагин из `tools/route-manifests.cjs` дописывает пустые манифесты после эмита серверной
+сборки; клиентских компонентов у `/api/**` нет, поэтому манифест пустой по существу.
+Когда баг починят в Next, плагин перестанет находить «дырки» и ничего не изменит.
+
 ### Проверка хранилища
 
 `GET /api/health` показывает, какой режим включён, и пингует Redis через REST.
@@ -511,6 +521,7 @@ tools/
   export-calendar.cjs          выгрузка календаря и неба в «Кас-Хатар_Календарь_и_небо.md» (`--check` — только сверка)
   package-release.cjs          релиз для сервера: standalone + статика + public → release/ и vtt-release.tar.gz
   build-static.cjs             статическая сборка для Apache: VTT_STATIC_EXPORT=1 → out/ (`npm run build:static`)
+  route-manifests.cjs          заплатка Next: пустые `route_client-reference-manifest.js` для обработчиков API
   make-map-formats.py          WebP и AVIF для карты из JPEG: вес, кадр и `--check` без пересборки
 deploy/
   bootstrap.sh                 первичная настройка VPS: Node 22, пользователь vtt, каталоги, nginx, systemd, HTTPS
