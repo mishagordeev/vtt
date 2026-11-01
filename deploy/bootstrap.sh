@@ -121,7 +121,9 @@ fi
 log "systemd: $SERVICE.service"
 install -m 644 "$SRC_DIR/vtt.service" "/etc/systemd/system/$SERVICE.service"
 # В образе SpaceWeb node может лежать не в /usr/bin — подставляем реальный путь.
-sed -i "s|^ExecStart=/usr/bin/node |ExecStart=$NODE_BIN |" "/etc/systemd/system/$SERVICE.service"
+# Замена по всей строке ExecStart, а не по префиксу: повторный запуск скрипта
+# должен обновлять путь, даже если юнит уже стоял с другим node.
+sed -i "s|^ExecStart=.*|ExecStart=$NODE_BIN server.js|" "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null
 
