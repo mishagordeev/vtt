@@ -324,3 +324,48 @@ test("документация описывает статическую сбо�
   );
 });
 
+test("комплект выкладки готов: api.wsgi, keys.env.example и deploy.py", () => {
+  const wsgi = read("deploy", "apache", "api.wsgi");
+  assert.match(wsgi, /from wsgi import application/, "api.wsgi должен брать application из wsgi.py");
+  assert.match(wsgi, /sys\.path\.insert/, "api.wsgi должен добавлять каталог пакета в sys.path");
+  assert.match(wsgi, /keys\.env/, "api.wsgi должен читать ключи Upstash из keys.env");
+  assert.ok(!wsgi.includes("\r"), "api.wsgi уезжает на Linux — только LF");
+
+  const example = read("deploy", "apache", "keys.env.example");
+  assert.match(example, /^UPSTASH_REDIS_REST_URL=$/m, "в шаблоне ключей нет URL");
+  assert.match(example, /^UPSTASH_REDIS_REST_TOKEN=$/m, "в шаблоне ключей нет токена");
+  assert.match(
+    read(".gitignore"),
+    /^keys\.env$/m,
+    "настоящий keys.env с ключами не должен попадать в git",
+  );
+
+  const script = read("deploy", "apache", "deploy.py");
+  for (const flag of ["--check", "--dry-run", "--target", "--url"]) {
+    assert.ok(script.includes(flag), `в deploy.py нет флага ${flag}`);
+  }
+  assert.match(script, /scp/, "выгрузка идёт через scp");
+  assert.match(
+    script,
+    /APACHE_DIR \/ "api\.wsgi"/,
+    "deploy.py должен брать api.wsgi из deploy/apache",
+  );
+});
+
+test(
+  "deploy.py компилируется Python 3 без ошибок",
+  { skip: pythonReady ? false : SKIP },
+  () => {
+    const script = path.join(projectDir, "deploy", "apache", "deploy.py");
+    const compile = [
+      "import os, py_compile, sys, tempfile",
+      "out = tempfile.mkdtemp()",
+      "py_compile.compile(sys.argv[1], cfile=os.path.join(out, 'deploy.pyc'), doraise=True)",
+    ].join("\n");
+    const result = spawnSync(PY.command, [...PY.args, "-c", compile, script], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `deploy.py не компилируется: ${result.stderr}`);
+  },
+);
+

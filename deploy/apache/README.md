@@ -19,6 +19,60 @@ npm run build:static
 и файлы из `public/`. Обычная сборка (`npm run build`) не меняется — она
 по-прежнему собирает standalone-сервер для VPS и Docker.
 
+## Выкладка
+
+Комплект в `public_html` раскладывает `deploy/apache/deploy.py` — Python 3 без
+внешних зависимостей, одинаково работает в PowerShell и на Linux:
+
+```bash
+py -3.13 deploy/apache/deploy.py --check     # только проверка комплекта
+py -3.13 deploy/apache/deploy.py --dry-run   # показать команды scp
+py -3.13 deploy/apache/deploy.py --build     # пересобрать out/ и выложить
+```
+
+Параметры по умолчанию: пользователь `onitselfgm`, хост `77.222.40.251`,
+порт `22`, ключ `~/.ssh/sweb_deploy`, корень сайта
+`mishagordeev.com/public_html`, проверка — на `http://mishagordeev.com`.
+Меняются флагами `--user`, `--host`, `--port`, `--key`, `--target`, `--url`,
+`--code` (код комнаты для `/r/`).
+
+Что делает `deploy.py`:
+
+1. до отправки сверяет комплект — `out/` собран из версии в `package.json`,
+   `python/` содержит `wsgi.py`, `vtt/`, `data/rules.json`, `api.wsgi` и
+   `.htaccess` лежат с LF и компилируются;
+2. выгружает `scp` в таком порядке: страницы и `_next/`, `python/` (без
+   `__pycache__` и `data/rooms`), `api.wsgi`, `keys.env`, и последним
+   `.htaccess`, чтобы правила включились только когда файлы на месте;
+3. выставляет `keys.env` права `600`, каталоги `755` — если на аккаунте
+   включена оболочка, иначе предупреждает;
+4. проверяет живой сайт: `/`, `/r/<КОД>`, `/api/health?deep=1` (печатает
+   `mode`), 404 и что `keys.env`, `python/keys.env` и `.htaccess` закрыты.
+
+Ключи Upstash берутся из `deploy/apache/keys.env` (шаблон —
+`deploy/apache/keys.env.example`, настоящий файл в git не попадает). Без него
+выкладка проходит, но `/api/health` ответит `mode: "file"`, а комнаты будут
+жить только в файлах на сервере.
+
+## Доступ к аккаунту (проверено 01.11.2026)
+
+| что | значение |
+| --- | --- |
+| хост и порт | `77.222.40.251`, `22` (`SSH-2.0-OpenSSH_10.5`) |
+| пользователь | `onitselfgm` (из сохранённой сессии PuTTY `sweb`) |
+| ключ | `~/.ssh/sweb_deploy` (ed25519, комментарий `github-actions-deploy`) |
+| корень сайта | `mishagordeev.com/public_html`; в новой панели бывает `www/mishagordeev.com/public_html` |
+| домен | `mishagordeev.com` за Cloudflare, отвечает 200 (сейчас заглушка) |
+| FTP | порт `21` открыт, пароль нужен отдельно |
+
+Ключ сервер принимает: аутентификация проходит. Но оболочка на аккаунте
+выключена — `ssh … whoami` отвечает «This account is currently not available»,
+а `scp` и `sftp` — «Received message too long» (это тот же текст `nologin`,
+который sftp читает вместо протокола). Поэтому выкладка пока не проходит:
+нужно включить SSH-доступ в панели SpaceWeb («Хостинг» → SSH) или залить
+файлы файловым менеджером панели. После включения SSH `deploy.py` работает
+без правок — доступ и раскладка уже прописаны в нём.
+
 ## Раскладка на хостинге
 
 ```

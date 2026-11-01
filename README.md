@@ -349,6 +349,11 @@ npm run build:static                                   # → out/
 py -3.13 python/devserver.py --static out --port 8788  # весь сайт локально, без Apache
 ```
 
+Выкладка в `public_html` — `py -3.13 deploy/apache/deploy.py --check` (только проверка
+комплекта), затем та же команда без флага: скрипт сверяет версию `out/`, раскладывает
+`out/`, `python/`, `api.wsgi`, `keys.env` и `.htaccess` через `scp` и проверяет живой сайт —
+`/`, `/r/<КОД>`, `/api/health?deep=1` и закрытые ключи.
+
 Что куда кладётся в `public_html`, какие правила Apache нужны (`/api/**` → `api.wsgi`,
 `/r/<КОД>` → `r/index.html`, закрытые `python/` и `keys.env`) — в `deploy/apache/README.md`
 и `python/README.md`. В статической сборке нет обработчиков `app/api` и динамического

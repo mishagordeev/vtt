@@ -11,6 +11,8 @@ vtt-release.tar.gz
 next-env.d.ts
 .vercel
 .DS_Store
+# Ключи Redis для Python-бэкенда: живут только на сервере, в git не попадают.
+keys.env
 # Python-бэкенд для shared-хостинга: файловое хранилище комнат и кэш байткода.
 python/data/rooms
 __pycache__

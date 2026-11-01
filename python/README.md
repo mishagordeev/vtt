@@ -105,25 +105,13 @@ UPSTASH_REDIS_REST_URL=https://xxx.upstash.io UPSTASH_REDIS_REST_TOKEN=... \
    UPSTASH_REDIS_REST_TOKEN=...
    ```
 
-3. Создать `~/vtt-api/api.wsgi`:
+3. Положить в тот же каталог `api.wsgi` — готовый файл лежит в
+   `deploy/apache/api.wsgi`. Он сам добавляет в `sys.path` подходящий каталог
+   (рядом с собой либо `python/`) и читает ключи из `keys.env`, потому что
+   mod_wsgi на виртуальном хостинге не умеет `SetEnv`:
 
-   ```python
-   import os
-   import sys
-
-   BASE = os.path.dirname(os.path.abspath(__file__))
-   sys.path.insert(0, BASE)
-   # mod_wsgi на виртуальном хостинге не умеет SetEnv, поэтому ключи читаем сами.
-   keys = os.path.join(BASE, "keys.env")
-   if os.path.exists(keys):
-       with open(keys, encoding="utf-8") as handle:
-           for line in handle:
-               line = line.strip()
-               if not line or line.startswith("#") or "=" not in line:
-                   continue
-               name, value = line.split("=", 1)
-               os.environ.setdefault(name.strip(), value.strip())
-   from wsgi import application  # noqa: E402
+   ```bash
+   cp deploy/apache/api.wsgi ~/vtt-api/api.wsgi
    ```
 
 4. Положить в корень сайта `.htaccess` из `deploy/apache/.htaccess`: он
