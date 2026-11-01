@@ -1,0 +1,130 @@
+name: Выкладка статики на shared-хостинг
+
+# Автовыкладка статики VTT на виртуальный хостинг SpaceWeb (Apache + mod_wsgi).
+#
+# Каждый push в main: статическая сборка → rsync каталогов out/ и python/ в
+# public_html → touch api.wsgi (mod_wsgi перечитывает приложение) → проверка
+# живого сайта. Устаревшие хешированные чанки удаляются, а python/, api.wsgi,
+# keys.env и .htaccess защищены от --delete: они живут на сервере, не в out/.
+#
+# Что должно быть настроено в репозитории (Settings → Secrets and variables → Actions):
+#   секреты:    STATIC_HOST (IP), STATIC_USER (onitselfgm), STATIC_SSH_KEY (приватный ключ),
+#               STATIC_PORT (по умолчанию 22),
+#               UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN (необязательно:
+#               без них API работает с файловым хранилищем, mode: file)
+#   переменные: STATIC_TARGET (mishagordeev.com/public_html),
+#               STATIC_PUBLIC_URL (http://mishagordeev.com)
+# Пока секретов нет, job «Статика и бэкенд на аккаунт» просто пропускается.
+#
+# rsync ходит по ssh и требует оболочку на аккаунте: на SpaceWeb она бывает
+# выключена (nologin), поэтому перед выкладкой отдельный шаг проверяет rsync и
+# оболочку и падает с подсказкой сразу, а не после сборки.
+# Полная инструкция — deploy/apache/README.md, раздел «Автовыкладка из GitHub Actions».
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Две выкладки одновременно не запускаем: rsync пишет в один каталог сайта.
+concurrency:
+  group: static-spaceweb
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Секреты выкладки
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Проверить, настроен ли аккаунт
+        id: check
+        env:
+          HOST: ${{ secrets.STATIC_HOST }}
+          DEPLOY_USER: ${{ secrets.STATIC_USER }}
+          SSH_KEY: ${{ secrets.STATIC_SSH_KEY }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$DEPLOY_USER" ] && [ -n "$SSH_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Секреты на месте, выкладка пойдёт на $HOST."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Выкладка статики не настроена::Добавьте секреты STATIC_HOST, STATIC_USER и STATIC_SSH_KEY — см. deploy/apache/README.md."
+          fi
+
+  static:
+    name: Статика и бэкенд на аккаунт
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SSH_PORT: ${{ secrets.STATIC_PORT || '22' }}
+      DEPLOY_USER: ${{ secrets.STATIC_USER }}
+      HOST: ${{ secrets.STATIC_HOST }}
+      SITE_TARGET: ${{ vars.STATIC_TARGET || 'mishagordeev.com/public_html' }}
+      PUBLIC_URL: ${{ vars.STATIC_PUBLIC_URL || 'http://mishagordeev.com' }}
+      UPSTASH_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Статическая сборка
+        run: npm run build:static
+
+      - name: Ключ и отпечаток сервера
+        env:
+          SSH_KEY: ${{ secrets.STATIC_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          # tr -d '\r': ключ, вставленный из Windows, иначе приедет с CRLF и ssh его не примет.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_static
+          chmod 600 ~/.ssh/id_static
+          ssh-keyscan -p "$SSH_PORT" -H "$HOST" 2>/dev/null >> ~/.ssh/known_hosts || true
+          chmod 600 ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts || { echo "::error::ssh-keyscan не получил ключ $HOST:$SSH_PORT"; exit 1; }
+
+      - name: Проверить rsync и оболочку на аккаунте
+        run: |
+          set -euo pipefail
+          SSH="ssh -i $HOME/.ssh/id_static -p $SSH_PORT -o BatchMode=yes"
+          if ! $SSH "$DEPLOY_USER@$HOST" 'command -v rsync >/dev/null && command -v touch >/dev/null'; then
+            echo "::error title=Нет rsync или оболочки::Выкладка по rsync невозможна. Включите SSH-доступ в панели SpaceWeb (Хостинг → SSH) либо выложите файлы вручную: py -3.13 deploy/apache/deploy.py (транспорт scp). Пока оболочка на аккаунте выключена (nologin), ни статику, ни python/ обновить нельзя."
+            exit 1
+          fi
+          echo "rsync на аккаунте есть, оболочка работает."
+
+      - name: Ключи Upstash из секретов
+        if: env.UPSTASH_URL != '' && env.UPSTASH_TOKEN != ''
+        run: |
+          set -euo pipefail
+          printf 'UPSTASH_REDIS_REST_URL=%s\nUPSTASH_REDIS_REST_TOKEN=%s\n' "$UPSTASH_URL" "$UPSTASH_TOKEN" > deploy/apache/keys.env
+          chmod 600 deploy/apache/keys.env
+          echo "keys.env собран из секретов (в лог не печатается)."
+
+      - name: Версия
+        run: node -e "console.log('Версия ' + require('./package.json').version + ', коммит ' + process.env.GITHUB_SHA)"
+
+      # Один шаг на всё: deploy.py сам сверяет комплект (версия out/, LF,
+      # компиляцию api.wsgi), выкладывает rsync-ом, делает touch api.wsgi и
+      # проверяет живой сайт — /, /r/<КОД>, /api/health?deep=1, 404 и ключи.
+      - name: Выложить и проверить стол
+        run: |
+          set -euo pipefail
+          python3 deploy/apache/deploy.py --rsync \
+            --host "$HOST" --port "$SSH_PORT" --user "$DEPLOY_USER" \
+            --key "$HOME/.ssh/id_static" \
+            --target "$SITE_TARGET" --url "$PUBLIC_URL"

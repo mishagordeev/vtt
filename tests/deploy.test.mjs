@@ -161,6 +161,7 @@ test("файлы деплоя без CRLF: bash на сервере не при�
     ["deploy", "vtt.service"],
     ["deploy", "nginx", "vtt.conf"],
     [".github", "workflows", "deploy.yml"],
+    [".github", "workflows", "static.yml"],
   ];
   for (const parts of files) {
     const raw = fs.readFileSync(path.join(projectDir, ...parts), "latin1");

@@ -11,10 +11,18 @@
 Параметры по умолчанию — аккаунт `onitselfgm` на `77.222.40.251`
 (ключ `~/.ssh/sweb_deploy`), корень сайта `mishagordeev.com/public_html`.
 
-Выгрузка идёт через `scp`, поэтому оболочка на сервере не нужна: на
-виртуальном хостинге SpaceWeb она выключена (`nologin`), а SFTP-подсистема
-как раз работает. Права после загрузки выставляются отдельным `ssh`, и если
-оболочки нет — скрипт предупреждает, а не падает.
+Транспортов два:
+
+- `scp` (по умолчанию) — копирует всё заново, оболочка на сервере не нужна:
+  на виртуальном хостинге SpaceWeb она выключена (`nologin`), а SFTP-подсистема
+  как раз работает. Права после загрузки выставляются отдельным `ssh`, и если
+  оболочки нет — скрипт предупреждает, а не падает.
+- `--rsync` — инкрементальная выгрузка (`out/` и `python/`), устаревшие
+  хешированные чанки удаляются, серверные `python/`, `api.wsgi`, `keys.env` и
+  `.htaccess` защищены от `--delete`, а после выгрузки скрипт делает
+  `touch api.wsgi`: mod_wsgi перечитывает приложение. Этот режим требует
+  оболочки на аккаунте и rsync на обеих сторонах — им пользуется CI
+  (`.github/workflows/static.yml`).
 """
 
 from __future__ import annotations
@@ -39,6 +47,14 @@ PYTHON_DIR = ROOT / "python"
 # Что из `out/` уезжает в корень сайта. `_next` — чанки сборки с хешем в имени.
 STATIC_REQUIRED = ("index.html", "404.html", "r", "_next", "map")
 STATIC_OPTIONAL = ("index.txt", "404")
+
+# Что rsync не трогает в корне сайта: эти файлы живут на сервере, а не в out/.
+# С `--delete` исключения защищают их и от удаления, иначе первый же прогон
+# снёс бы бэкенд и ключи вместе с устаревшими чанками.
+RSYNC_PROTECT = ("/python/", "/api.wsgi", "/keys.env", "/.htaccess", "/.well-known/", "/cgi-bin/")
+
+# В python/ своё: байткод, ключи и комнаты файлового хранилища — они серверные.
+PYTHON_SKIP = ("__pycache__/", "*.pyc", "/keys.env", "/data/rooms/")
 
 ROOM_CODE = "A7K2QM"
 
@@ -155,6 +171,94 @@ def run(command: list[str], *, dry_run: bool) -> int:
     return subprocess.call([str(part) for part in command])
 
 
+def ssh_options(args: argparse.Namespace) -> list[str]:
+    """Общие ключи ssh: без пароля и с запоминанием нового отпечатка сервера."""
+    return [
+        "-p",
+        str(args.port),
+        "-i",
+        str(args.key),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+
+
+def remote_root(args: argparse.Namespace) -> str:
+    return f"{args.user}@{args.host}:{args.target.strip('/')}"
+
+
+def rsync_steps(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
+    """Команды выгрузки rsync-ом в том порядке, в каком их надо выполнять.
+
+    Функция без побочных эффектов: тесты разбирают её результат, поэтому
+    исключения `--delete` и порядок файлов проверяются без сервера.
+    """
+    remote = remote_root(args)
+    base = ["rsync", "-a", "--itemize-changes", "-e", "ssh " + " ".join(ssh_options(args))]
+    steps = [
+        (
+            "out/ → корень сайта (устаревшие чанки удаляются)",
+            base
+            + ["--delete"]
+            + [f"--exclude={item}" for item in RSYNC_PROTECT]
+            + [f"{STATIC_DIR.as_posix()}/", f"{remote}/"],
+        ),
+        (
+            "python/ → python/",
+            base
+            + ["--delete"]
+            + [f"--exclude={item}" for item in PYTHON_SKIP]
+            + [f"{PYTHON_DIR.as_posix()}/", f"{remote}/python/"],
+        ),
+        ("api.wsgi", base + [f"{APACHE_DIR.as_posix()}/api.wsgi", f"{remote}/api.wsgi"]),
+    ]
+    if args.keys.exists():
+        steps.append(
+            ("keys.env", base + ["--chmod=F600", str(args.keys), f"{remote}/keys.env"]),
+        )
+    else:
+        note("keys.env не выгружается — ключей Upstash нет")
+    # .htaccess последним: правила включаются, когда файлы уже на месте.
+    steps.append((".htaccess", base + [f"{APACHE_DIR.as_posix()}/.htaccess", f"{remote}/.htaccess"]))
+    return steps
+
+
+def reload_command(args: argparse.Namespace) -> list[str]:
+    """Команда перезапуска mod_wsgi: touch точки входа обновляет её mtime."""
+    return ["ssh"] + ssh_options(args) + [
+        f"{args.user}@{args.host}",
+        f"touch {args.target.strip('/')}/api.wsgi",
+    ]
+
+
+def reload_mod_wsgi(args: argparse.Namespace) -> None:
+    """touch api.wsgi: mod_wsgi перечитывает приложение, когда меняется mtime точки входа."""
+    log("\nПерезапуск mod_wsgi: touch api.wsgi")
+    if run(reload_command(args), dry_run=False) != 0:
+        die(
+            "touch api.wsgi не прошёл — mod_wsgi остался на прежнем коде, "
+            "включите SSH в панели SpaceWeb",
+        )
+    ok("mod_wsgi перезапущен: mtime api.wsgi обновлён")
+
+
+def deploy_rsync(args: argparse.Namespace) -> None:
+    """Инкрементальная выгрузка: rsync отправляет только изменившиеся файлы."""
+    if not args.dry_run and not shutil.which("rsync"):
+        die("rsync не найден — поставьте его или выложите без флага, через scp")
+    log(f"\nВыгрузка rsync на {args.user}@{args.host}:{args.port} → {args.target}")
+    for title, command in rsync_steps(args):
+        log(f"  → {title}")
+        if run(command, dry_run=args.dry_run) != 0:
+            die(f"rsync не смог выгрузить «{title}»")
+    if args.dry_run:
+        log("  → ssh … touch api.wsgi (перезапуск mod_wsgi)")
+        return
+    reload_mod_wsgi(args)
+
+
 def deploy(args: argparse.Namespace) -> None:
     remote = f"{args.user}@{args.host}:{args.target.rstrip('/')}"
     scp = [
@@ -240,19 +344,30 @@ def fetch(url: str) -> tuple[int, str, str]:
 def verify(args: argparse.Namespace) -> bool:
     base = args.url.rstrip("/")
     code = args.code or ROOM_CODE
+    version = project_version()
     log(f"\nПроверка живого сайта {base}")
     healthy = True
 
-    status, kind, body = fetch(base + "/")
-    if status == 200 and "text/html" in kind and "главная" in body:
-        ok(f"/ — 200, text/html, {len(body.encode('utf-8'))} байт")
+    status, kind, home = fetch(base + "/")
+    if status == 200 and "text/html" in kind and "Poison Press" in home:
+        ok(f"/ — 200, text/html, {len(home.encode('utf-8'))} байт")
     else:
         problem(f"/ — {status}, {kind or 'без типа'}")
         healthy = False
 
-    status, kind, body = fetch(base + "/r/" + code)
-    if status == 200 and "комната" in body:
-        ok(f"/r/{code} — 200, страница комнаты")
+    # Версия вшита в главную при сборке — по ней видно, что на сайте эта
+    # статика, а не прошлая (иначе CI отчитается об успехе со старым фронтом).
+    if status == 200:
+        if version in home:
+            ok(f"главная собрана из версии {version}")
+        else:
+            problem(f"на главной нет версии {version} — на сайт попала другая сборка")
+            healthy = False
+
+    # /r/<КОД> отдаётся файлом r/index.html: страница своя, а не заглушка главной.
+    status, kind, room = fetch(base + "/r/" + code)
+    if status == 200 and "text/html" in kind and "Poison Press" in room and room != home:
+        ok(f"/r/{code} — 200, отдельная страница комнаты")
     else:
         problem(f"/r/{code} — {status}, {kind or 'без типа'}")
         healthy = False
@@ -312,7 +427,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--code", default=None, help=f"код комнаты для /r/ (по умолчанию {ROOM_CODE})")
     parser.add_argument("--keys", type=Path, default=APACHE_DIR / "keys.env", help="файл с ключами Upstash")
     parser.add_argument("--check", action="store_true", help="только проверить комплект, ничего не отправлять")
-    parser.add_argument("--dry-run", action="store_true", help="показать команды scp без выполнения")
+    parser.add_argument("--dry-run", action="store_true", help="показать команды выгрузки без выполнения")
+    parser.add_argument(
+        "--rsync",
+        action="store_true",
+        help="выгружать инкрементально rsync-ом и перезапускать mod_wsgi (нужна оболочка SSH)",
+    )
     parser.add_argument("--build", action="store_true", help="пересобрать статику (npm run build:static)")
     parser.add_argument("--skip-verify", action="store_true", help="не проверять живой сайт после выкладки")
     return parser.parse_args(argv)
@@ -345,7 +465,10 @@ def main(argv: list[str]) -> int:
         log("\nРежим --check: на сервер ничего не отправлено.")
         return 0
 
-    deploy(args)
+    if args.rsync:
+        deploy_rsync(args)
+    else:
+        deploy(args)
     if args.dry_run:
         log("\nРежим --dry-run: команды выше не выполнены.")
         return 0

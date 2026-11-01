@@ -369,3 +369,109 @@ test(
   },
 );
 
+test("workflow выкладки статики: rsync out/ и python/, перезапуск mod_wsgi", () => {
+  const workflow = read(".github", "workflows", "static.yml");
+  const apacheDoc = read("deploy", "apache", "README.md");
+
+  assert.match(workflow, /branches: \[main\]/, "выкладка статики должна идти с main");
+  assert.match(workflow, /npm ci/, "в CI нет установки зависимостей");
+  assert.match(workflow, /npm run build:static/, "в CI нет статической сборки");
+  assert.match(workflow, /deploy\.py --rsync/, "в CI нет выкладки через deploy.py --rsync");
+  assert.match(
+    workflow,
+    /command -v rsync/,
+    "нужна ранняя проверка rsync и оболочки: иначе job упадёт уже после сборки",
+  );
+  assert.match(workflow, /group: static-spaceweb/, "две выкладки в один каталог сайта не запускаем");
+  assert.match(workflow, /UPSTASH_REDIS_REST_URL/, "ключи Upstash должны приезжать из секретов");
+
+  for (const name of ["STATIC_HOST", "STATIC_USER", "STATIC_SSH_KEY", "STATIC_PORT"]) {
+    assert.ok(workflow.includes(`secrets.${name}`), `workflow не читает секрет ${name}`);
+    assert.ok(apacheDoc.includes(name), `deploy/apache/README.md не описывает ${name}`);
+  }
+  for (const name of ["STATIC_TARGET", "STATIC_PUBLIC_URL"]) {
+    assert.ok(workflow.includes(`vars.${name}`), `workflow не читает переменную ${name}`);
+    assert.ok(apacheDoc.includes(name), `deploy/apache/README.md не описывает ${name}`);
+  }
+
+  const raw = fs.readFileSync(path.join(projectDir, ".github", "workflows", "static.yml"), "latin1");
+  assert.ok(!raw.includes("\r"), "workflow собирается на Linux — только LF");
+});
+
+test(
+  "deploy.py --rsync выгружает out/ и python/, не трогая серверные файлы",
+  { skip: pythonReady ? false : SKIP },
+  () => {
+    const script = path.join(projectDir, "deploy", "apache", "deploy.py");
+    const keys = path.join(os.tmpdir(), `vtt-keys-${process.pid}.env`);
+    fs.writeFileSync(keys, "UPSTASH_REDIS_REST_URL=\nUPSTASH_REDIS_REST_TOKEN=\n");
+    const probe = [
+      "import importlib.util, json, sys",
+      "spec = importlib.util.spec_from_file_location('vtt_deploy', sys.argv[1])",
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "args = module.parse_args(['--rsync', '--host', '10.0.0.1', '--user', 'someone',",
+      "                            '--target', 'site/public_html', '--keys', sys.argv[2]])",
+      "steps = [{'title': title, 'command': command} for title, command in module.rsync_steps(args)]",
+      "steps.append({'title': 'mod_wsgi', 'command': module.reload_command(args)})",
+      "print(json.dumps(steps))",
+    ].join("\n");
+    const result = spawnSync(PY.command, [...PY.args, "-c", probe, script, keys], {
+      encoding: "utf8",
+    });
+    fs.rmSync(keys, { force: true });
+    assert.equal(result.status, 0, `не удалось получить команды deploy.py: ${result.stderr}`);
+    const steps = JSON.parse(result.stdout);
+    const byTitle = (needle) => steps.find((step) => step.title.includes(needle));
+
+    const staticStep = steps[0];
+    assert.match(staticStep.title, /out\//, "первым уезжает out/");
+    assert.equal(staticStep.command[0], "rsync");
+    assert.ok(staticStep.command.includes("--delete"), "без --delete чанки прошлых версий копятся");
+    for (const guarded of ["/python/", "/api.wsgi", "/keys.env", "/.htaccess"]) {
+      assert.ok(
+        staticStep.command.includes(`--exclude=${guarded}`),
+        `${guarded} не защищён от --delete: выкладка снесёт бэкенд или ключи`,
+      );
+    }
+    assert.match(staticStep.command.at(-2), /out[\\/]$/, "источник — содержимое out/");
+    assert.equal(staticStep.command.at(-1), "someone@10.0.0.1:site/public_html/");
+    assert.match(
+      staticStep.command[staticStep.command.indexOf("-e") + 1],
+      /^ssh .*BatchMode=yes/,
+      "rsync должен идти по ssh без пароля",
+    );
+
+    const pythonStep = byTitle("python/");
+    assert.ok(pythonStep.command.includes("--delete"), "в python/ тоже нужен --delete");
+    for (const skipped of ["__pycache__/", "*.pyc", "/data/rooms/"]) {
+      assert.ok(
+        pythonStep.command.includes(`--exclude=${skipped}`),
+        `в python/ не исключён ${skipped}: серверные комнаты и байткод затрёт`,
+      );
+    }
+    assert.equal(pythonStep.command.at(-1), "someone@10.0.0.1:site/public_html/python/");
+
+    const wsgiStep = byTitle("api.wsgi");
+    assert.ok(
+      wsgiStep.command[0] === "rsync" && wsgiStep.command.at(-2).endsWith("api.wsgi"),
+      "точка входа mod_wsgi должна обновляться из deploy/apache",
+    );
+
+    const keysStep = byTitle("keys.env");
+    assert.ok(keysStep, "keys.env не выгружается");
+    assert.ok(keysStep.command.includes("--chmod=F600"), "ключи на сервере должны быть 600");
+
+    assert.match(steps.at(-2).title, /htaccess/, ".htaccess включается последним");
+
+    const reload = byTitle("mod_wsgi").command;
+    assert.equal(reload[0], "ssh");
+    assert.equal(
+      reload.at(-1),
+      "touch site/public_html/api.wsgi",
+      "mod_wsgi перезапускается только touch'ем точки входа",
+    );
+    assert.ok(reload.includes("BatchMode=yes"), "перезапуск не должен ждать пароль");
+  },
+);
+

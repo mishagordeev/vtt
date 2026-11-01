@@ -49,10 +49,67 @@ py -3.13 deploy/apache/deploy.py --build     # пересобрать out/ и в
 4. проверяет живой сайт: `/`, `/r/<КОД>`, `/api/health?deep=1` (печатает
    `mode`), 404 и что `keys.env`, `python/keys.env` и `.htaccess` закрыты.
 
+Транспортов два: `scp` (по умолчанию — копирует комплект заново и работает
+даже при выключенной оболочке) и `--rsync` — инкрементальная выгрузка, которая
+удаляет устаревшие чанки и последним шагом делает `touch api.wsgi`, чтобы
+mod_wsgi перечитал приложение. `--rsync` требует оболочки на аккаунте и rsync на
+обеих сторонах; им пользуется CI (см. «Автовыкладка из GitHub Actions»). На
+Windows проще оставить `scp`: пути в rsync-режиме передаются как есть, без
+приведения к виду `C:/…`.
+
 Ключи Upstash берутся из `deploy/apache/keys.env` (шаблон —
 `deploy/apache/keys.env.example`, настоящий файл в git не попадает). Без него
 выкладка проходит, но `/api/health` ответит `mode: "file"`, а комнаты будут
 жить только в файлах на сервере.
+
+## Автовыкладка из GitHub Actions
+
+Пуш в `main` обновляет сайт сам — workflow `.github/workflows/static.yml`
+(«Выкладка статики на shared-хостинг»):
+
+```
+push в main
+  └─ .github/workflows/static.yml
+       npm ci → npm run build:static
+       ключ в ~/.ssh/id_static, отпечаток сервера через ssh-keyscan
+       проверка: на аккаунте есть rsync и работающая оболочка
+       keys.env из секретов Upstash (если они заданы)
+       python3 deploy/apache/deploy.py --rsync:
+           out/     → public_html/          (только изменившееся, --delete)
+           python/  → public_html/python/   (без байткода, rooms и keys.env)
+           api.wsgi, keys.env, .htaccess — по одному файлу
+           ssh … touch public_html/api.wsgi (mod_wsgi перечитывает приложение)
+       проверка сайта: /, /r/<КОД> (и версия в главной), /api/health?deep=1,
+                       404 и закрытые keys.env / python/ / .htaccess
+```
+
+`--delete` не даёт каталогу `_next/static` расти от каждой сборки: чанки прошлых
+версий удаляются. От удаления защищены серверные файлы — `python/`, `api.wsgi`,
+`keys.env`, `.htaccess`, `.well-known/` и `cgi-bin/` (список `RSYNC_PROTECT` в
+`deploy.py`), а внутри `python/` — `keys.env`, `data/rooms/` и `__pycache__`.
+
+Секреты (Settings → Secrets and variables → Actions):
+
+| имя | что | обязателен |
+| --- | --- | --- |
+| `STATIC_HOST` | IP аккаунта, `77.222.40.251` | да |
+| `STATIC_USER` | пользователь аккаунта, `onitselfgm` | да |
+| `STATIC_SSH_KEY` | приватный ключ `sweb_deploy` целиком | да |
+| `STATIC_PORT` | порт SSH | нет, по умолчанию 22 |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | ключи Redis для `keys.env` | нет: без них API ответит `mode: "file"` |
+
+Переменные: `STATIC_TARGET` (`mishagordeev.com/public_html`) и
+`STATIC_PUBLIC_URL` (`http://mishagordeev.com`) — обе можно не задавать, их
+значения по умолчанию те же.
+
+Пока обязательных секретов нет, job пропускается и печатает notice; проверки и
+сборка VPS-деплоя (`deploy.yml`) идут своим чередом. Запустить вручную: Actions →
+«Выкладка статики на shared-хостинг» → **Run workflow**.
+
+rsync ходит по ssh и требует оболочку, а на аккаунте она выключена (`nologin`,
+см. следующий раздел). Поэтому отдельный шаг «Проверить rsync и оболочку» падает
+сразу после сборки и с подсказкой, а не после неудачной выгрузки, оставляющей
+сайт в полусобранном состоянии.
 
 ## Доступ к аккаунту (проверено 01.11.2026)
 

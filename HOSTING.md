@@ -293,10 +293,15 @@ python3 --version       # что хостинг реально предоста�
 сценарий стола целиком, лист персонажа сверяется с `normalizeDraft`, поиск бросков —
 с `extractFormula`. Если Python в окружении нет, тесты помечаются пропущенными.
 
-Что осталось для полного отказа от Node — собрать фронт статикой (`output: "export"`)
-и отдать его Apache: пошаговый порядок, `api.wsgi`, `keys.env` и `.htaccess` лежат в
-`python/README.md`. Пока этого нет, основной путь — VPS или Node в `~/bin` (разделы
-выше), а Python-бэкенд можно поднять рядом: он читает и пишет те же комнаты.
+Фронт для этого бэкенда уже собирается статикой (`npm run build:static` → `out/`)
+и живёт рядом с Python на том же домене: раскладка, `.htaccess` и проверки — в
+`deploy/apache/README.md`. Автовыкладку делает `.github/workflows/static.yml`:
+пуш в `main` → `npm ci` + `build:static` → rsync `out/` и `python/` в
+`public_html` → `touch api.wsgi`, чтобы mod_wsgi перечитал приложение → проверка
+`/`, `/r/<КОД>` и `/api/health?deep=1`. Пока ssh-оболочка на аккаунте выключена
+(`nologin`), шаг «Проверить rsync и оболочку» падает с подсказкой — тогда
+остаются VPS или Node в `~/bin` (разделы выше), а Python-бэкенд можно поднять
+рядом: он читает и пишет те же комнаты.
 
 
 ## Что уже готово к переезду
@@ -431,6 +436,8 @@ docker compose logs --tail=50 vtt                  # старт без ошиб�
       и переменные `SPACEWEB_APP_DIR`, `SPACEWEB_PUBLIC_URL`.
 - [ ] Первый прогон «Деплой VTT на SpaceWeb» зелёный: «Выкладка» не пропущена,
       в логе видна версия из `BUILD_INFO.txt`.
+- [ ] Shared-хостинг: заданы секреты `STATIC_HOST`, `STATIC_USER`, `STATIC_SSH_KEY`
+      (и ключи Upstash), прогон «Выкладки статики на shared-хостинг» зелёный.
 - [ ] `curl https://…/api/health?deep=1` → `ok: true`, `storage.mode: redis`, `canWrite: true`.
 - [ ] Ссылка `/r/<КОД>` открывается, чат и бросок идут, музыка играет (домен в адресной строке).
 - [ ] Cloudflare: Proxied + SSL/TLS **Full (strict)**, `certbot renew --dry-run` проходит.
