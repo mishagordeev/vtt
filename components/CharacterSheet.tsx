@@ -71,6 +71,10 @@ interface CharacterSheetProps {
   owner: string;
   /** Время последнего автосохранения, «ЧЧ:ММ»; пусто — ещё не сохраняли. */
   savedAt?: string;
+  /** Можно ли править привязку игроков к листу (мастер или владелец). */
+  canAssign?: boolean;
+  /** Открыть окно «Игроки листа» — кнопка живёт в шапке листа. */
+  onAssign?: () => void;
   onChange: (draft: CharacterDraft) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -224,86 +228,81 @@ function NatalCard({ birth, editing, onChange }: NatalCardProps) {
   }
 
   return (
-    <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-          День рождения и натальная карта
-        </h3>
-        {chart ? (
-          <span className="rounded border border-indigo-400/40 px-1.5 py-0.5 text-[10px] text-indigo-200">
-            {chart.sign.alignment}
+    <div className="min-w-0 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wide text-zinc-600">Дата рождения</span>
+        {editing ? (
+          <>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={2}
+              value={dayText}
+              placeholder="14"
+              title={`День 1–${DAYS_PER_MONTH}`}
+              onChange={(event) =>
+                setDate(event.target.value.replace(/\D/g, "").slice(0, 2), monthText)
+              }
+              className="w-12 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-emerald-400/60"
+            />
+            <select
+              value={monthText}
+              onChange={(event) => setDate(dayText, event.target.value)}
+              className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-emerald-400/60"
+            >
+              <option value="">— месяц —</option>
+              {MONTHS.map((entry) => (
+                <option key={entry.index} value={entry.index}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+            {chart ? (
+              <span className="rounded border border-indigo-400/40 px-1.5 py-0.5 text-[10px] text-indigo-200">
+                {chart.sign.name}
+              </span>
+            ) : null}
+            {incomplete ? (
+              <span className="text-[10px] text-amber-200/80">
+                нужны день (1–{DAYS_PER_MONTH}) и месяц
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-xs text-zinc-300">
+            {chart ? `${chart.dayLabel} · ${chart.sign.name}` : "не указана"}
           </span>
-        ) : null}
+        )}
       </div>
 
-      {editing ? (
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="space-y-1">
-              <span className="block text-[10px] uppercase tracking-wide text-zinc-600">День</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={2}
-                value={dayText}
-                placeholder="14"
-                onChange={(event) =>
-                  setDate(event.target.value.replace(/\D/g, "").slice(0, 2), monthText)
-                }
-                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="block text-[10px] uppercase tracking-wide text-zinc-600">Месяц</span>
-              <select
-                value={monthText}
-                onChange={(event) => setDate(dayText, event.target.value)}
-                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-emerald-400/60"
-              >
-                <option value="">— не выбран —</option>
-                {MONTHS.map((entry) => (
-                  <option key={entry.index} value={entry.index}>
-                    {entry.name} ({entry.imperial})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="pb-1 text-[10px] text-zinc-600">
-              в месяце 30 дней; если дата неизвестна — оставьте пусто
-            </span>
+      <details className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+        <summary className="cursor-pointer text-[11px] text-zinc-500">
+          Натальная карта{chart ? ` · ${chart.sign.patron}` : ""}
+        </summary>
+        {chart ? (
+          <div className="space-y-1 pt-1">
+            <p className="text-[11px] text-zinc-400">
+              {chart.dayLabel} · {chart.weekday} · {chart.season}
+            </p>
+            <p className="text-sm text-indigo-100">
+              Знак «{chart.sign.name}» · покровитель {chart.sign.patron} · {chart.sign.alignment}
+            </p>
+            <p className="text-[11px] leading-snug text-zinc-400">{chart.sign.constellation}</p>
+            <p className="text-[11px] leading-snug text-zinc-300">{chart.reading}</p>
+            <p className="text-[11px] leading-snug text-emerald-200/80">{chart.sign.boon}</p>
+            {chart.holiday ? (
+              <p className="text-[11px] leading-snug text-amber-200/80">
+                «{chart.holiday.name}»: {chart.holiday.note}
+              </p>
+            ) : null}
           </div>
-          {incomplete ? (
-            <p className="text-[11px] text-amber-200/80">
-              Дата попадёт в лист, когда указаны день (1–{DAYS_PER_MONTH}) и месяц.
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="text-xs text-zinc-400">
-          {chart ? `${chart.dayLabel} · ${chart.weekday} · ${chart.season}` : "День рождения не указан."}
-        </p>
-      )}
-
-      {chart ? (
-        <div className="space-y-1 rounded-lg border border-indigo-400/25 bg-indigo-500/5 p-2">
-          <p className="text-sm text-indigo-100">
-            Знак «{chart.sign.name}» · покровитель {chart.sign.patron}
+        ) : (
+          <p className="pt-1 text-[11px] leading-snug text-zinc-600">
+            Укажите день и месяц — лист покажет знак, обе луны и ближайший праздник.
           </p>
-          <p className="text-[11px] leading-snug text-zinc-400">{chart.sign.constellation}</p>
-          <p className="text-[11px] leading-snug text-zinc-300">{chart.reading}</p>
-          <p className="text-[11px] leading-snug text-emerald-200/80">{chart.sign.boon}</p>
-          {chart.holiday ? (
-            <p className="text-[11px] leading-snug text-amber-200/80">
-              «{chart.holiday.name}»: {chart.holiday.note}
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="text-[11px] leading-snug text-zinc-600">
-          Укажите день и месяц — лист покажет знак, обе луны и ближайший праздник.
-        </p>
-      )}
-    </section>
+        )}
+      </details>
+    </div>
   );
 }
 
@@ -318,6 +317,8 @@ export function CharacterSheet({
   error,
   owner,
   savedAt,
+  canAssign,
+  onAssign,
   onChange,
   onSave,
   onCancel,
@@ -1029,33 +1030,131 @@ export function CharacterSheet({
             )}
           </button>
 
-          <div className="min-w-0 flex-1 space-y-1">
-            <h2 className="truncate text-xl font-semibold text-zinc-50">
-              {draft.name || "Без имени"}
-            </h2>
-            <p className="text-xs text-zinc-500">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            {/* Строка первая: имя и происхождение. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {editing ? (
+                <>
+                  <input
+                    value={draft.name}
+                    maxLength={60}
+                    placeholder="Имя героя"
+                    onChange={(event) => patch({ name: event.target.value })}
+                    className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900/80 px-2.5 py-1 text-lg font-semibold text-zinc-50 outline-none focus:border-emerald-400/70"
+                  />
+                  <select
+                    value={draft.origin}
+                    title="Происхождение: модификаторы характеристик, два языка и культурный код"
+                    onChange={(event) => applyOrigin(event.target.value)}
+                    className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 outline-none focus:border-emerald-400/70"
+                  >
+                    <option value="">— происхождение —</option>
+                    {ORIGINS.map((entry: OriginDef) => (
+                      <option key={entry.name} value={entry.name}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <>
+                  <h2 className="truncate text-xl font-semibold text-zinc-50">
+                    {draft.name || "Без имени"}
+                  </h2>
+                  <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                    {origin?.name ?? "Происхождение не выбрано"}
+                  </span>
+                </>
+              )}
+              <label
+                className="flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                title="Уровень героя: 1–10"
+              >
+                Ур.
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  disabled={!editing}
+                  value={draft.level}
+                  onChange={(event) =>
+                    patch({ level: Math.min(10, Math.max(1, Number(event.target.value) || 1)) })
+                  }
+                  className="w-10 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-emerald-200 outline-none focus:border-emerald-400/60 disabled:opacity-70"
+                />
+              </label>
+            </div>
+
+            {/* Строка вторая: возраст и дата рождения. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-400">
+              <label
+                className="flex items-center gap-1"
+                title="Возраст меняет характеристики: поправки стадий идут в лист"
+              >
+                <span className="uppercase tracking-wide text-zinc-600">Возраст</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={AGE_MAX}
+                  disabled={!editing}
+                  value={draft.fields.age ?? ""}
+                  onChange={(event) =>
+                    patch({ fields: { ...draft.fields, age: event.target.value.slice(0, 6) } })
+                  }
+                  className="w-14 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-amber-400/60 disabled:opacity-70"
+                />
+              </label>
+              {ageValue ? (
+                <span className="text-zinc-300">
+                  лет · {ageBand(ageValue).label}
+                  {draft.fields.ageMods ? ` · внесено: ${draft.fields.ageMods}` : ""}
+                </span>
+              ) : null}
+              {editing ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => rollCharacterAge()}
+                    title="1d100: выпавшее число — возраст в годах; поправки стадий сразу идут в характеристики"
+                    className="rounded border border-amber-400/50 px-1.5 py-0.5 text-[10px] text-amber-200 transition hover:border-amber-300"
+                  >
+                    🎲 1d100
+                  </button>
+                  {draft.fields.age ? (
+                    <button
+                      type="button"
+                      onClick={() => applyAge(Number(draft.fields.age))}
+                      className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:text-amber-200"
+                    >
+                      Применить поправки
+                    </button>
+                  ) : null}
+                  {draft.fields.ageMods ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          stats: shiftStats(draft.stats, decodeMods(draft.fields.ageMods), -1),
+                          fields: { ...draft.fields, ageMods: "" },
+                        })
+                      }
+                      className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500 hover:text-rose-200"
+                    >
+                      Снять
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+              <NatalCard
+                birth={draft.fields.birth ?? ""}
+                editing={editing}
+                onChange={(value) => patch({ fields: { ...draft.fields, birth: value } })}
+              />
+            </div>
+
+            <p className="text-[11px] text-zinc-500">
               <span className="text-zinc-300">{owner}</span>
             </p>
-            <div className="flex flex-wrap gap-1.5 text-[10px] text-zinc-400">
-              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                Ур. <span className="font-mono text-emerald-200">{draft.level}</span>
-              </span>
-              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                КБ <span className="font-mono text-emerald-200">{derived.ac}</span>
-              </span>
-              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                ОЗ <span className="font-mono text-emerald-200">{hp.current}/{hp.max}</span>
-              </span>
-              <span className={`rounded border px-1.5 py-0.5 ${used > capacity ? "border-rose-500/60 text-rose-300" : "border-zinc-700 bg-zinc-900"}`}>
-                Груз <span className="font-mono text-emerald-200">{used}/{capacity}</span>
-              </span>
-              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                Деньги <span className="font-mono text-amber-200">{money.toFixed(2)} зм</span>
-              </span>
-              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5">
-                {origin?.name ?? "Происхождение не выбрано"}
-              </span>
-            </div>
           </div>
 
 
@@ -1086,6 +1185,16 @@ export function CharacterSheet({
                 className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
               >
                 Править
+              </button>
+            ) : null}
+            {canAssign && onAssign && mode !== "create" ? (
+              <button
+                type="button"
+                onClick={onAssign}
+                title="Назначить игроков на этот лист"
+                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+              >
+                👥 Игроки
               </button>
             ) : null}
             {editing ? (
@@ -1137,6 +1246,38 @@ export function CharacterSheet({
           </div>
         </div>
 
+        {editing || ageValue ? (
+          <details className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1">
+            <summary className="cursor-pointer text-[11px] text-amber-200/80">
+              Возраст и поправки стадий
+            </summary>
+            <p className="pt-1 text-[11px] leading-relaxed text-zinc-500">
+              Возраст бросают <b>1d100</b> — выпавшее число и есть годы героя. Стадии: 1–13
+              детский, 14–20 юный, 21–40 зрелый, 41–60 средних лет, 61–90 пожилой, 91–100 старый.
+              Поправки стадий складываются (детская действует только до 14 лет), прибавляются к
+              характеристикам один раз и снимаются кнопкой «Снять». Если стол играет без детей,
+              1–13 перебрасываются.
+            </p>
+            {ageRoll ? (
+              <p className="mt-1 rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
+                d100: {ageRoll.die} → {ageRoll.age} лет · {ageRoll.band.label}
+              </p>
+            ) : null}
+            {ageValue ? (
+              <div className="mt-1 space-y-1">
+                <p className="text-[11px] leading-snug text-zinc-500">{ageBand(ageValue).note}</p>
+                <p className="text-[11px] text-zinc-400">
+                  Итог стадий:{" "}
+                  {RULES.stats
+                    .filter((stat) => ageModTotals(ageValue)[stat.key])
+                    .map((stat) => `${formatMod(ageModTotals(ageValue)[stat.key] ?? 0)} ${stat.short}`)
+                    .join(" · ") || "поправок нет"}
+                </p>
+              </div>
+            ) : null}
+          </details>
+        ) : null}
+
         {editing ? (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-emerald-400/60 hover:text-emerald-200">
@@ -1172,74 +1313,9 @@ export function CharacterSheet({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 xl:overflow-hidden">
-        <div className="grid gap-4 xl:h-full xl:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)]">
-          {/* Левая половина листа: всё о самом герое. */}
+        <div className="grid gap-4 xl:h-full xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,36rem)]">
+          {/* Левая колонка листа: всё о самом герое; снаряжение — в правой. */}
           <div className="scroll-thin min-w-0 space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-2">
-
-            {/* Основное: имя, уровень, здоровье и броня — шапка левой половины. */}
-            <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                Основное
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">Имя</span>
-                  <input
-                    value={draft.name}
-                    maxLength={60}
-                    disabled={!editing}
-                    onChange={(event) => patch({ name: event.target.value })}
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-400/70 disabled:opacity-70"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">Уровень</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    disabled={!editing}
-                    value={draft.level}
-                    onChange={(event) =>
-                      patch({ level: Math.min(10, Math.max(1, Number(event.target.value) || 1)) })
-                    }
-                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/70 disabled:opacity-70"
-                  />
-                </label>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">Очки здоровья</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      max={hp.max}
-                      disabled={!editing}
-                      value={hp.current}
-                      onChange={(event) => setHp(Number(event.target.value), hp.max)}
-                      className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
-                    />
-                    <span className="text-zinc-500">/</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={999}
-                      disabled={!editing}
-                      value={hp.max}
-                      onChange={(event) => setHp(hp.current, Number(event.target.value))}
-                      className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-zinc-300 outline-none focus:border-emerald-400/70 disabled:opacity-70"
-                    />
-                  </div>
-                  <p className="mt-1 text-[10px] text-zinc-600">0 — без чувств, −10 — смерть.</p>
-                </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">Класс брони</p>
-                  <p className="mt-1 font-mono text-2xl text-emerald-200">{derived.ac}</p>
-                  <p className="text-[10px] text-zinc-600">по надетому доспеху, щиту и Ловкости.</p>
-                </div>
-              </div>
-            </section>
 
             <div className="space-y-4">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -1369,262 +1445,164 @@ export function CharacterSheet({
                 })}
               </section>
 
-              <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
-                    Возраст
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="flex items-center gap-1 text-[11px] text-zinc-400">
-                      лет
-                      <input
-                        type="number"
-                        min={1}
-                        max={AGE_MAX}
-                        disabled={!editing}
-                        value={draft.fields.age ?? ""}
-                        onChange={(event) =>
-                          patch({ fields: { ...draft.fields, age: event.target.value.slice(0, 6) } })
-                        }
-                        className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-amber-400/60 disabled:opacity-70"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      disabled={!editing}
-                      onClick={() => rollCharacterAge()}
-                      title="1d100: выпавшее число — возраст в годах; поправки стадий сразу идут в характеристики"
-                      className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
-                    >
-                      🎲 Бросить 1d100
-                    </button>
-                    {editing && draft.fields.age ? (
-                      <button
-                        type="button"
-                        onClick={() => applyAge(Number(draft.fields.age))}
-                        className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-amber-200"
-                      >
-                        Применить поправки
-                      </button>
-                    ) : null}
-                    {editing && draft.fields.ageMods ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patch({
-                            stats: shiftStats(draft.stats, decodeMods(draft.fields.ageMods), -1),
-                            fields: { ...draft.fields, ageMods: "" },
-                          })
-                        }
-                        className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-500 hover:text-rose-200"
-                      >
-                        Снять
-                      </button>
-                    ) : null}
+            {/* Испытания: три броска против яда, обвала и страха. */}
+            <section className="space-y-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Испытания
+              </h3>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "Стойкость", value: derived.saves.fortitude, hint: "яд, болезни" },
+                  { label: "Рефлексы", value: derived.saves.reflexes, hint: "обвал, огонь" },
+                  { label: "Воля", value: derived.saves.will, hint: "страх, чары" },
+                ].map((save) => (
+                  <div
+                    key={save.label}
+                    className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-2.5 py-2"
+                  >
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-600">{save.label}</p>
+                    <p className="font-mono text-lg text-emerald-200">{formatMod(save.value)}</p>
+                    <p className="text-[10px] leading-tight text-zinc-600">{save.hint}</p>
                   </div>
-                </div>
-                <p className="text-[11px] leading-relaxed text-zinc-500">
-                  Возраст бросают <b>1d100</b> — выпавшее число и есть годы героя. Стадии: 1–13
-                  детский, 14–20 юный, 21–40 зрелый, 41–60 средних лет, 61–90 пожилой, 91–100 старый.
-                  Поправки стадий складываются (детская действует только до 14 лет), прибавляются к
-                  характеристикам один раз и снимаются кнопкой «Снять». Если стол играет без детей,
-                  1–13 перебрасываются.
-                </p>
-                {ageRoll ? (
-                  <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
-                    d100: {ageRoll.die} → {ageRoll.age} лет · {ageRoll.band.label}
-                  </p>
-                ) : null}
-                {ageValue ? (
-                  <div className="space-y-1">
-                    <p className="text-xs text-zinc-300">
-                      {ageValue} лет · {ageBand(ageValue).label}
-                    </p>
-                    <p className="text-[11px] leading-snug text-zinc-500">{ageBand(ageValue).note}</p>
-                    <p className="text-[11px] text-zinc-400">
-                      Итог стадий:{" "}
-                      {RULES.stats
-                        .filter((stat) => ageModTotals(ageValue)[stat.key])
-                        .map((stat) => `${formatMod(ageModTotals(ageValue)[stat.key] ?? 0)} ${stat.short}`)
-                        .join(" · ") || "поправок нет"}
-                    </p>
-                    <p className="text-[10px] text-zinc-600">
-                      Внесено в лист: {draft.fields.ageMods || "ничего"}
-                    </p>
-                  </div>
-                ) : null}
-              </section>
+                ))}
+              </div>
+              <p className="text-[11px] leading-snug text-zinc-600">
+                Испытание — 1d20 + бонус: 10 + модификатор характеристики, +2 на 1–4 уровнях, +3 на
+                5–8, +4 на 9–10. Остальные производные: скорость 30 / 120 фт, соратники{" "}
+                {derived.companions}, слоты {derived.slots}.
+              </p>
+            </section>
 
-              <section className="space-y-2">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                  Производные числа
-                </h3>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {[
-                    { label: "КБ", value: derived.ac, hint: `${derived.armor.name}${derived.shield.bonus ? ` + ${derived.shield.name}` : ""}` },
-                    { label: "Стойкость", value: formatMod(derived.saves.fortitude), hint: "яд, болезни" },
-                    { label: "Рефлексы", value: formatMod(derived.saves.reflexes), hint: "обвал, огонь" },
-                    { label: "Воля", value: formatMod(derived.saves.will), hint: "страх, чары" },
-                    { label: "Скорость", value: "30 / 120", hint: "фт в бою / за Ход" },
-                    { label: "Слоты", value: derived.slots, hint: "равны Силе" },
-                    { label: "Соратники", value: derived.companions, hint: "2 + Хар" },
-                    { label: "ОЗ рекоменд.", value: derived.hpSuggested, hint: "8 + Тел, далее d8" },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-2.5 py-2">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-600">{item.label}</p>
-                      <p className="font-mono text-base text-emerald-200">{item.value}</p>
-                      <p className="text-[10px] leading-tight text-zinc-600">{item.hint}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-                  <label className="space-y-1">
-                    <span className="block text-[10px] uppercase tracking-wide text-zinc-600">ОЗ сейчас</span>
+            {/* Очки здоровья и класс брони. */}
+            <section className="space-y-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Очки здоровья и класс брони
+              </h3>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">Очки здоровья</p>
+                  <div className="flex items-center gap-2">
                     <input
                       type="number"
                       min={0}
                       max={hp.max}
                       disabled={!editing}
                       value={hp.current}
-                      onChange={(event) =>
-                        patch({ resources: { ...draft.resources, hp: { ...hp, current: Number(event.target.value) } } })
-                      }
-                      className="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60 disabled:opacity-70"
+                      onChange={(event) => setHp(Number(event.target.value), hp.max)}
+                      className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
                     />
-                  </label>
-                  <span className="pb-1 font-mono text-zinc-600">/</span>
-                  <label className="space-y-1">
-                    <span className="block text-[10px] uppercase tracking-wide text-zinc-600">максимум</span>
+                    <span className="font-mono text-zinc-500">/</span>
                     <input
                       type="number"
                       min={1}
                       max={999}
                       disabled={!editing}
                       value={hp.max}
-                      onChange={(event) =>
-                        patch({ resources: { ...draft.resources, hp: { ...hp, max: Number(event.target.value) } } })
-                      }
-                      className="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400/60 disabled:opacity-70"
+                      onChange={(event) => setHp(hp.current, Number(event.target.value))}
+                      className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-zinc-300 outline-none focus:border-emerald-400/70 disabled:opacity-70"
                     />
-                  </label>
+                  </div>
+                  <p className="text-[10px] leading-snug text-zinc-600">
+                    0 — без чувств, −10 — смерть. Рекомендованный максимум: {derived.hpSuggested}
+                    {" "}(8 + Тел, далее d8 за уровень).
+                  </p>
                   {editing ? (
                     <button
                       type="button"
                       onClick={() =>
-                        patch({ resources: { ...draft.resources, hp: { current: derived.hpSuggested, max: derived.hpSuggested } } })
+                        patch({
+                          resources: {
+                            ...draft.resources,
+                            hp: { current: derived.hpSuggested, max: derived.hpSuggested },
+                          },
+                        })
                       }
-                      className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+                      className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
                     >
-                      Подставить рекомендованный максимум ({derived.hpSuggested})
+                      Подставить рекомендованный максимум
                     </button>
                   ) : null}
                 </div>
-              </section>
-            </div>
+                <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">Класс брони</p>
+                  <p className="font-mono text-2xl text-emerald-200">{derived.ac}</p>
+                  <p className="text-[10px] leading-snug text-zinc-600">
+                    по надетому доспеху, щиту и Ловкости.
+                  </p>
+                  <p className="text-[11px] text-zinc-400">
+                    {derived.armor.name}
+                    {derived.shield.bonus ? ` + ${derived.shield.name}` : ""}
+                  </p>
+                </div>
+              </div>
+            </section>
 
-            <div className="space-y-3">
+            <section className="space-y-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                Происхождение
+                Груз и деньги
               </h3>
-              <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                  Народ Кас-Хатара
-                </h3>
-                <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-                  Происхождение даёт модификаторы характеристик (они сразу прибавляются к значениям),
-                  два языка и культурный код: один конкретный навык и два знания. При смене народа
-                  старые дары и их стартовое снаряжение снимаются.
-                </p>
-                <button
-                  type="button"
-                  disabled={!editing || !draft.origin}
-                  onClick={() => applyOrigin("")}
-                  className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
-                >
-                  Сбросить происхождение
-                </button>
-              </section>
-
-              <div className="grid gap-2 lg:grid-cols-2">
-                {ORIGINS.map((entry: OriginDef) => {
-                  const selected = draft.origin === entry.name;
-                  return (
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-600">Переносимый груз</p>
+                  <p
+                    className={`font-mono text-base ${
+                      used > capacity ? "text-rose-300" : "text-emerald-200"
+                    }`}
+                  >
+                    {used} / {capacity} слотов
+                  </p>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        used > capacity ? "bg-rose-400/80" : "bg-emerald-400/70"
+                      }`}
+                      style={{
+                        width: `${capacity > 0 ? Math.min(100, Math.round((used / capacity) * 100)) : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-[10px] leading-tight text-zinc-600">
+                    в руках: {hands}/2 · 0 слотов: {zeroSlotCount(draft.inventory)}/4
+                    {used > capacity ? " · перегруз" : ""}
+                  </p>
+                </div>
+                <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-600">
+                    Общая грузоподъёмность
+                  </p>
+                  <p className="font-mono text-base text-emerald-200">{capacity} слотов</p>
+                  <p className="text-[10px] leading-tight text-zinc-600">
+                    Предел равен Силе (7.2): доспех не занимает руки, в руках — 1 оружие со щитом, 2
+                    одноручных или 1 двуручное, не больше 4 предметов с 0 слотов.
+                  </p>
+                </div>
+                <div className="space-y-1 rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-amber-200/70">Деньги</p>
+                  <p className="font-mono text-base text-amber-200">{money.toFixed(2)} зм</p>
+                  <p className="text-[10px] leading-tight text-zinc-600">
+                    в кошеле {coinQty} монет; медь — 200 на слот, серебро — 150, золото — 100,
+                    платина — 50.
+                  </p>
+                  {editing ? (
                     <button
-                      key={entry.name}
                       type="button"
-                      disabled={!editing}
-                      onClick={() => applyOrigin(entry.name)}
-                      className={`rounded-xl border p-3 text-left transition ${
-                        selected
-                          ? "border-emerald-400/60 bg-emerald-500/10"
-                          : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
-                      } disabled:cursor-default`}
+                      onClick={() => grantStartingCoins()}
+                      title="Максимальный модификатор характеристики × d6 × 10 золотых денариев"
+                      className="rounded border border-amber-400/50 px-1.5 py-0.5 text-[10px] text-amber-200 transition hover:border-amber-300"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-sm font-medium text-zinc-100">{entry.name}</span>
-                        <span className={`text-[10px] uppercase tracking-wide ${selected ? "text-emerald-300" : "text-zinc-600"}`}>
-                          {selected ? "выбрано" : "выбрать"}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[11px] leading-snug text-zinc-400">{entry.description}</p>
-                      <p className="mt-1 text-[10px] text-zinc-500">
-                        Модификаторы:{" "}
-                        {RULES.stats
-                          .filter((stat) => entry.mods[stat.key])
-                          .map((stat) => `${formatMod(entry.mods[stat.key] ?? 0)} ${stat.short}`)
-                          .join(" · ")}
-                        {" · "}
-                        языки: {entry.languages.join(", ")}
-                      </p>
-                      <p className="text-[10px] text-zinc-600">
-                        Модификаторы уже включены в характеристики. Примеры имён: {entry.names.join(", ")}.
-                      </p>
-                      <div className="mt-2 space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
-                        <p className="text-[10px] uppercase tracking-wide text-zinc-600">Культурный код</p>
-                        <p className="text-[11px] text-emerald-200">Навык: {entry.skill}</p>
-                        <p className="text-[11px] text-sky-200">Знания: {entry.knowledge.join(", ")}</p>
-                        <p className="text-[10px] text-zinc-500">
-                          Снаряжение: {[entry.skill, ...entry.knowledge].flatMap((name) => starterKit(name)).join(", ") || "—"}
-                        </p>
-                      </div>
+                      🎲 Стартовые монеты
                     </button>
-                  );
-                })}
+                  ) : null}
+                  {coinsRoll ? (
+                    <p className="font-mono text-[10px] text-amber-100">
+                      {coinsRoll.formula} = {coinsRoll.coins} зм
+                    </p>
+                  ) : null}
+                </div>
               </div>
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                Особенности и изъяны
-              </h3>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <FeatureList
-                  title="Особенности"
-                  hint="Можно выбрать до двух. Вторая особенность требует второго изъяна."
-                  items={RULES.traits}
-                  notes={TRAIT_NOTES}
-                  selected={draft.traits}
-                  editing={editing}
-                  accent="emerald"
-                  onToggle={(name) => toggleFeature("traits", name)}
-                />
-                <FeatureList
-                  title="Изъяны"
-                  hint="Можно выбрать до двух. Изъян без особенности разрешён; особенность без изъяна — нет."
-                  items={RULES.flaws}
-                  notes={FLAW_NOTES}
-                  selected={draft.flaws}
-                  editing={editing}
-                  accent="rose"
-                  onToggle={(name) => toggleFeature("flaws", name)}
-                />
-              </div>
-              {draft.traits.length > draft.flaws.length ? (
-                <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
-                  Для каждой особенности нужен изъян. Сейчас особенностей {draft.traits.length}, изъянов {draft.flaws.length}.
-                </p>
-              ) : null}
-            </div>
+              {renderCoins()}
+            </section>
+          </div>
 
             <div ref={skillsRef} className="scroll-mt-2 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2103,12 +2081,111 @@ export function CharacterSheet({
               </section>
             </div>
 
-            {/* Натальная карта и заметки — внизу левой половины. */}
-            <NatalCard
-              birth={draft.fields.birth ?? ""}
-              editing={editing}
-              onChange={(value) => patch({ fields: { ...draft.fields, birth: value } })}
-            />
+            {/* После навыков и знаний: происхождение, особенности и заметки. */}
+
+            <div className="space-y-3">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Происхождение
+              </h3>
+              <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                  Народ Кас-Хатара
+                </h3>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                  Происхождение даёт модификаторы характеристик (они сразу прибавляются к значениям),
+                  два языка и культурный код: один конкретный навык и два знания. При смене народа
+                  старые дары и их стартовое снаряжение снимаются.
+                </p>
+                <button
+                  type="button"
+                  disabled={!editing || !draft.origin}
+                  onClick={() => applyOrigin("")}
+                  className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                >
+                  Сбросить происхождение
+                </button>
+              </section>
+
+              <div className="grid gap-2 lg:grid-cols-2">
+                {ORIGINS.map((entry: OriginDef) => {
+                  const selected = draft.origin === entry.name;
+                  return (
+                    <button
+                      key={entry.name}
+                      type="button"
+                      disabled={!editing}
+                      onClick={() => applyOrigin(entry.name)}
+                      className={`rounded-xl border p-3 text-left transition ${
+                        selected
+                          ? "border-emerald-400/60 bg-emerald-500/10"
+                          : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+                      } disabled:cursor-default`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-sm font-medium text-zinc-100">{entry.name}</span>
+                        <span className={`text-[10px] uppercase tracking-wide ${selected ? "text-emerald-300" : "text-zinc-600"}`}>
+                          {selected ? "выбрано" : "выбрать"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-snug text-zinc-400">{entry.description}</p>
+                      <p className="mt-1 text-[10px] text-zinc-500">
+                        Модификаторы:{" "}
+                        {RULES.stats
+                          .filter((stat) => entry.mods[stat.key])
+                          .map((stat) => `${formatMod(entry.mods[stat.key] ?? 0)} ${stat.short}`)
+                          .join(" · ")}
+                        {" · "}
+                        языки: {entry.languages.join(", ")}
+                      </p>
+                      <p className="text-[10px] text-zinc-600">
+                        Модификаторы уже включены в характеристики. Примеры имён: {entry.names.join(", ")}.
+                      </p>
+                      <div className="mt-2 space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-600">Культурный код</p>
+                        <p className="text-[11px] text-emerald-200">Навык: {entry.skill}</p>
+                        <p className="text-[11px] text-sky-200">Знания: {entry.knowledge.join(", ")}</p>
+                        <p className="text-[10px] text-zinc-500">
+                          Снаряжение: {[entry.skill, ...entry.knowledge].flatMap((name) => starterKit(name)).join(", ") || "—"}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Особенности и изъяны
+              </h3>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <FeatureList
+                  title="Особенности"
+                  hint="Можно выбрать до двух. Вторая особенность требует второго изъяна."
+                  items={RULES.traits}
+                  notes={TRAIT_NOTES}
+                  selected={draft.traits}
+                  editing={editing}
+                  accent="emerald"
+                  onToggle={(name) => toggleFeature("traits", name)}
+                />
+                <FeatureList
+                  title="Изъяны"
+                  hint="Можно выбрать до двух. Изъян без особенности разрешён; особенность без изъяна — нет."
+                  items={RULES.flaws}
+                  notes={FLAW_NOTES}
+                  selected={draft.flaws}
+                  editing={editing}
+                  accent="rose"
+                  onToggle={(name) => toggleFeature("flaws", name)}
+                />
+              </div>
+              {draft.traits.length > draft.flaws.length ? (
+                <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
+                  Для каждой особенности нужен изъян. Сейчас особенностей {draft.traits.length}, изъянов {draft.flaws.length}.
+                </p>
+              ) : null}
+            </div>
 
             <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -2131,67 +2208,10 @@ export function CharacterSheet({
               Снаряжение
             </h3>
             <div className="space-y-3">
-              <section className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-400">
-                    Груз: <span className="font-mono text-zinc-200">{used}</span> из{" "}
-                    <span className="font-mono text-zinc-200">{capacity}</span> слотов
-                  </span>
-                  <span className={used > capacity ? "text-rose-300" : "text-zinc-500"}>
-                    {used > capacity ? "перегруз" : `в руках: ${hands}/2 · 0 слотов: ${zeroSlotCount(draft.inventory)}/4`}
-                  </span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
-                  <div
-                    className={`h-full rounded-full transition-all ${used > capacity ? "bg-rose-400/80" : "bg-emerald-400/70"}`}
-                    style={{ width: `${capacity > 0 ? Math.min(100, Math.round((used / capacity) * 100)) : 0}%` }}
-                  />
-                </div>
-                <p className="text-[11px] leading-relaxed text-zinc-600">
-                  Предел слотов равен Силе (7.2). В руках — 1 оружие + щит, 2 одноручных или 1 двуручное;
-                  доспех один и не занимает руки. Не больше 4 предметов с 0 слотов. Монеты четырёх
-                  номиналов лежат в рюкзаке, вес у каждого металла свой: медь — 200 монет на слот,
-                  серебро — 150, золото — 100, платина — 50.
-                </p>
-              </section>
-
               <div className="space-y-3">
                 {renderInventory("hands", "В руках")}
                 {renderInventory("backpack", "Рюкзак")}
               </div>
-              {renderCoins()}
-
-              <section className="space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/80">
-                    Стартовые монеты
-                  </h3>
-                  <button
-                    type="button"
-                    disabled={!editing}
-                    onClick={() => grantStartingCoins()}
-                    title="Максимальный модификатор характеристики × d6 × 10 золотых денариев"
-                    className="rounded-lg border border-amber-400/50 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-300 disabled:opacity-40"
-                  >
-                    🎲 Выдать по формуле
-                  </button>
-                </div>
-                <p className="text-[11px] leading-relaxed text-zinc-500">
-                  Формула: <b>максимальный модификатор характеристики × d6 × 10</b> золотых денариев.
-                  Если все характеристики ниже 10, модификатор считается за +1. Кнопка переписывает
-                  количество золотых денариев, остальные номиналы не трогает.
-                </p>
-                {coinsRoll ? (
-                  <p className="rounded border border-amber-400/30 bg-zinc-950/60 px-2 py-1 font-mono text-[11px] text-amber-100">
-                    {coinsRoll.formula} = {coinsRoll.coins} зм
-                  </p>
-                ) : null}
-                <p className="text-[11px] text-zinc-400">
-                  В кошеле сейчас: <span className="font-mono text-zinc-200">{money.toFixed(2)} зм</span> в
-                  пересчёте на золото ({coinQty} монет).
-                </p>
-              </section>
-
               <section className="space-y-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                   Каталог предметов
@@ -2221,7 +2241,7 @@ export function CharacterSheet({
                   </div>
                 </div>
 
-                <div className="scroll-thin max-h-[430px] space-y-1 overflow-y-auto pr-1">
+                <div className="scroll-thin max-h-[560px] space-y-1 overflow-y-auto pr-1">
                   {filteredItems.map((item) => {
                     const handsReason = inventoryBlockReason(draft.inventory, draft.stats, item, "hands");
                     const packReason = inventoryBlockReason(draft.inventory, draft.stats, item, "backpack");

@@ -4,14 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { exportCharacter } from "@/lib/characterExport";
 import { canEdit, draftFromCharacter, emptyDraft } from "@/lib/characters";
-import { carryCapacity, coinsAmount, derive, inventorySlots } from "@/lib/rules";
 import type { Character, CharacterDraft, Player } from "@/lib/types";
 import type { SheetMode } from "./CharacterSheet";
 
 /**
  * Сам лист — самый тяжёлый кусок панели: каталоги снаряжения и знаний,
  * натальная карта, портрет. Он грузится отдельным чанком при первом открытии
- * листа, поэтому список персонажей со сводками показывается сразу.
+ * листа, поэтому вкладка «Персонажи» открывается без ожидания каталогов.
  */
 const CharacterSheet = dynamic(
   () => import("./CharacterSheet").then((mod) => mod.CharacterSheet),
@@ -30,6 +29,12 @@ interface CharactersPanelProps {
   gm: string;
   characters: Character[];
   players: Player[];
+  /** Лист, который надо открыть: клик по списку персонажей в правой колонке комнаты. */
+  openId?: string | null;
+  /** Счётчик кликов по списку: повторный клик по тому же листу тоже открывает его. */
+  openRequest?: number;
+  /** Счётчик «Новый персонаж»: каждое значение открывает пустой лист. */
+  createRequest?: number;
   onCreate: (draft: CharacterDraft) => Promise<Character>;
   onUpdate: (id: string, draft: CharacterDraft) => Promise<Character>;
   onDelete: (id: string) => Promise<void>;
@@ -61,18 +66,14 @@ function draftProblem(draft: CharacterDraft): string | null {
   return null;
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
 export function CharactersPanel({
   me,
   gm,
   characters,
   players,
+  openId,
+  openRequest,
+  createRequest,
   onCreate,
   onUpdate,
   onDelete,
@@ -96,7 +97,6 @@ export function CharactersPanel({
   const draftRef = useRef<CharacterDraft | null>(draft);
   draftRef.current = draft;
 
-  const isGM = sameName(gm, me);
   const canEditCharacter = useCallback(
     (character: Character) => canEdit(character, me, gm),
     [gm, me],
@@ -134,6 +134,31 @@ export function CharactersPanel({
       setDraft(null);
     }
   }, [mode.kind, selected]);
+
+  /**
+   * Список персонажей живёт в правой колонке комнаты: клик по карточке присылает
+   * сюда id, кнопка «Новый» — счётчик. Панель только открывает нужный лист.
+   */
+  useEffect(() => {
+    if (!openId || !openRequest) return;
+    if ((mode.kind === "view" || mode.kind === "edit") && mode.id === openId) return;
+    const character = characters.find((entry) => entry.id === openId);
+    if (!character) return;
+    if (
+      mode.kind === "create" &&
+      !window.confirm("Новый лист ещё не создан — заполненное пропадёт. Продолжить?")
+    ) {
+      return;
+    }
+    if (mode.kind === "edit") void enqueueSave();
+    open(character);
+    // open() и enqueueSave() читают актуальные mode и draft сами.
+  }, [openRequest, characters]);
+
+  useEffect(() => {
+    if (!createRequest) return;
+    startCreate();
+  }, [createRequest]);
 
   function startCreate() {
     if (mode.kind === "create") {
@@ -289,7 +314,7 @@ export function CharactersPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col lg:flex-row">
+    <div className="flex h-full min-h-0 flex-col">
       <section className="min-h-0 flex-1 overflow-hidden">
         {draft ? (
           <CharacterSheet
@@ -305,6 +330,8 @@ export function CharactersPanel({
                 : (selected?.owner ?? me)
             }
             savedAt={savedAt}
+            canAssign={mode.kind !== "create" && selected ? canEditCharacter(selected) : false}
+            onAssign={selected ? () => openAssign(selected) : undefined}
             onChange={setDraft}
             onSave={() => void createSheet()}
             onCancel={finishEdit}
@@ -318,121 +345,17 @@ export function CharactersPanel({
         ) : (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-sm text-center">
-              <p className="text-sm text-zinc-400">Выберите персонажа в списке справа.</p>
+              <p className="text-sm text-zinc-400">Выберите персонажа в списке справа от стола.</p>
               <p className="mt-1 text-xs text-zinc-600">
-                Или создайте нового — лист откроется здесь: слева характеристики, происхождение,
-                особенности, навыки и знания, справа снаряжение.
+                Кнопка «Новый» в том же списке открывает пустой лист: в нём сверху имя,
+                происхождение, возраст и дата рождения, ниже характеристики, испытания, ОЗ и
+                класс брони, груз и деньги, навыки и знания, заметки, а снаряжение — справа.
               </p>
             </div>
           </div>
         )}
       </section>
 
-      <aside className="flex h-[42vh] shrink-0 flex-col border-t border-zinc-800/80 lg:h-auto lg:w-[300px] lg:border-l lg:border-t-0">
-        <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">
-              Персонажи
-            </h2>
-            <p className="text-[10px] text-zinc-600">{characters.length} в комнате</p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={startCreate}
-              className="rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-semibold text-emerald-950 transition hover:bg-emerald-400"
-            >
-              Новый
-            </button>
-          </div>
-        </div>
-
-        <div className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-          {characters.map((character) => {
-            const active =
-              (mode.kind === "view" || mode.kind === "edit") && mode.id === character.id;
-            const hp = character.resources?.hp ?? character.resources?.health;
-            const derived = derive({
-              stats: character.stats ?? {},
-              fields: character.fields ?? {},
-              level: character.level ?? 1,
-              inventory: character.inventory,
-            });
-            const assigned = character.players ?? [];
-            const canAssign = isGM || sameName(character.owner, me);
-            return (
-              <div key={character.id} className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Правка сохраняется сама: перед переходом только досохраняем хвост.
-                    if (
-                      mode.kind === "create" &&
-                      !window.confirm("Новый лист ещё не создан — заполненное пропадёт. Продолжить?")
-                    ) {
-                      return;
-                    }
-                    if (mode.kind === "edit") void enqueueSave();
-                    open(character);
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-xl border p-2 pr-8 text-left transition ${
-                    active
-                      ? "border-emerald-400/50 bg-emerald-500/10"
-                      : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
-                  }`}
-                >
-                  <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-zinc-700 bg-zinc-900">
-                    {character.portrait ? (
-                      <img src={character.portrait} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <span className="flex h-full w-full items-center justify-center font-mono text-[11px] text-zinc-600">
-                        {initials(character.name)}
-                      </span>
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-zinc-100">{character.name}</span>
-                    <span className="block truncate text-[10px] text-zinc-500">
-                      {assigned.length > 0 ? assigned.join(" · ") : character.owner}
-                    </span>
-                    <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 font-mono text-[9px] text-zinc-500">
-                      <span>ур. {character.level ?? 1}</span>
-                      <span>КБ {derived.ac}</span>
-                      <span className={hp && hp.current <= 0 ? "text-rose-300" : ""}>
-                        ОЗ {hp ? `${hp.current}/${hp.max}` : "—"}
-                      </span>
-                      <span className={inventorySlots(character.inventory) > carryCapacity(character.stats ?? {}) ? "text-rose-300" : ""}>
-                        груз {inventorySlots(character.inventory)}/{carryCapacity(character.stats ?? {})}
-                      </span>
-                      <span className="text-amber-200/80">{coinsAmount(character.inventory)} зм</span>
-                    </span>
-                  </span>
-                </button>
-                {canAssign ? (
-                  <button
-                    type="button"
-                    onClick={() => openAssign(character)}
-                    className="absolute right-1.5 top-1.5 rounded border border-zinc-700 bg-zinc-950/60 px-1 text-[10px] text-zinc-400 transition hover:border-emerald-400/50 hover:text-emerald-200"
-                    title="Назначить игроков на этот лист"
-                  >
-                    👥
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-          {characters.length === 0 ? (
-            <p className="px-2 py-6 text-center text-xs text-zinc-600">
-              Пока ни одного листа. Нажмите «Новый».
-            </p>
-          ) : null}
-        </div>
-
-        <div className="border-t border-zinc-800 px-3 py-2 text-[10px] text-zinc-600">
-          Нажмите на персонажа, чтобы открыть лист. Свой лист правится кнопкой «Править» — внутри
-          всё сохраняется само, кнопки «Сохранить» нет. Чужие листы доступны только для чтения.
-        </div>
-      </aside>
 
       {assignFor ? (
         <div

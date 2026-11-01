@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
-import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
-import { ChatPanel } from "./ChatPanel";
+import type { ChatMessage, Character, CharacterDraft, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
+import { CharactersRail } from "./CharactersRail";
+import { Composer } from "./Composer";
 import { DebugPanel } from "./DebugPanel";
 import { DeskPanel } from "./DeskPanel";
 import { DiceOverlay, type DiceRollShow } from "./DiceOverlay";
@@ -86,6 +87,12 @@ export default function RoomScreen({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const [musicVolume, setMusicVolume] = useState(DEFAULT_MUSIC_VOLUME);
   const [lastSyncAt, setLastSyncAt] = useState(0);
+  /** Какой лист открыт во вкладке «Персонажи»: его выбирает список в правой колонке. */
+  const [focusCharacter, setFocusCharacter] = useState<string | null>(null);
+  /** Счётчик «Новый персонаж»: каждое нажатие открывает пустой лист. */
+  const [createRequest, setCreateRequest] = useState(0);
+  /** Счётчик кликов по списку персонажей: повторный клик по тому же листу тоже открывает его. */
+  const [openRequest, setOpenRequest] = useState(0);
   const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
   const [profileFor, setProfileFor] = useState<string | null>(null);
   const [knownPlayers, setKnownPlayers] = useState<Player[]>([]);
@@ -406,22 +413,22 @@ export default function RoomScreen({ code }: { code: string }) {
     [musicAction, me, gm],
   );
 
-  /** Удаление сообщения: своё — автору, любое — мастеру. */
-  const deleteChatMessage = useCallback(
-    async (id: string) => {
-      try {
-        const result = await api<{ deletedMessages: string[] }>(
-          `/api/rooms/${code}/messages/${encodeURIComponent(id)}?actor=${encodeURIComponent(meRef.current)}`,
-          { method: "DELETE" },
-        );
-        const gone = new Set(result.deletedMessages ?? []);
-        setMessages((prev) => prev.filter((message) => !gone.has(message.id)));
-      } catch (error) {
-        setLoadError(error instanceof Error ? error.message : "Не удалось удалить сообщение");
-      }
-    },
-    [code],
-  );
+  /**
+   * Клик по персонажу в правой колонке: открываем его лист на вкладке «Персонажи».
+   * Номер клика растёт, чтобы повторное нажатие по тому же листу тоже открывало его.
+   */
+  const openCharacter = useCallback((id: string) => {
+    setFocusCharacter(id);
+    setOpenRequest((value) => value + 1);
+    setTab("characters");
+  }, []);
+
+  /** «Новый» в списке персонажей: пустой лист на вкладке «Персонажи». */
+  const newCharacter = useCallback(() => {
+    setFocusCharacter(null);
+    setCreateRequest((value) => value + 1);
+    setTab("characters");
+  }, []);
 
   /** Полная перечитка ленты — нужна после переименования игрока. */
   const reloadMessages = useCallback(async () => {
@@ -615,6 +622,16 @@ export default function RoomScreen({ code }: { code: string }) {
             >
               ⟳
             </button>
+            <span
+              className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500"
+              title={connected ? "Ответы сервера приходят" : "Нет связи с сервером"}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
+                aria-hidden
+              />
+              <span className="hidden sm:inline">{connected ? "на связи" : "нет связи"}</span>
+            </span>
             <span className="hidden max-w-24 truncate text-xs text-zinc-400 sm:inline">{me}</span>
             <button
               type="button"
@@ -673,6 +690,9 @@ export default function RoomScreen({ code }: { code: string }) {
               gm={gm}
               characters={characters}
               players={players}
+              openId={focusCharacter}
+              openRequest={openRequest}
+              createRequest={createRequest}
               onCreate={createCharacter}
               onUpdate={updateCharacter}
               onDelete={removeCharacter}
@@ -682,27 +702,28 @@ export default function RoomScreen({ code }: { code: string }) {
         </section>
 
         <section
-          className={`min-h-0 flex-col border-zinc-800/80 lg:flex lg:w-[420px] lg:flex-none lg:border-l xl:w-[460px] ${
+          className={`min-h-0 flex-col border-zinc-800/80 lg:flex lg:w-[380px] lg:flex-none lg:border-l xl:w-[420px] ${
             tab === "table" ? "flex min-h-[46vh] flex-1 lg:min-h-0" : "hidden"
           }`}
         >
-          <MusicPlaylist
-            me={me}
-            gm={gm}
-            music={music}
-            volume={musicVolume}
-            clockOffset={clockOffset}
-            onVolume={(value) => setMusicVolume(value)}
-            onAction={musicAction}
+          {tab === "table" ? (
+            <MusicPlaylist
+              me={me}
+              gm={gm}
+              music={music}
+              volume={musicVolume}
+              clockOffset={clockOffset}
+              onVolume={(value) => setMusicVolume(value)}
+              onAction={musicAction}
+            />
+          ) : null}
+          <CharactersRail
+            characters={characters}
+            activeId={focusCharacter}
+            onOpen={openCharacter}
+            onCreate={newCharacter}
           />
-          <ChatPanel
-            messages={messages}
-            me={me}
-            gm={gm}
-            connected={connected}
-            onSend={send}
-            onDelete={deleteChatMessage}
-          />
+          <Composer onSend={send} />
         </section>
       </div>
 
