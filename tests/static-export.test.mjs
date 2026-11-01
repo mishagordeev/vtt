@@ -112,6 +112,41 @@ test("страница /r читает код комнаты из адреса, 
   assert.match(page, /useEffect/, "путь читается после гидратации, без серверного рендера");
 });
 
+test("вкладка персонажей и лист грузятся лениво: первый экран без каталогов", () => {
+  const room = read("components", "RoomScreen.tsx");
+  const panel = read("components", "CharactersPanel.tsx");
+
+  assert.match(
+    room,
+    /const CharactersPanel = dynamic\(\s*\(\) => import\("\.\/CharactersPanel"\)\.then\(\(mod\) => mod\.CharactersPanel\)/,
+    "панель персонажей должна подключаться через next/dynamic",
+  );
+  assert.ok(
+    !/^import \{[^}]*CharactersPanel[^}]*\} from "\.\/CharactersPanel";$/m.test(room),
+    "статический импорт CharactersPanel вернёт каталоги предметов в чанк /r",
+  );
+  assert.match(
+    room,
+    /if \(phase !== "room"\) return;[\s\S]{0,200}prefetchCharacters/,
+    "чанк персонажей должен греться только после входа в комнату",
+  );
+
+  assert.match(
+    panel,
+    /const CharacterSheet = dynamic\(\s*\(\) => import\("\.\/CharacterSheet"\)\.then\(\(mod\) => mod\.CharacterSheet\)/,
+    "лист персонажа должен подключаться через next/dynamic",
+  );
+  assert.ok(
+    !/^import \{ CharacterSheet/m.test(panel),
+    "статический импорт CharacterSheet тянет натальную карту и каталоги в панель",
+  );
+  assert.match(
+    panel,
+    /^import type \{ SheetMode \} from "\.\/CharacterSheet";$/m,
+    "режим листа берётся отдельным type-импортом — он не тянет код в бандл",
+  );
+});
+
 test(".htaccess: API в mod_wsgi, комната файлом, служебное закрыто", () => {
   const raw = fs.readFileSync(path.join(projectDir, "deploy", "apache", ".htaccess"), "latin1");
   assert.ok(!raw.includes("\r"), "в .htaccess не должно быть CRLF — Apache ждёт LF");

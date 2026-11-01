@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
 import type { Character, CharacterDraft, ChatMessage, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
 import { ChatPanel } from "./ChatPanel";
-import { CharactersPanel } from "./CharactersPanel";
 import { DebugPanel } from "./DebugPanel";
 import { DeskPanel } from "./DeskPanel";
 import { DiceOverlay, type DiceRollShow } from "./DiceOverlay";
@@ -42,6 +42,31 @@ const TABS: { id: Tab; label: string }[] = [
 
 const nameKey = (code: string) => `pp:room:${code}:name`;
 
+/**
+ * Вкладка персонажей — половина веса комнаты: лист персонажа, каталоги
+ * снаряжения и знаний, производные характеристики. Она подключается отдельным
+ * чанком: `/r` открывается без него, а сам чанк греется в фоне (`prefetchCharacters`).
+ */
+const CharactersPanel = dynamic(
+  () => import("./CharactersPanel").then((mod) => mod.CharactersPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center p-6">
+        <p className="animate-pulse text-sm text-zinc-500">Загружаем листы персонажей…</p>
+      </div>
+    ),
+  },
+);
+
+/**
+ * Тёплый запуск: чанк персонажей и листа тянем в фоне после входа в комнату,
+ * чтобы первое нажатие по вкладке не упиралось в сеть.
+ */
+function prefetchCharacters(): void {
+  void import("./CharactersPanel").catch(() => undefined);
+}
+
 export default function RoomScreen({ code }: { code: string }) {
   const [phase, setPhase] = useState<Phase>("boot");
   const [me, setMe] = useState("");
@@ -73,6 +98,14 @@ export default function RoomScreen({ code }: { code: string }) {
       setMusicVolume(Math.max(0, Math.min(100, stored)));
     }
   }, []);
+
+  // Чанк персонажей подтягиваем, когда стол уже открыт: первый экран, карта и
+  // лента чата успевают загрузиться, а вкладка открывается без ожидания сети.
+  useEffect(() => {
+    if (phase !== "room") return;
+    const timer = window.setTimeout(prefetchCharacters, 4000);
+    return () => window.clearTimeout(timer);
+  }, [phase]);
 
   const sinceRef = useRef(0);
   const meRef = useRef("");

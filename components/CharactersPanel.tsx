@@ -1,11 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { exportCharacter } from "@/lib/characterExport";
 import { canEdit, draftFromCharacter, emptyDraft } from "@/lib/characters";
 import { carryCapacity, coinsAmount, derive, inventorySlots } from "@/lib/rules";
 import type { Character, CharacterDraft, Player } from "@/lib/types";
-import { CharacterSheet, type SheetMode } from "./CharacterSheet";
+import type { SheetMode } from "./CharacterSheet";
+
+/**
+ * Сам лист — самый тяжёлый кусок панели: каталоги снаряжения и знаний,
+ * натальная карта, портрет. Он грузится отдельным чанком при первом открытии
+ * листа, поэтому список персонажей со сводками показывается сразу.
+ */
+const CharacterSheet = dynamic(
+  () => import("./CharacterSheet").then((mod) => mod.CharacterSheet),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center p-6">
+        <p className="animate-pulse text-sm text-zinc-500">Открываем лист…</p>
+      </div>
+    ),
+  },
+);
 
 interface CharactersPanelProps {
   me: string;
