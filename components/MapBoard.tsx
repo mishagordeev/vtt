@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { HEX_SCALE, MAP_LABELS } from "@/lib/mapLabels";
+import { HEX_SCALE } from "@/lib/mapScale";
 import type { MapPoint, MapState, MapStroke } from "@/lib/types";
 
 interface MapBoardProps {
@@ -14,7 +14,6 @@ interface MapBoardProps {
 }
 
 const PING_TTL = 3_000;
-const LABELS_KEY = "pp:map:labels";
 const MAX_POINTS = 600;
 const POINT_STEP = 0.0025;
 const CLICK_DISTANCE = 0.006;
@@ -73,6 +72,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const currentRef = useRef<MapPoint[]>([]);
   const startRef = useRef<MapPoint | null>(null);
   const movedRef = useRef(false);
+  const imageRef = useRef<HTMLImageElement>(null);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [tool, setTool] = useState<"pen" | "erase">("pen");
@@ -81,22 +81,16 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const [current, setCurrent] = useState<MapPoint[]>([]);
   const [erasePoint, setErasePoint] = useState<MapPoint | null>(null);
   const [error, setError] = useState("");
-  const [showLabels, setShowLabels] = useState(true);
+  const [pixels, setPixels] = useState<{ width: number; height: number } | null>(null);
   const [, setTick] = useState(0);
 
+  // Картинка могла прийти из кэша до подписки на onLoad — тогда размер берём сразу.
   useEffect(() => {
-    setShowLabels(window.localStorage.getItem(LABELS_KEY) !== "0");
-  }, []);
-
-  function toggleLabels() {
-    const next = !showLabels;
-    setShowLabels(next);
-    try {
-      window.localStorage.setItem(LABELS_KEY, next ? "1" : "0");
-    } catch {
-      // localStorage может быть недоступен — просто не запомним выбор.
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setPixels({ width: image.naturalWidth, height: image.naturalHeight });
     }
-  }
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setTick((value) => value + 1), 1_000);
@@ -253,32 +247,17 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           className={`map-frame relative touch-none select-none ${tool === "pen" ? "cursor-crosshair" : "cursor-cell"}`}
         >
           <img
+            ref={imageRef}
             src="/map/kas-khatar.jpg"
             alt="Карта Кас-Хатара"
             draggable={false}
+            onLoad={(event) => {
+              const { naturalWidth, naturalHeight } = event.currentTarget;
+              setPixels({ width: naturalWidth, height: naturalHeight });
+            }}
             className="block h-auto w-full"
           />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
-
-          {showLabels ? (
-            <div className="pointer-events-none absolute inset-0 z-[5]">
-              {MAP_LABELS.map((label, index) => (
-                <span
-                  key={`${label.text}-${index}`}
-                  className="map-label"
-                  style={{
-                    left: `${label.left}%`,
-                    top: `${label.top}%`,
-                    width: `${label.width}%`,
-                    height: `${label.height}%`,
-                    fontSize: `${label.size}cqw`,
-                  }}
-                >
-                  {label.text}
-                </span>
-              ))}
-            </div>
-          ) : null}
 
           {pings.map((ping) => (
             <div
@@ -354,18 +333,6 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                 <option key={entry.value} value={entry.value}>{entry.label}</option>
               ))}
             </select>
-            <button
-              type="button"
-              onClick={toggleLabels}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${
-                showLabels
-                  ? "bg-emerald-500/20 text-emerald-200"
-                  : "text-zinc-400 hover:text-emerald-200"
-              }`}
-              title="Русские подписи поверх карты"
-            >
-              Подписи
-            </button>
             {isGM ? (
               <button
                 type="button"
@@ -378,7 +345,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           </div>
 
           <span className="pointer-events-none absolute bottom-1 right-2 rounded bg-zinc-950/70 px-1.5 py-0.5 text-[9px] text-zinc-400">
-            1 гекс ≈ {HEX_SCALE.miles} миль (≈{HEX_SCALE.km} км) · 2200×1555
+            1 гекс ≈ {HEX_SCALE.miles} миль (≈{HEX_SCALE.km} км)
+            {pixels ? ` · ${pixels.width}×${pixels.height}` : ""}
           </span>
         </div>
       </div>
