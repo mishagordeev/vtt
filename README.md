@@ -266,8 +266,9 @@ npm run dev
 
 ```bash
 npm run typecheck        # tsc --noEmit
-npm test                 # правила, кубики, лист, книги, деплой
+npm test                 # правила, кубики, лист, книги, деплой, Python, статика
 npm run build            # production-сборка, как в GitHub Actions
+npm run build:static     # статика для Apache: out/ (страницы без Node)
 npm run release:package  # релиз для сервера: release/ и vtt-release.tar.gz
 ```
 
@@ -333,15 +334,27 @@ KV_REST_API_TOKEN=...
 Tunnel): шаги, лимиты 128 МБ RAM / 10 % CPU и запас по памяти (~25 МБ) описаны в
 `HOSTING.md`, раздел «Без VPS».
 
-### Без Node вообще: бэкенд на Python
+### Без Node вообще: бэкенд на Python и статический фронт
 
 `python/` — перенос серверной части на Python 3 (mod_wsgi), тот же JSON-контракт и та же
 база Upstash, поэтому Node-версия и Python-версия видят одни и те же комнаты. Локальный
 запуск — `py -3.13 python/devserver.py --port 8788`, справочники правил обновляются
 `npm run python:data` (сверка — `npm run python:check`), проверки — в
-`tests/python-backend.test.mjs` (входят в `npm test`). Разворачивание на хостинге
-(`api.wsgi`, `keys.env`, `.htaccess`) и оставшийся шаг — статическая сборка фронта —
-описаны в `python/README.md`.
+`tests/python-backend.test.mjs` (входят в `npm test`).
+
+Страницы к этому бэкенду собираются статикой — Node на сервере не нужен:
+
+```bash
+npm run build:static                                   # → out/
+py -3.13 python/devserver.py --static out --port 8788  # весь сайт локально, без Apache
+```
+
+Что куда кладётся в `public_html`, какие правила Apache нужны (`/api/**` → `api.wsgi`,
+`/r/<КОД>` → `r/index.html`, закрытые `python/` и `keys.env`) — в `deploy/apache/README.md`
+и `python/README.md`. В статической сборке нет обработчиков `app/api` и динамического
+маршрута комнаты: они лежат в файлах `route.node.ts` и `page.node.tsx` и собираются только
+в Node-версии (`pageExtensions` в `next.config.ts`), а страница комнаты читает код из
+`window.location.pathname`. Схему проверяет `tests/static-export.test.mjs`.
 
 Без Redis приложение тоже поднимется (`storage.mode: "memory"`), но комнаты исчезнут
 при перезапуске службы — это режим для локальной разработки.
@@ -417,8 +430,10 @@ play/pause и громкость трека.
 ```
 app/
   page.tsx                     создание комнаты / вход по коду
-  r/[code]/page.tsx            стол комнаты
-  api/rooms/...                REST: комната, вход, чат, персонажи, карта, музыка, часы мира
+  r/page.tsx                   стол комнаты: код берётся из адреса (работает и на статике)
+  r/[code]/page.node.tsx       тот же стол маршрутом Node-сборки (в статику не попадает)
+  api/.../route.node.ts        REST: комната, вход, чат, персонажи, карта, музыка, часы мира
+                               (файлы `node.ts` собираются только в Node-версии)
 public/
   map/kas-khatar.jpg           карта города без надписей — «Кас-Хатар.jpg» из рефов 1.2 (4333×3064)
 components/
@@ -458,12 +473,15 @@ tools/
   export-rules.cjs             выгрузка каталогов правил в Markdown (см. ниже)
   export-calendar.cjs          выгрузка календаря и неба в «Кас-Хатар_Календарь_и_небо.md» (`--check` — только сверка)
   package-release.cjs          релиз для сервера: standalone + статика + public → release/ и vtt-release.tar.gz
+  build-static.cjs             статическая сборка для Apache: VTT_STATIC_EXPORT=1 → out/ (`npm run build:static`)
 deploy/
   bootstrap.sh                 первичная настройка VPS: Node 22, пользователь vtt, каталоги, nginx, systemd, HTTPS
   activate.sh                  переключение релиза на сервере: распаковка, симлинк current, restart, healthcheck, откат
   rollback.sh                  ручной откат на предыдущий релиз
   vtt.service                  юнит systemd: node server.js из /srv/vtt/current
   nginx/vtt.conf               reverse proxy на 127.0.0.1:3000 (HTTPS добавляет certbot)
+  apache/.htaccess             виртуальный хостинг: /api/** → api.wsgi, /r/<КОД> → r/index.html
+  apache/README.md             раскладка out/ + python/ на SpaceWeb и проверка
 .github/workflows/
   deploy.yml                   автодеплой из GitHub: проверки, сборка, архив, выкладка по ssh
 tests/
@@ -476,6 +494,7 @@ tests/
   export-calendar.test.mjs     выгрузка календаря на копии книг: идемпотентность, --check и расхождение с lib/calendar.ts
   sync-books.test.mjs          книги на копии: идемпотентность, расхождения, минимумы навыков, 2.7, пропавший блок и каталог, пропуск книги правил, нет книги игрока
   deploy.test.mjs              релиз для сервера из фиктивной сборки и согласованность workflow, юнита, nginx и скриптов
+  static-export.test.mjs       статика для Apache: конфиг, пометки node.*, .htaccess и живой сервер по этим правилам
 ```
 
 ## API

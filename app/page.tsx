@@ -1,13 +1,20 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 
+/**
+ * Переход в комнату — обычная загрузка страницы, а не клиентский переход:
+ * в статической сборке (`out/`) на `/r/<КОД>` нет RSC-ответа, а Apache отдаёт
+ * ту же страницу комнаты, которая читает код из адреса.
+ */
+function openRoom(code: string) {
+  window.location.assign(`/r/${code}`);
+}
+
 export default function HomePage() {
-  const router = useRouter();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +24,7 @@ export default function HomePage() {
     setError(null);
     try {
       const room = await api<{ code: string }>("/api/rooms", { method: "POST" });
-      router.push(`/r/${room.code}`);
+      openRoom(room.code);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось создать комнату");
       setBusy(false);
@@ -31,7 +38,7 @@ export default function HomePage() {
       setError("Код комнаты — 6 символов");
       return;
     }
-    router.push(`/r/${normalized}`);
+    openRoom(normalized);
   }
 
   return (

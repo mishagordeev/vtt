@@ -1,0 +1,50 @@
+# VTT на виртуальном хостинге SpaceWeb: страницы — статика из `out/`,
+# API — Python через mod_wsgi. Кладётся в `public_html` рядом с каталогом
+# `python/` и файлом `api.wsgi` (подробности — `deploy/apache/README.md`).
+#
+# Проверено локально тем же набором правил: `python/devserver.py --static out`.
+
+Options +ExecCGI -Indexes
+AddHandler wsgi-script .wsgi
+DirectoryIndex index.html
+ErrorDocument 404 /404.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Служебные файлы наружу не отдаём: в python/keys.env лежат ключи Redis.
+  RewriteRule ^\.well-known/ - [L]
+  RewriteRule (^|/)\. - [F,L]
+  RewriteRule ^python(/|$) - [F,L]
+  RewriteRule ^keys\.env$ - [F,L]
+
+  # API уходит в mod_wsgi: /api/rooms/A7K2QM/state -> api.wsgi/rooms/A7K2QM/state
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^api(/.*)?$ api.wsgi$1 [QSA,L]
+
+  # Комната: /r/A7K2QM — это статическая страница r/index.html. Адрес в браузере
+  # не меняется, код комнаты страница берёт из пути (статический экспорт не умеет
+  # динамические маршруты).
+  RewriteRule ^r/[A-Za-z0-9]+/?$ r/index.html [L]
+
+  # Неизвестный адрес — страница 404 из сборки, а не список каталогов.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ /404.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Хешированные файлы сборки Next (_next/static/**) не меняются — кэш навсегда.
+  <FilesMatch "^.*-[0-9a-f]{8,}\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  # Карта и звуки лежат без хеша — час кэша и проверка изменений.
+  <FilesMatch "\.(jpg|jpeg|png|webp|svg|ico|woff2|mp3)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+</IfModule>
+
+# Страницы — HTML в UTF-8; .htaccess на хостинге могут положить поверх конфига,
+# где кодировка по умолчанию другая.
+AddDefaultCharset UTF-8

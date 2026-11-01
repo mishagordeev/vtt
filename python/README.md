@@ -5,10 +5,9 @@
 Python 3 + mod_wsgi**, комнаты лежат в той же базе Upstash Redis, что и у
 Node-версии, поэтому обе реализации видят одни и те же столы.
 
-Фронтенд (React/Next) при этом не переписывается: его нужно один раз собрать
-статикой и отдать Apache. Пока это не сделано, стол продолжает работать на
-Node-сборке (VPS или `~/bin` + туннель), а Python-бэкенд можно проверить
-рядом — он совместим по JSON-контракту.
+Фронтенд (React/Next) не переписывается: он собирается статикой
+(`npm run build:static` → каталог `out/`) и живёт рядом с Python на том же
+домене. Раскладка файлов и `.htaccess` — в `deploy/apache/README.md`.
 
 ## Что уже работает
 
@@ -48,6 +47,15 @@ curl http://127.0.0.1:8788/api/health
 
 Данные без ключей Redis пишутся в `python/data/rooms` (в git не попадают).
 Другой каталог задаётся `--data-dir` или переменной `VTT_DATA_DIR`.
+
+Страницы статической сборки можно отдать тем же сервером — правила те же, что
+в `.htaccess`:
+
+```bash
+npm run build:static
+py -3.13 python/devserver.py --port 8788 --static out
+# http://127.0.0.1:8788/ — главная, /r/XXXXXX — комната, /api/health — API
+```
 
 С ключами Upstash сервер работает с той же базой, что и Node-версия:
 
@@ -118,37 +126,34 @@ UPSTASH_REDIS_REST_URL=https://xxx.upstash.io UPSTASH_REDIS_REST_TOKEN=... \
    from wsgi import application  # noqa: E402
    ```
 
-4. В `.htaccess` сайта отправить `/api/**` в mod_wsgi, а статику Next отдавать
-   как обычные файлы:
-
-   ```apache
-   Options +ExecCGI
-   AddHandler wsgi-script .wsgi
-   RewriteEngine On
-   RewriteCond %{REQUEST_FILENAME} !-f
-   RewriteRule ^api(/.*)?$ api.wsgi$1 [QSA,L]
-   ```
+4. Положить в корень сайта `.htaccess` из `deploy/apache/.htaccess`: он
+   отправляет `/api/**` в mod_wsgi, отдаёт страницы из `out/` и закрывает
+   `python/` и `keys.env` от прямого доступа.
 
 5. Проверить: `curl -s https://домен/api/health?deep=1` → `ok: true`,
    `storage.mode: redis`, `canWrite: true`.
 
-## Что ещё нужно, чтобы фронт жил на хостинге
+## Статический фронт
 
-Серверная часть готова, страницы — нет: Next собирается в standalone-сервер,
-которому нужен Node. Чтобы обойтись Apache, фронт надо один раз собрать
-статикой:
+Страницы к этому бэкенду собираются статикой — Node на сервере не нужен:
 
-1. `next.config.ts`: режим `output: "export"` (по переменной окружения, чтобы
-   не ломать Node-сборку для VPS и Vercel).
-2. Комната открывается по адресу `/r/<КОД>`, а статический экспорт не умеет
-   динамические маршруты: страницу комнаты нужно перевести на чтение кода из
-   `window.location.pathname` (или отдать `/r/КОД` → `/room.html` правилом
-   Apache), все 18 компонентов и главная страница уже клиентские — серверных
-   данных в разметке нет.
-3. Сборка `out/` загружается в `public_html`, `/api/**` остаётся за mod_wsgi.
+```bash
+npm run build:static          # VTT_STATIC_EXPORT=1 → next build → out/
+```
 
-Пока это не сделано, Python-бэкенд полезен как проверка переноса и как резерв:
-он читает и пишет те же комнаты, что Node-версия.
+| что | где |
+| --- | --- |
+| главная и страница комнаты `/r/<КОД>`, CSS, JS, карта | `out/` → `public_html` |
+| правила Apache: `/api/**` → `api.wsgi`, `/r/<КОД>` → `r/index.html`, служебное закрыто | `deploy/apache/.htaccess` |
+| раскладка каталогов и проверка | `deploy/apache/README.md` |
+| локальная проверка без Apache: страницы и API на одном порту | `py -3.13 python/devserver.py --static out` |
+
+Статический экспорт не умеет динамические маршруты, поэтому страница комнаты
+одна на все коды: `app/r/page.tsx` читает код из `window.location.pathname`,
+а Apache отдаёт на `/r/<КОД>` тот же `r/index.html` — адрес в браузере не
+меняется. Обработчики `app/api` в экспорт не попадают: они лежат в файлах
+`route.node.ts` и собираются только в Node-версии (`pageExtensions` в
+`next.config.ts`).
 
 ## Отличия от Node-версии
 
