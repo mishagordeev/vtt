@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 
-from . import data, dice, storage
+from . import data, dice, storage, tracks, convert
 from .characters import can_edit, draft_from_character, normalize_draft
 from .js import as_dict, as_list, clean_text, number_or, to_number
 from .web import AppError, ROOM_NOT_FOUND
@@ -825,6 +825,69 @@ def computed_music_position(track, now):
     return music_position(number_or(track.get("position"), 0) + max(0, now - started_at) / 1000)
 
 
+def prepare_track_upload(code, raw_actor):
+    """Проверяет вход и лимит перед загрузкой mp3; отдаёт id будущего трека."""
+    actor = normalize_name(raw_actor)
+    if not actor:
+        raise AppError(400, "Сначала войдите в комнату")
+    doc = read_doc(code)
+    if doc is None:
+        raise AppError(404, ROOM_NOT_FOUND)
+    if find_player(doc, actor) is None:
+        raise AppError(400, "Сначала войдите в комнату")
+    if len(doc["music"]["tracks"]) >= MAX_MUSIC_TRACKS:
+        raise AppError(400, "Не больше %d треков в комнате" % MAX_MUSIC_TRACKS)
+    return uid("mus")
+
+
+def add_file_track(code, raw_actor, track_id, raw_title, size):
+    """Ставит загруженный mp3 в плейлист: файл уже лежит на диске."""
+    actor = normalize_name(raw_actor)
+    if not actor:
+        raise AppError(400, "Сначала войдите в комнату")
+    title = music_title(raw_title) or "Свой трек"
+
+    def handler(doc):
+        if find_player(doc, actor) is None:
+            raise AppError(400, "Сначала войдите в комнату")
+        touch_player(doc, actor)
+        now = _now()
+        music = doc["music"]
+        entries = music["tracks"]
+        if len(entries) >= MAX_MUSIC_TRACKS:
+            raise AppError(400, "Не больше %d треков в комнате" % MAX_MUSIC_TRACKS)
+        track = {
+            "id": track_id,
+            "source": "file",
+            "videoId": "",
+            "title": title,
+            "url": "/api/rooms/%s/tracks/%s" % (code, track_id),
+            "size": int(number_or(size, 0)),
+            "addedBy": actor,
+            "addedAt": now,
+            "playing": False,
+            "position": 0,
+            "startedAt": 0,
+            "volume": 100,
+        }
+        entries.append(track)
+        music["updatedAt"] = now
+        return {"music": music, "track": track, "serverNow": now}
+
+    return with_room(code, handler)
+
+
+def track_info(code):
+    """Что можно загрузить в комнату: лимиты, занятые слоты, конвертер."""
+    doc = read_doc(code)
+    if doc is None:
+        raise AppError(404, ROOM_NOT_FOUND)
+    info = tracks.limits()
+    info["used"] = len(doc["music"]["tracks"])
+    info["convert"] = convert.tooling()
+    return info
+
+
 def update_music(code, raw_actor, raw_action):
     """Добавление, play/pause, громкость, удаление и остановка всех треков."""
     actor = normalize_name(raw_actor)
@@ -834,6 +897,7 @@ def update_music(code, raw_actor, raw_action):
     kind = str(action.get("action") or "")
 
     pending = None
+    removed_files = []
     if kind == "add":
         video_id = parse_youtube_id(_as_text(action.get("url")))
         if not video_id:
@@ -906,6 +970,8 @@ def update_music(code, raw_actor, raw_action):
                 raise AppError(404, "Трек не найден")
             if not gm and str(track.get("addedBy") or "").lower() != actor.lower():
                 raise AppError(403, "Удалить трек может автор или мастер")
+            if track.get("source") == "file":
+                removed_files.append(track_id)
             music["tracks"] = [entry for entry in tracks if entry.get("id") != track_id]
         elif kind == "stopAll":
             if not gm:
@@ -923,7 +989,12 @@ def update_music(code, raw_actor, raw_action):
         music["updatedAt"] = now
         return {"music": music, "serverNow": now}
 
-    return with_room(code, handler)
+    result = with_room(code, handler)
+    # Файл удаляем после записи документа: если запись не прошла, трек остался
+    # в комнате и mp3 должен остаться вместе с ним.
+    for track_id in removed_files:
+        tracks.delete(code, track_id)
+    return result
 
 
 def world_minutes(world, now):
@@ -1141,10 +1212,17 @@ def delete_message(code, raw_actor, raw_id):
 
 
 def health(deep=False):
-    """Ответ /api/health: состояние хранилища."""
+    """Ответ /api/health: состояние хранилища, звуков и конвертера."""
     storage_info = storage.probe(deep)
     ok = storage_info.get("reachable") and storage_info.get("canWrite") is not False
-    return {"ok": bool(ok), "deep": deep, "storage": storage_info, "checkedAt": _now()}
+    return {
+        "ok": bool(ok),
+        "deep": deep,
+        "storage": storage_info,
+        "tracks": tracks.info(),
+        "convert": convert.tooling(),
+        "checkedAt": _now(),
+    }
 
 
 

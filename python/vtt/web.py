@@ -45,6 +45,48 @@ def error_response(start_response, error):
     return respond(start_response, 500, {"error": INTERNAL_ERROR})
 
 
+def respond_stream(start_response, status, chunks, content_type, length, extra_headers=None):
+    """Бинарный ответ частями: mp3, отдача по Range. `chunks` — итератор байтов."""
+    headers = [
+        ("Content-Type", content_type),
+        ("Content-Length", str(length)),
+        ("Cache-Control", "private, max-age=0, must-revalidate"),
+    ]
+    headers.extend(extra_headers or [])
+    start_response("%d %s" % (status, STATUS_TEXT.get(status, "OK")), headers)
+    return chunks
+
+
+def read_bytes(environ, limit):
+    """Тело запроса целиком, но не больше `limit` байт (413 при перерасходе).
+
+    Читаем ровно столько, сколько объявлено в CONTENT_LENGTH: `wsgi.input`
+    из wsgiref — буферизованный сокет, и `read(65536)` на теле в 256 байт
+    повис бы в ожидании недостающих байт. Без длины (chunked) читаем до EOF.
+    """
+    try:
+        declared = int(environ.get("CONTENT_LENGTH") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    if declared > limit:
+        raise AppError(413, "Файл больше %d МБ" % (limit // (1024 * 1024)))
+    stream = environ["wsgi.input"]
+    chunks = []
+    total = 0
+    while True:
+        size = 64 * 1024 if declared <= 0 else min(64 * 1024, declared - total)
+        if size <= 0:
+            break
+        chunk = stream.read(size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise AppError(413, "Файл больше %d МБ" % (limit // (1024 * 1024)))
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def read_json(environ):
     """Тело запроса как словарь; мусор и пустое тело — пустой словарь."""
     try:

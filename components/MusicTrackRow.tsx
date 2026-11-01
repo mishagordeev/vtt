@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatTrackSize } from "@/lib/musicClient";
 import { youtubeThumbnail } from "@/lib/youtube";
 import type { MusicState, MusicTrack } from "@/lib/types";
 
@@ -99,14 +100,20 @@ export function MusicTrackRow({
           target="_blank"
           rel="noreferrer"
           className="relative h-9 w-16 shrink-0 overflow-hidden rounded border border-zinc-800 bg-zinc-900"
-          title="Открыть на YouTube"
+          title={track.source === "file" ? "Скачать mp3" : "Открыть на YouTube"}
         >
-          <img
-            src={youtubeThumbnail(track.videoId)}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover"
-          />
+          {track.source === "file" ? (
+            <span className="flex h-full w-full items-center justify-center font-mono text-[10px] tracking-wide text-emerald-300/70">
+              mp3
+            </span>
+          ) : (
+            <img
+              src={youtubeThumbnail(track.videoId)}
+              alt=""
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          )}
           <span className="absolute inset-0 flex items-center justify-center bg-black/35 text-xs text-white drop-shadow">
             {track.playing ? "♪" : "▶"}
           </span>
@@ -125,6 +132,9 @@ export function MusicTrackRow({
           <p className="truncate text-[9px] text-zinc-500">
             {track.addedBy} · {formatMusicTime(position)}
             {track.playing ? " · играет" : ""} · громк. {track.volume ?? 100}%
+            {track.source === "file" && track.size
+              ? ` · ${formatTrackSize(track.size)}`
+              : ""}
           </p>
         </div>
 

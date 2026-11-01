@@ -11,8 +11,62 @@ from urllib.parse import unquote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from vtt import store  # noqa: E402  (импорт после правки sys.path)
-from vtt.web import AppError, error_response, query, read_json, respond  # noqa: E402
+from vtt import convert, store, tracks  # noqa: E402  (импорт после правки sys.path)
+from vtt.web import (  # noqa: E402
+    AppError,
+    error_response,
+    query,
+    read_bytes,
+    read_json,
+    respond,
+    respond_stream,
+)
+from vtt.youtube import fetch_youtube_title, parse_youtube_id, youtube_watch_url  # noqa: E402
+
+
+def _track_upload(environ, start_response, code, params):
+    """Свой mp3 телом запроса или ролик YouTube, скачанный в mp3."""
+    actor = params.get("actor", "")
+    track_id = store.prepare_track_upload(code, actor)
+    title = params.get("title", "")
+    if str(params.get("source") or "").lower() == "youtube":
+        video_id = parse_youtube_id(params.get("url", ""))
+        if not video_id:
+            raise AppError(400, "Некорректная ссылка YouTube")
+        if not store.music_title(title):
+            title = fetch_youtube_title(video_id) or "YouTube · %s" % video_id
+        raw = convert.download(video_id, youtube_watch_url(video_id))
+    else:
+        raw = read_bytes(environ, tracks.MAX_TRACK_BYTES)
+        if not store.music_title(title):
+            title = "Свой трек"
+    try:
+        size = tracks.save(code, track_id, raw)
+        payload = store.add_file_track(code, actor, track_id, title, size)
+    except Exception:
+        # Файл без трека в комнате — мусор: убираем сразу.
+        tracks.delete(code, track_id)
+        raise
+    return respond(start_response, 200, payload)
+
+
+def _track_file(environ, start_response, code, track_id):
+    """mp3 комнаты: целиком или куском по Range (нужно для перемотки)."""
+    span = tracks.resolve(code, track_id, environ.get("HTTP_RANGE"))
+    length = span["end"] - span["start"] + 1
+    headers = [("Accept-Ranges", "bytes")]
+    if span["status"] == 206:
+        headers.append(
+            ("Content-Range", "bytes %d-%d/%d" % (span["start"], span["end"], span["total"]))
+        )
+    return respond_stream(
+        start_response,
+        span["status"],
+        tracks.body(span["path"], span["start"], span["end"]),
+        "audio/mpeg",
+        length,
+        headers,
+    )
 
 
 def _path(environ):
@@ -36,7 +90,13 @@ def _since(raw):
 def apply(environ, start_response, method):
     parts = _path(environ)
     params = query(environ)
-    body = read_json(environ) if method in ("POST", "PATCH", "PUT", "DELETE") else {}
+    # Загрузка mp3 читает тело сама (это файл, а не JSON) — см. _track_upload.
+    upload = len(parts) == 3 and parts[0] == "rooms" and parts[2] == "tracks"
+    body = (
+        read_json(environ)
+        if method in ("POST", "PATCH", "PUT", "DELETE") and not upload
+        else {}
+    )
 
     if not parts:
         return respond(start_response, 404, {"error": "Неизвестный адрес"})
@@ -148,6 +208,17 @@ def apply(environ, start_response, method):
         if method != "POST":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})
         return respond(start_response, 200, store.update_music(code, body.get("actor"), body))
+
+    if resource == "tracks":
+        if not entry_id:
+            if method == "GET":
+                return respond(start_response, 200, store.track_info(code))
+            if method == "POST":
+                return _track_upload(environ, start_response, code, params)
+            return respond(start_response, 405, {"error": "Метод не поддерживается"})
+        if method == "GET":
+            return _track_file(environ, start_response, code, entry_id)
+        return respond(start_response, 405, {"error": "Метод не поддерживается"})
 
     if resource == "world" and not entry_id:
         if method != "POST":

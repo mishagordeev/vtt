@@ -440,6 +440,9 @@ docker compose logs --tail=50 vtt                  # старт без ошиб�
       (и ключи Upstash), прогон «Выкладки статики на shared-хостинг» зелёный.
 - [ ] `curl https://…/api/health?deep=1` → `ok: true`, `storage.mode: redis`, `canWrite: true`.
 - [ ] Ссылка `/r/<КОД>` открывается, чат и бросок идут, музыка играет (домен в адресной строке).
+- [ ] Звук комнаты: mp3 загружается во вкладке «Музыка» и слышен у второго игрока;
+      `curl /api/health` → `tracks.writable: true`, а для конвертации YouTube —
+      `convert.available: true` (`pip install --user yt-dlp` и `ffmpeg` в PATH).
 - [ ] Cloudflare: Proxied + SSL/TLS **Full (strict)**, `certbot renew --dry-run` проходит.
 - [ ] Vercel: домен снят, Git-disconnect или проект удалён.
 - [ ] `shared/.env.local` сохранён в менеджер паролей, бэкап базы Upstash включён.

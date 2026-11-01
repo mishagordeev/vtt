@@ -658,12 +658,14 @@ export default function RoomScreen({ code }: { code: string }) {
             />
           ) : tab === "music" ? (
             <MusicPanel
+              code={code}
               me={me}
               gm={gm}
               music={music}
               volume={musicVolume}
               onVolume={(value) => setMusicVolume(value)}
               onAction={musicAction}
+              onUploaded={setMusic}
             />
           ) : (
             <CharactersPanel
@@ -737,6 +739,7 @@ export default function RoomScreen({ code }: { code: string }) {
       />
 
       <MusicHost
+        code={code}
         tracks={music.tracks}
         volume={musicVolume}
         clockOffset={clockOffset}

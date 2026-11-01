@@ -110,9 +110,15 @@ export interface CharacterDraft {
 
 export interface MusicTrack {
   id: string;
+  /** Откуда звук: встроенный ролик YouTube или mp3, загруженный в комнату. */
+  source?: "youtube" | "file";
+  /** id ролика YouTube; у своего mp3 пустая строка. */
   videoId: string;
   title: string;
+  /** Ссылка на YouTube или адрес mp3 на сервере комнаты. */
   url: string;
+  /** Размер загруженного mp3 в байтах (только у source = "file"). */
+  size?: number;
   addedBy: string;
   addedAt: number;
   /** Общее состояние воспроизведения для всех игроков. */

@@ -4,6 +4,7 @@ import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
 import { RULES } from "./rules";
+import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
 import type {
   ChatMessage,
@@ -986,6 +987,73 @@ function computedMusicPosition(track: MusicTrack, now: number): number {
   return musicPosition(track.position + Math.max(0, now - track.startedAt) / 1000);
 }
 
+/**
+ * Проверка входа и лимита перед загрузкой mp3: файл пишем только после неё,
+ * чтобы не занять диск чужой загрузкой. Возвращает id будущего трека.
+ */
+export async function prepareTrackUpload(code: string, rawActor: unknown): Promise<string> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  const doc = await readDoc(code);
+  if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
+  if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+  if (doc.music.tracks.length >= MAX_MUSIC_TRACKS) {
+    throw new AppError(400, `Не больше ${MAX_MUSIC_TRACKS} треков в комнате`);
+  }
+  await purgeTracks();
+  return newTrackId();
+}
+
+/** Ставит загруженный mp3 в плейлист: файл уже лежит на диске. */
+export async function addFileTrack(
+  code: string,
+  rawActor: unknown,
+  trackId: string,
+  rawTitle: unknown,
+  size: number,
+): Promise<{ music: MusicState; track: MusicTrack; serverNow: number }> {
+  const actor = normalizeName(rawActor);
+  if (!actor) throw new AppError(400, "Сначала войдите в комнату");
+  const title = musicTitle(rawTitle) || "Свой трек";
+  return withRoom(code, (doc) => {
+    if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
+    touchPlayer(doc, actor);
+    const now = Date.now();
+    if (doc.music.tracks.length >= MAX_MUSIC_TRACKS) {
+      throw new AppError(400, `Не больше ${MAX_MUSIC_TRACKS} треков в комнате`);
+    }
+    const track: MusicTrack = {
+      id: trackId,
+      source: "file",
+      videoId: "",
+      title,
+      url: `/api/rooms/${code}/tracks/${trackId}`,
+      size: Math.max(0, Math.round(Number(size) || 0)),
+      addedBy: actor,
+      addedAt: now,
+      playing: false,
+      position: 0,
+      startedAt: 0,
+      volume: 100,
+    };
+    doc.music.tracks.push(track);
+    doc.music.updatedAt = now;
+    return { music: doc.music, track, serverNow: now };
+  });
+}
+
+/** Что можно загрузить в комнату: лимиты, занятые слоты, конвертер. */
+export async function trackInfo(code: string): Promise<{
+  maxBytes: number;
+  maxTracks: number;
+  format: string;
+  used: number;
+}> {
+  const doc = await readDoc(code);
+  if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
+  return { ...trackLimits(), used: doc.music.tracks.length };
+}
+
 /** Добавление, play/pause, удаление и остановка всех треков. */
 export async function updateMusic(
   code: string,
@@ -1001,6 +1069,7 @@ export async function updateMusic(
   const kind = String(action.action ?? "");
 
   let pending: { videoId: string; title: string; url: string } | null = null;
+  const removedFiles: string[] = [];
   if (kind === "add") {
     const videoId = parseYouTubeId(String(action.url ?? ""));
     if (!videoId) throw new AppError(400, "Некорректная ссылка YouTube");
@@ -1013,7 +1082,7 @@ export async function updateMusic(
     };
   }
 
-  return withRoom(code, (doc) => {
+  const result = await withRoom(code, (doc) => {
     ensureMusic(doc);
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
@@ -1064,6 +1133,7 @@ export async function updateMusic(
       if (!isGM && track.addedBy.toLowerCase() !== actor.toLowerCase()) {
         throw new AppError(403, "Удалить трек может автор или мастер");
       }
+      if (track.source === "file") removedFiles.push(track.id);
       music.tracks = music.tracks.filter((entry) => entry.id !== trackId);
     } else if (kind === "stopAll") {
       if (!isGM) throw new AppError(403, "Остановить всё может только мастер");
@@ -1086,6 +1156,10 @@ export async function updateMusic(
     music.updatedAt = now;
     return { music, serverNow: now };
   });
+  // Файл убираем после записи документа: если запись не прошла, трек остался
+  // в комнате, и mp3 должен остаться вместе с ним.
+  for (const removedId of removedFiles) await deleteTrack(code, removedId);
+  return result;
 }
 
 /** Сколько минут прошло внутри суток — с учётом хода реального времени. */

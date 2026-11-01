@@ -653,3 +653,99 @@ test("Python ищет броски так же, как lib/dice.ts", async (t) =
 
 
 
+test("Python-сервер: свой mp3 в комнате, раздача по частям и удаление", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl } = server;
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  const code = created.payload.code;
+  await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name: "Мастер" });
+
+  // 256 «байт mp3»: важна только сигнатура ID3 — остальное сверяем побайтно.
+  const mp3 = new Uint8Array(256);
+  mp3.set([0x49, 0x44, 0x33, 0x04]);
+  for (let index = 4; index < mp3.length; index += 1) mp3[index] = index % 251;
+
+  const tools = await call(baseUrl, "GET", `/api/rooms/${code}/tracks`);
+  assert.equal(tools.status, 200);
+  assert.equal(tools.payload.maxTracks, 20);
+  assert.equal(tools.payload.maxBytes, 40 * 1024 * 1024);
+  assert.equal(tools.payload.used, 0);
+  assert.equal(typeof tools.payload.convert.available, "boolean");
+
+  // Не вошедший игрок загружать не может.
+  const stranger = await fetch(`${baseUrl}/api/rooms/${code}/tracks?actor=Чужой&title=Тест`, {
+    method: "POST",
+    headers: { "Content-Type": "audio/mpeg" },
+    body: mp3,
+  });
+  assert.equal(stranger.status, 400);
+
+  // Не mp3 — 415 с понятным текстом.
+  const wrong = await fetch(`${baseUrl}/api/rooms/${code}/tracks?actor=Мастер&title=Не mp3`, {
+    method: "POST",
+    headers: { "Content-Type": "audio/mpeg" },
+    body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]),
+  });
+  assert.equal(wrong.status, 415);
+  assert.match((await wrong.json()).error, /mp3/);
+
+  const upload = await fetch(
+    `${baseUrl}/api/rooms/${code}/tracks?actor=Мастер&title=${encodeURIComponent("Тихая таверна")}`,
+    { method: "POST", headers: { "Content-Type": "audio/mpeg" }, body: mp3 },
+  );
+  assert.equal(upload.status, 200, server.log());
+  const uploaded = await upload.json();
+  assert.equal(uploaded.music.tracks.length, 1);
+  const track = uploaded.track;
+  assert.equal(track.source, "file");
+  assert.equal(track.videoId, "");
+  assert.equal(track.title, "Тихая таверна");
+  assert.equal(track.size, mp3.length);
+  assert.equal(track.url, `/api/rooms/${code}/tracks/${track.id}`);
+  assert.equal(track.playing, false);
+
+  // Комната помнит трек: он приходит тем же снимком, что у всех игроков.
+  const state = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
+  assert.equal(state.payload.music.tracks.length, 1);
+  assert.equal(state.payload.music.tracks[0].id, track.id);
+
+  const whole = await fetch(`${baseUrl}${track.url}`);
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get("accept-ranges"), "bytes");
+  assert.equal(whole.headers.get("content-type"), "audio/mpeg");
+  assert.deepEqual(new Uint8Array(await whole.arrayBuffer()), mp3);
+
+  // Кусок: браузер просит Range, чтобы перематывать длинный трек.
+  const part = await fetch(`${baseUrl}${track.url}`, { headers: { Range: "bytes=10-19" } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get("content-range"), `bytes 10-19/${mp3.length}`);
+  assert.deepEqual(new Uint8Array(await part.arrayBuffer()), mp3.slice(10, 20));
+
+  const missing = await fetch(`${baseUrl}/api/rooms/${code}/tracks/mus_000000000000`);
+  assert.equal(missing.status, 404);
+  const escape = await fetch(`${baseUrl}/api/rooms/${code}/tracks/..%2F..%2Fetc%2Fpasswd`);
+  assert.ok([400, 404].includes(escape.status), `путь наружу: ${escape.status}`);
+
+  // Мастер запускает трек: состояние общее, как у YouTube.
+  const play = await call(baseUrl, "POST", `/api/rooms/${code}/music`, {
+    actor: "Мастер",
+    action: "play",
+    id: track.id,
+    position: 0,
+  });
+  assert.equal(play.status, 200);
+  assert.equal(play.payload.music.tracks[0].playing, true);
+
+  const remove = await call(baseUrl, "POST", `/api/rooms/${code}/music`, {
+    actor: "Мастер",
+    action: "remove",
+    id: track.id,
+  });
+  assert.equal(remove.status, 200);
+  assert.equal(remove.payload.music.tracks.length, 0);
+
+  // Убрали трек — убрали и файл: диск не копит чужие mp3.
+  const gone = await fetch(`${baseUrl}${track.url}`);
+  assert.equal(gone.status, 404);
+});
+
