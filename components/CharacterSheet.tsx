@@ -111,12 +111,15 @@ const ITEM_KIND_LABEL: Record<ItemKind, string> = {
   clothing: "Одежда",
   gear: "Снаряжение",
   light: "Свет",
+  food: "Еда и ночлег",
+  service: "Услуга",
+  tack: "Упряжь",
   coins: "Монеты",
   animal: "Животное",
   transport: "Транспорт",
 };
 
-const ITEM_KINDS: (ItemKind | "all")[] = ["all", "weapon", "armor", "shield", "gear", "light"];
+const ITEM_KINDS: (ItemKind | "all")[] = ["all", "weapon", "armor", "shield", "clothing", "gear", "food", "service", "tack"];
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
