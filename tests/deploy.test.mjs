@@ -243,6 +243,32 @@ test("каталог сайта на аккаунте выбирается по 
   assert.equal(facts.nothing, null, "если комплекта нет вовсе, выдумывать каталог нельзя");
 });
 
+test("выгрузка python/ не создаёт на сервере вложенный python/python", { skip: pythonReady ? false : SKIP_PY }, () => {
+  const deployPy = path.join(projectDir, "deploy", "apache", "deploy.py");
+  const code = [
+    "import importlib.util, json, pathlib",
+    `spec = importlib.util.spec_from_file_location("vtt_deploy", ${JSON.stringify(deployPy)})`,
+    "module = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(module)",
+    'steps = module.scp_steps("user@host:site/public_html", [], pathlib.Path("/tmp/python"), None)',
+    "print(json.dumps([[title, destination] for title, _, destination in steps], ensure_ascii=False))",
+  ].join("\n");
+  const done = spawnSync(PY.command, [...PY.args, "-c", code], { encoding: "utf8", cwd: projectDir });
+  assert.equal(done.status, 0, `scp_steps не импортируется: ${done.stderr}`);
+  const steps = JSON.parse(done.stdout);
+  const python = steps.find(([title]) => title === "python/");
+  assert.ok(python, "шаг с python/ должен быть в списке выгрузки");
+  assert.equal(
+    python[1],
+    "user@host:site/public_html",
+    "scp -r python в …/python создаёт python/python: копировать нужно в родителя",
+  );
+  assert.ok(
+    !steps.some(([, destination]) => destination.endsWith("/python")),
+    "ни один шаг выкладки не должен целиться в …/python",
+  );
+});
+
 test("в автовыкладке и в README нет старого каталога mishagordeev.com", () => {
   const workflow = read(".github", "workflows", "static.yml");
   assert.ok(

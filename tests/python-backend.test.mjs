@@ -326,6 +326,81 @@ test("Python-сервер: комната, чат с броском, лист, �
   assert.equal(erase.status, 200);
   assert.equal(erase.payload.map.strokes.length, 0, "ластик стёр линию");
 
+  // --- надписи поверх карты: только мастер ---
+  const mapTextDenied = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "text",
+    text: "Логово",
+    x: 0.2,
+    y: 0.3,
+  });
+  assert.equal(mapTextDenied.status, 403, "надписи на карте ставит только мастер");
+
+  const mapLabel = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "text",
+    text: "  Логово   тролля  ",
+    x: 0.2,
+    y: 0.3,
+    color: "#facc15",
+    font: "serif",
+    size: 0.9,
+  });
+  assert.equal(mapLabel.status, 200, server.log());
+  assert.equal(mapLabel.payload.map.texts.length, 1);
+  const mapTextEntry = mapLabel.payload.map.texts[0];
+  assert.equal(mapTextEntry.text, "Логово тролля", "лишние пробелы схлопнуты");
+  assert.equal(mapTextEntry.color, "#facc15");
+  assert.equal(mapTextEntry.font, "serif");
+  assert.equal(mapTextEntry.size, 0.06, "кегль подрезан до верхнего предела");
+
+  const mapTextEdited = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textUpdate",
+    id: mapTextEntry.id,
+    text: "Логово",
+    font: "comic",
+    size: 0.001,
+  });
+  assert.equal(mapTextEdited.status, 200, server.log());
+  assert.equal(mapTextEdited.payload.map.texts[0].text, "Логово");
+  assert.equal(mapTextEdited.payload.map.texts[0].font, "sans", "неизвестный шрифт — обычный");
+  assert.equal(mapTextEdited.payload.map.texts[0].size, 0.008, "кегль не меньше нижнего предела");
+
+  const mapEraseAgain = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "erase",
+    radius: 0.05,
+    points: [{ x: 0.2, y: 0.3 }],
+  });
+  assert.equal(mapEraseAgain.status, 200);
+  assert.equal(mapEraseAgain.payload.map.texts.length, 1, "ластик не стирает надписи");
+
+  const mapTextRemoved = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textRemove",
+    id: mapTextEntry.id,
+  });
+  assert.equal(mapTextRemoved.status, 200, server.log());
+  assert.equal(mapTextRemoved.payload.map.texts.length, 0, "надпись удалена");
+
+  const mapTextRestored = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "text",
+    text: "Логово",
+    x: 0.2,
+    y: 0.3,
+  });
+  assert.equal(mapTextRestored.status, 200, server.log());
+
+  const mapCleared = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "clear",
+  });
+  assert.equal(mapCleared.status, 200, server.log());
+  assert.equal(mapCleared.payload.map.texts.length, 0, "очистка убирает надписи");
+  assert.equal(mapCleared.payload.map.strokes.length, 0, "очистка убирает линии");
+
   // --- музыка ---
   const added = await call(baseUrl, "POST", `/api/rooms/${code}/music`, {
     actor: "Игрок",

@@ -25,6 +25,11 @@ MAX_STROKES = 200
 MAX_PING_AGE = 3_500
 MAX_PINGS = 40
 MAX_MAP_POINTS = 600
+MAX_MAP_TEXTS = 60
+MAP_TEXT_MAX_LENGTH = 120
+MAP_TEXT_MIN_SIZE = 0.008
+MAP_TEXT_MAX_SIZE = 0.06
+MAP_FONTS = ("sans", "serif", "mono", "hand")
 MAX_MUSIC_TRACKS = 20
 MAX_MUSIC_POSITION = 86_400
 MAX_DELETED_MESSAGES = 400
@@ -76,7 +81,7 @@ def uid(prefix=""):
 
 
 def empty_map():
-    return {"strokes": [], "cursors": {}, "pings": [], "updatedAt": _now()}
+    return {"strokes": [], "texts": [], "cursors": {}, "pings": [], "updatedAt": _now()}
 
 
 def empty_music():
@@ -125,6 +130,32 @@ def ensure_map(doc):
             state["cursors"] = {}
         if not isinstance(state.get("pings"), list):
             state["pings"] = []
+        if not isinstance(state.get("texts"), list):
+            state["texts"] = []
+        else:
+            # Надписи могли прийти из старой комнаты или из Node-версии:
+            # приводим их к тем же правилам, что и update_map.
+            texts = []
+            for entry in state["texts"]:
+                item = as_dict(entry)
+                label = _map_text(item.get("text"))
+                x = _map_coord(item.get("x"))
+                y = _map_coord(item.get("y"))
+                if not label or x is None or y is None:
+                    continue
+                texts.append(
+                    {
+                        "id": str(item.get("id") or uid("txt")),
+                        "author": str(item.get("author") or ""),
+                        "text": label,
+                        "x": x,
+                        "y": y,
+                        "color": _color_or(item.get("color"), "#f8fafc"),
+                        "font": _map_font(item.get("font")),
+                        "size": _map_text_size(item.get("size")),
+                    }
+                )
+            state["texts"] = texts
     return doc
 
 
@@ -251,6 +282,9 @@ def rename_references(doc, source, target):
     for stroke in as_list(as_dict(doc.get("map")).get("strokes")):
         if same(stroke.get("author")):
             stroke["author"] = target
+    for text in as_list(as_dict(doc.get("map")).get("texts")):
+        if same(text.get("author")):
+            text["author"] = target
     for ping in as_list(as_dict(doc.get("map")).get("pings")):
         if same(ping.get("name")):
             ping["name"] = target
@@ -716,6 +750,35 @@ def _color_or(value, fallback):
     return text if PLAYER_COLOR_RE.match(text) else fallback
 
 
+def _map_text(value):
+    """Текст надписи без переводов строк и лишних пробелов (`sanitizeMapText`)."""
+    return " ".join(str(value or "").split())[:MAP_TEXT_MAX_LENGTH]
+
+
+def _map_font(value):
+    """Неизвестный шрифт — «обычный»: в CSS попадает только ключ из набора."""
+    text = str(value or "").strip().lower()
+    return text if text in MAP_FONTS else "sans"
+
+
+def _map_text_size(value):
+    """Кегль в допустимых пределах; мусор — «средний»."""
+    number = number_or(value, None)
+    if number is None or number <= 0:
+        return 0.018
+    return max(MAP_TEXT_MIN_SIZE, min(MAP_TEXT_MAX_SIZE, number))
+
+
+def _find_map_text(state, text_id):
+    """Надпись по id: `map.texts.find` из Node-версии."""
+    wanted = str(text_id or "")
+    for entry in as_list(state.get("texts")):
+        item = as_dict(entry)
+        if str(item.get("id") or "") == wanted:
+            return item
+    return None
+
+
 def _stroke_touched(stroke, erase_points, radius):
     """Ластик стирает линию, если попал в точку или в отрезок между точками."""
     points = [
@@ -796,10 +859,70 @@ def update_map(code, raw_actor, raw_action):
                 for stroke in as_list(state.get("strokes"))
                 if not _stroke_touched(stroke, points, radius)
             ]
+        elif kind in ("text", "textUpdate", "textRemove"):
+            # Надписи поверх карты — только мастер: игроки рисуют и ставят метки.
+            if str(doc.get("gm") or "").strip().lower() != actor.lower():
+                raise AppError(403, "Надписи на карте правит только мастер")
+            if kind == "text":
+                label = _map_text(action.get("text"))
+                if not label:
+                    raise AppError(400, "Пустая надпись")
+                x = _map_coord(action.get("x"))
+                y = _map_coord(action.get("y"))
+                if x is None or y is None:
+                    raise AppError(400, "Некорректная позиция надписи")
+                texts = as_list(state.get("texts"))
+                texts.append(
+                    {
+                        "id": uid("txt"),
+                        "author": actor,
+                        "text": label,
+                        "x": x,
+                        "y": y,
+                        "color": _color_or(action.get("color"), "#f8fafc"),
+                        "font": _map_font(action.get("font")),
+                        "size": _map_text_size(action.get("size")),
+                    }
+                )
+                if len(texts) > MAX_MAP_TEXTS:
+                    del texts[: len(texts) - MAX_MAP_TEXTS]
+                state["texts"] = texts
+            else:
+                entry = _find_map_text(state, action.get("id"))
+                if entry is None:
+                    raise AppError(404, "Надпись не найдена")
+                if kind == "textRemove":
+                    wanted = str(action.get("id") or "")
+                    state["texts"] = [
+                        item
+                        for item in as_list(state.get("texts"))
+                        if str(as_dict(item).get("id") or "") != wanted
+                    ]
+                else:
+                    if action.get("text") is not None:
+                        label = _map_text(action.get("text"))
+                        if not label:
+                            raise AppError(400, "Пустая надпись")
+                        entry["text"] = label
+                    if action.get("color") is not None and PLAYER_COLOR_RE.match(
+                        str(action.get("color"))
+                    ):
+                        entry["color"] = str(action.get("color"))
+                    if action.get("font") is not None:
+                        entry["font"] = _map_font(action.get("font"))
+                    if action.get("size") is not None:
+                        entry["size"] = _map_text_size(action.get("size"))
+                    next_x = entry.get("x") if action.get("x") is None else _map_coord(action.get("x"))
+                    next_y = entry.get("y") if action.get("y") is None else _map_coord(action.get("y"))
+                    if next_x is None or next_y is None:
+                        raise AppError(400, "Некорректная позиция надписи")
+                    entry["x"] = next_x
+                    entry["y"] = next_y
         elif kind == "clear":
             if str(doc.get("gm") or "").strip().lower() != actor.lower():
                 raise AppError(403, "Очистить карту может только мастер")
             state["strokes"] = []
+            state["texts"] = []
         else:
             raise AppError(400, "Неизвестное действие с картой")
 

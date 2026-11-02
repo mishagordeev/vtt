@@ -24,7 +24,7 @@ Node-версии, поэтому обе реализации видят одн�
 | `POST /api/rooms/<КОД>/characters` | новый лист персонажа |
 | `PATCH/DELETE /api/rooms/<КОД>/characters/<id>` | правка и удаление листа |
 | `PATCH /api/rooms/<КОД>/characters/<id>/players` | назначить лист игрокам |
-| `POST /api/rooms/<КОД>/map` | метка, линия, ластик, очистка карты |
+| `POST /api/rooms/<КОД>/map` | метка, линия, ластик, надписи мастера (`text`, `textUpdate`, `textRemove`), очистка карты |
 | `POST /api/rooms/<КОД>/music` | треки YouTube: добавить, play/pause, громкость, удалить, стоп |
 | `GET /api/rooms/<КОД>/tracks` | лимиты звука, занятые слоты и доступна ли конвертация YouTube |
 | `POST /api/rooms/<КОД>/tracks` | свой mp3 телом запроса или ролик YouTube, скачанный в mp3 (до 40 МБ) |

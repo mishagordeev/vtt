@@ -422,6 +422,31 @@ def deploy_rsync(args: argparse.Namespace) -> None:
     reload_mod_wsgi(args)
 
 
+def scp_steps(
+    remote: str,
+    statics: list[Path],
+    python_stage: Path,
+    keys_file: Path | None,
+) -> list[tuple[str, list[str], str]]:
+    """Что и куда копирует scp: (название, источники, цель).
+
+    `scp -r` добавляет имя каталога к цели, поэтому `python/` копируется
+    в родителя (`remote`), а не в `remote/python`: иначе на сервере появлялся
+    вложенный `python/python`, а живой `api.wsgi` продолжал видеть старый код.
+    """
+    steps = [
+        ("страницы, чанки и карта", [str(path) for path in statics], f"{remote}/"),
+        ("python/", [str(python_stage)], remote),
+        ("api.wsgi", [str(APACHE_DIR / "api.wsgi")], f"{remote}/api.wsgi"),
+        ("cgi-bin/api.cgi", [str(APACHE_DIR / "api.cgi")], f"{remote}/cgi-bin/api.cgi"),
+    ]
+    if keys_file is not None:
+        steps.append(("keys.env", [str(keys_file)], f"{remote}/keys.env"))
+    # .htaccess последним: правила включаются, когда файлы уже на месте.
+    steps.append((".htaccess", [str(APACHE_DIR / ".htaccess")], f"{remote}/.htaccess"))
+    return steps
+
+
 def deploy(args: argparse.Namespace) -> None:
     remote = f"{args.user}@{args.host}:{args.target.rstrip('/')}"
     scp = [
@@ -445,18 +470,10 @@ def deploy(args: argparse.Namespace) -> None:
     # копирования — scp ответит «No such file or directory».
     with tempfile.TemporaryDirectory() as tmp:
         python_stage = stage_python(Path(tmp))
-        steps = [
-            ("страницы, чанки и карта", [str(path) for path in statics], f"{remote}/"),
-            ("python/", [str(python_stage)], f"{remote}/python"),
-            ("api.wsgi", [str(APACHE_DIR / "api.wsgi")], f"{remote}/api.wsgi"),
-            ("cgi-bin/api.cgi", [str(APACHE_DIR / "api.cgi")], f"{remote}/cgi-bin/api.cgi"),
-        ]
-        if args.keys.exists():
-            steps.append(("keys.env", [str(args.keys)], f"{remote}/keys.env"))
-        else:
+        keys_file = args.keys if args.keys.exists() else None
+        if keys_file is None:
             note("keys.env не выгружается — ключей Upstash нет")
-        # .htaccess последним: правила включаются, когда файлы уже на месте.
-        steps.append((".htaccess", [str(APACHE_DIR / ".htaccess")], f"{remote}/.htaccess"))
+        steps = scp_steps(remote, statics, python_stage, keys_file)
 
         # cgi-bin на аккаунте уже есть (там php*.cgi), но scp каталогов не создаёт.
         run(

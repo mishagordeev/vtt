@@ -3,6 +3,12 @@ import { worldClock } from "./calendar";
 import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
+import {
+  MAP_TEXT_LIMIT,
+  normalizeMapFont,
+  normalizeMapTextSize,
+  sanitizeMapText,
+} from "./mapText.ts";
 import { RULES } from "./rules";
 import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
@@ -13,6 +19,7 @@ import type {
   MapPoint,
   MapState,
   MapStroke,
+  MapText,
   MusicState,
   MusicTrack,
   Player,
@@ -44,7 +51,7 @@ const MAX_WEATHER_SEED = 100_000;
 const PLAYER_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 export function emptyMap(): MapState {
-  return { strokes: [], cursors: {}, pings: [], updatedAt: Date.now() };
+  return { strokes: [], texts: [], cursors: {}, pings: [], updatedAt: Date.now() };
 }
 
 export function emptyMusic(): MusicState {
@@ -94,6 +101,7 @@ function ensureMap(doc: RoomState): RoomState {
   } else {
     if (!doc.map.cursors || typeof doc.map.cursors !== "object") doc.map.cursors = {};
     if (!Array.isArray(doc.map.pings)) doc.map.pings = [];
+    if (!Array.isArray(doc.map.texts)) doc.map.texts = [];
   }
   return doc;
 }
@@ -898,7 +906,7 @@ function distanceToSegment(point: MapPoint, start: MapPoint, end: MapPoint): num
   return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
 }
 
-/** Действия с картой: курсор, линия, ластик, очистка. */
+/** Действия с картой: метка, линия, ластик, надписи, очистка. */
 export async function updateMap(
   code: string,
   rawActor: unknown,
@@ -956,11 +964,61 @@ export async function updateMap(
           });
         });
       });
+    } else if (kind === "text" || kind === "textUpdate" || kind === "textRemove") {
+      // Надписи поверх карты — только мастер: игроки рисуют и ставят метки.
+      if (!isGm(doc, actor)) throw new AppError(403, "Надписи на карте правит только мастер");
+      if (kind === "text") {
+        const text = sanitizeMapText(action.text);
+        if (!text) throw new AppError(400, "Пустая надпись");
+        const x = mapCoord(action.x);
+        const y = mapCoord(action.y);
+        if (x === null || y === null) throw new AppError(400, "Некорректная позиция надписи");
+        const entry: MapText = {
+          id: uid("txt"),
+          author: actor,
+          text,
+          x,
+          y,
+          color: PLAYER_COLOR_RE.test(String(action.color ?? "")) ? String(action.color) : "#f8fafc",
+          font: normalizeMapFont(action.font),
+          size: normalizeMapTextSize(action.size),
+        };
+        map.texts.push(entry);
+        if (map.texts.length > MAP_TEXT_LIMIT) {
+          map.texts.splice(0, map.texts.length - MAP_TEXT_LIMIT);
+        }
+      } else {
+        const id = String(action.id ?? "");
+        const entry = map.texts.find((item) => item.id === id);
+        if (!entry) throw new AppError(404, "Надпись не найдена");
+        if (kind === "textRemove") {
+          map.texts = map.texts.filter((item) => item.id !== id);
+        } else {
+          if (action.text !== undefined) {
+            const text = sanitizeMapText(action.text);
+            if (!text) throw new AppError(400, "Пустая надпись");
+            entry.text = text;
+          }
+          if (action.color !== undefined && PLAYER_COLOR_RE.test(String(action.color))) {
+            entry.color = String(action.color);
+          }
+          if (action.font !== undefined) entry.font = normalizeMapFont(action.font);
+          if (action.size !== undefined) entry.size = normalizeMapTextSize(action.size);
+          const nextX = action.x === undefined ? entry.x : mapCoord(action.x);
+          const nextY = action.y === undefined ? entry.y : mapCoord(action.y);
+          if (nextX === null || nextY === null) {
+            throw new AppError(400, "Некорректная позиция надписи");
+          }
+          entry.x = nextX;
+          entry.y = nextY;
+        }
+      }
     } else if (kind === "clear") {
       if (doc.gm.trim().toLowerCase() !== actor.toLowerCase()) {
         throw new AppError(403, "Очистить карту может только мастер");
       }
       map.strokes = [];
+      map.texts = [];
     } else {
       throw new AppError(400, "Неизвестное действие с картой");
     }
@@ -1251,6 +1309,7 @@ function renameReferences(doc: RoomState, from: string, to: string): void {
   for (const message of doc.messages) if (same(message.author)) message.author = to;
   for (const track of doc.music?.tracks ?? []) if (same(track.addedBy)) track.addedBy = to;
   for (const stroke of doc.map?.strokes ?? []) if (same(stroke.author)) stroke.author = to;
+  for (const text of doc.map?.texts ?? []) if (same(text.author)) text.author = to;
   for (const ping of doc.map?.pings ?? []) if (same(ping.name)) ping.name = to;
   if (same(doc.gm)) doc.gm = to;
 }

@@ -192,6 +192,23 @@ export interface MapStroke {
   points: MapPoint[];
 }
 
+/** Шрифт надписи на карте: ключ закрытого набора из `lib/mapText.ts`. */
+export type MapFont = "sans" | "serif" | "mono" | "hand";
+
+/** Надпись поверх карты: ставит и правит только мастер. */
+export interface MapText {
+  id: string;
+  author: string;
+  text: string;
+  /** Нормализованный центр надписи (0–1) — привязка к карте, а не к экрану. */
+  x: number;
+  y: number;
+  color: string;
+  font: MapFont;
+  /** Кегль как доля ширины карты. */
+  size: number;
+}
+
 export interface MapCursor {
   name: string;
   x: number;
@@ -210,6 +227,8 @@ export interface MapPing {
 
 export interface MapState {
   strokes: MapStroke[];
+  /** Надписи мастера поверх карты; в старых комнатах поля нет. */
+  texts: MapText[];
   /** Старые курсоры оставлены для чтения старых комнат; больше не обновляются. */
   cursors: Record<string, MapCursor>;
   pings: MapPing[];

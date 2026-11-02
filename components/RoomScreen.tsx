@@ -21,7 +21,7 @@ import { MusicPlaylist } from "./MusicPlaylist";
 import { PlayerProfile } from "./PlayerProfile";
 import { SheetDialog } from "./SheetDialog";
 
-const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
+const EMPTY_MAP: MapState = { strokes: [], texts: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
 const EMPTY_WORLD: WorldState = {
   day: 0,
