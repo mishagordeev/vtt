@@ -16,8 +16,8 @@ interface CharactersDialogProps {
 
 /**
  * Полный список листов комнаты: кнопка «Персонажи» в шапке стола открывает
- * его левой панелью поверх карты. Клик по карточке открывает лист в такой же
- * панели, стол при этом остаётся на месте.
+ * его левой панелью во всю ширину стола до правой панели. Клик по карточке
+ * открывает лист в такой же панели, чат и кубики при этом под рукой.
  */
 export function CharactersDialog({
   characters,
@@ -42,7 +42,7 @@ export function CharactersDialog({
       }
     >
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-3">
-        <div className="mx-auto grid w-full max-w-3xl gap-1.5 sm:grid-cols-2">
+        <div className="mx-auto grid w-full max-w-6xl gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {characters.map((character) => (
             <CharacterCard
               key={character.id}

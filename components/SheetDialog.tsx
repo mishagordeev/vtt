@@ -7,28 +7,20 @@ interface SheetDialogProps {
   title: string;
   /** Короткая подпись рядом с заголовком: количество листов, режим правки. */
   hint?: string;
-  /** Кнопка закрытия в правом верхнем углу, Esc и клик по карте справа. */
+  /** Кнопка закрытия в правом верхнем углу и Esc. */
   onClose: () => void;
   /** Дополнительные кнопки в шапке — слева от «Закрыть». */
   actions?: ReactNode;
-  /** Ширина панели: листу персонажа нужно больше места, чем списку и музыке. */
-  size?: "default" | "wide";
   children: ReactNode;
 }
 
 /**
- * Панель поверх левой части стола: лист персонажа, полный список листов и
- * музыка открываются у левого края окна, карта остаётся видна справа.
- * Затемнения нет — карта видно; клик по ней, «✕ Закрыть» и Esc закрывают панель.
+ * Панель поверх стола: лист персонажа, полный список листов и музыка занимают
+ * всё место от левого края окна до правой панели — она не часть экрана, а стол
+ * целиком до музыки, персонажей, чата и кубиков. Затемнения нет, правая панель
+ * остаётся рабочей; закрывают панель «✕ Закрыть» и Esc.
  */
-export function SheetDialog({
-  title,
-  hint,
-  onClose,
-  actions,
-  size = "default",
-  children,
-}: SheetDialogProps) {
+export function SheetDialog({ title, hint, onClose, actions, children }: SheetDialogProps) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -38,13 +30,16 @@ export function SheetDialog({
   }, [onClose]);
 
   return (
-    <div data-sheet-layer="left" className="fixed inset-0 z-[60] flex items-stretch">
+    // lg:right-[352px] — ровно ширина правой панели стола (RoomScreen): слой
+    // кончается там, где она начинается, и не перекрывает её нажатия.
+    <div
+      data-sheet-layer="left"
+      className="fixed inset-y-0 left-0 right-0 z-[60] flex items-stretch lg:right-[352px]"
+    >
       <div
         data-sheet-dialog=""
         data-sheet-side="left"
-        className={`flex h-full min-h-0 flex-col overflow-hidden border-r border-zinc-700 bg-zinc-950 shadow-2xl ${
-          size === "wide" ? "w-[min(100%,50rem)]" : "w-[min(100%,34rem)]"
-        }`}
+        className="flex h-full min-h-0 w-full flex-col overflow-hidden border-r border-zinc-700 bg-zinc-950 shadow-2xl"
         role="dialog"
         aria-modal="false"
         aria-label={title}
@@ -66,13 +61,6 @@ export function SheetDialog({
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
-      {/* Карта справа: остаётся видимой, но клик по ней возвращает к столу. */}
-      <div
-        data-sheet-backdrop=""
-        aria-hidden
-        onPointerDown={onClose}
-        className="min-w-0 flex-1"
-      />
     </div>
   );
 }

@@ -828,8 +828,9 @@ export default function RoomScreen({ code }: { code: string }) {
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* Стол виден всегда: карта, часы и игроки не исчезают ни при открытии
-            листа, ни в панели музыки — те открываются карточками поверх. */}
+        {/* Стол виден всегда: карта, часы и игроки не исчезают при правках, а лист
+            и музыка открываются левой панелью до правой панели — чат, персонажи
+            и кубики остаются под рукой. */}
         <section className="scroll-thin min-h-0 flex-1 overflow-y-auto">
           <DeskPanel
             code={code}
@@ -908,7 +909,6 @@ export default function RoomScreen({ code }: { code: string }) {
 
       {sheetOpen ? (
         <SheetDialog
-          size="wide"
           title={sheetCharacter?.name?.trim() || "Новый персонаж"}
           onClose={closeSheet}
         >
