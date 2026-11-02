@@ -566,7 +566,8 @@ export default function RoomScreen({ code }: { code: string }) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 px-3 py-2 backdrop-blur">
+      {/* pr-11: место под переключатель темы — он живёт в общем layout и стоит в правом верхнем углу. */}
+      <header className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 px-3 py-2 pr-11 backdrop-blur">
         <div className="flex items-center gap-2">
           <Link href="/" className="text-sm font-semibold tracking-tight text-zinc-50">
             Poison Press

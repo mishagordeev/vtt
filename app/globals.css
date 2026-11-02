@@ -56,6 +56,121 @@
   color-scheme: light;
 }
 
+/*
+ * Тёмная тема — «ночной пергамент».
+ *
+ * Компоненты о темах не знают: они на палитрах zinc и emerald, а `@theme` выше
+ * переопределяет сами палитры. Поэтому тёмная тема — это те же переменные,
+ * вывернутые по светлоте: фон уходит в тёмный коричневый, чернила становятся
+ * светлым пергаментом, старое золото — ярче, чтобы читаться на ночном столе.
+ * Названия оттенков остались прежними, меняются только значения, поэтому ни один
+ * класс в компонентах править не пришлось.
+ *
+ * Переключатель — `ThemeToggle` (правый верхний угол); он ставит `data-theme`
+ * на <html>, этот атрибут и включает блок ниже. Скрипт из `app/layout.tsx`
+ * делает то же до первой отрисовки, чтобы страница не мигала пергаментом.
+ */
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-zinc-50: #f7eeda;
+  --color-zinc-100: #ece0c6;
+  --color-zinc-200: #d8c9a9;
+  --color-zinc-300: #c0af8d;
+  --color-zinc-400: #a4936f;
+  --color-zinc-500: #8c7c59;
+  --color-zinc-600: #7a6a4b;
+  --color-zinc-700: #6b5d42;
+  --color-zinc-800: #504435;
+  --color-zinc-900: #262017;
+  --color-zinc-950: #17130d;
+
+  --color-emerald-200: #f1dba8;
+  --color-emerald-300: #e6c984;
+  --color-emerald-400: #d6ad57;
+  --color-emerald-500: #c2962f;
+  --color-emerald-600: #a87e28;
+  --color-emerald-700: #8a6722;
+  --color-emerald-800: #6a4f1b;
+  --color-emerald-900: #483611;
+  --color-emerald-950: #1c1407;
+
+  --color-amber-200: #f0d49a;
+  --color-amber-300: #e4c17a;
+  --color-amber-400: #d5a54c;
+  --color-amber-500: #bd8a28;
+  --color-amber-600: #a17322;
+  --color-amber-950: #1d1506;
+
+  --color-rose-200: #f2b3b3;
+  --color-rose-300: #ea9a9a;
+  --color-rose-400: #de7f7f;
+  --color-rose-500: #c95a5a;
+  --color-rose-600: #a94a4a;
+  --color-rose-950: #2b1212;
+
+  --color-sky-300: #8ec7e0;
+  --color-teal-300: #8ad2c1;
+  --color-indigo-300: #abaeec;
+  --color-fuchsia-300: #dba6cd;
+  --color-orange-300: #e7a96b;
+}
+
+html[data-theme="dark"] body {
+  color: #ece0c6;
+  background-color: #14110b;
+  background-image:
+    radial-gradient(circle at 15% -10%, rgba(198, 150, 47, 0.1), transparent 45%),
+    radial-gradient(circle at 88% 0%, rgba(150, 104, 52, 0.1), transparent 40%),
+    repeating-linear-gradient(0deg, rgba(236, 214, 170, 0.02) 0 1px, transparent 1px 4px);
+}
+
+html[data-theme="dark"] ::selection {
+  background: rgba(214, 173, 87, 0.32);
+}
+
+html[data-theme="dark"] .scroll-thin {
+  scrollbar-color: #6b5d42 transparent;
+}
+
+html[data-theme="dark"] .scroll-thin::-webkit-scrollbar-thumb {
+  background-color: #6b5d42;
+}
+
+/* Подпись под кубиком: на тёмном столе белая тень уже не помогает. */
+html[data-theme="dark"] .die-label {
+  color: #c0af8d;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+/*
+ * Буквы на цвете игрока. Цвет кружка выбирает сам игрок в профиле (тёмные
+ * насыщенные тона), поэтому текст там не из палитры темы, а всегда светлый
+ * пергамент — иначе в тёмной теме он стал бы почти чёрным на тёмно-синем.
+ */
+.pp-on-player {
+  color: #f5ecd6;
+}
+
+/* ---------- переключатель темы ---------- */
+
+/*
+ * Иконка показывает, во что переключит кнопка: в светлой теме — луна,
+ * в тёмной — солнце. Решает CSS, а не состояние React: тему ставит скрипт
+ * из <head> до гидратации, и иконка не должна мигать чужой.
+ */
+.pp-theme-icon--sun {
+  display: none;
+}
+
+html[data-theme="dark"] .pp-theme-icon--sun {
+  display: inline;
+}
+
+html[data-theme="dark"] .pp-theme-icon--moon {
+  display: none;
+}
+
 html,
 body {
   height: 100%;

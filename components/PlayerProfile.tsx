@@ -103,7 +103,7 @@ export function PlayerProfile({
       <div className="scroll-thin max-h-[88vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           <span
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-zinc-950"
+            className="pp-on-player flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
             style={{ backgroundColor: color }}
           >
             {initials(name || player.name)}

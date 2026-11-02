@@ -200,7 +200,7 @@ export function DeskPanel({
                     title="Открыть профиль игрока"
                   >
                     <span
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-zinc-950"
+                      className="pp-on-player flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
                       style={{ backgroundColor: player.color || "#8a6a2f" }}
                     >
                       {initials(player.name)}
