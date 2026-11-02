@@ -166,7 +166,7 @@ test("карта отдаётся в AVIF/WebP: <picture> выбирает фо�
   assert.match(board, /src="\/map\/kas-khatar\.jpg"/, "запасной JPEG должен остаться");
   assert.match(
     board,
-    /width=\{MAP_WIDTH\}[\s\S]{0,40}height=\{MAP_HEIGHT\}/,
+    /width=\{MAP_RASTER\.width\}[\s\S]{0,40}height=\{MAP_RASTER\.height\}/,
     "размер кадра задан атрибутами — карта не прыгает, пока формат грузится",
   );
   assert.ok(

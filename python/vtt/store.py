@@ -31,6 +31,12 @@ MAP_TEXT_MIN_SIZE = 0.008
 MAP_TEXT_MAX_SIZE = 0.06
 MAP_FONTS = ("sans", "serif", "mono", "hand")
 MAP_TEXT_KINDS = ("label", "point")
+# Вкладки карты: первая — Кас-Хатар, новые мастер добавляет пустым полотном с сеткой.
+MAP_TAB_KINDS = ("kas-khatar", "grid")
+MAP_TAB_NAME_MAX = 40
+MAX_MAP_TABS = 12
+MAP_TAB_DEFAULT_ID = "kas-khatar"
+MAP_TAB_DEFAULT_NAME = "Кас-Хатар"
 MAX_MUSIC_TRACKS = 20
 MAX_MUSIC_POSITION = 86_400
 MAX_DELETED_MESSAGES = 400
@@ -81,8 +87,25 @@ def uid(prefix=""):
     return "%s_%s" % (prefix, raw) if prefix else raw
 
 
+def default_map_tab(created_at=None):
+    """Первая вкладка любой комнаты — карта Кас-Хатара."""
+    return {
+        "id": MAP_TAB_DEFAULT_ID,
+        "name": MAP_TAB_DEFAULT_NAME,
+        "kind": "kas-khatar",
+        "createdAt": _now() if created_at is None else created_at,
+    }
+
+
 def empty_map():
-    return {"strokes": [], "texts": [], "cursors": {}, "pings": [], "updatedAt": _now()}
+    return {
+        "tabs": [default_map_tab()],
+        "strokes": [],
+        "texts": [],
+        "cursors": {},
+        "pings": [],
+        "updatedAt": _now(),
+    }
 
 
 def empty_music():
@@ -122,6 +145,90 @@ def ensure_world(doc):
     return doc
 
 
+def _map_tab_name(value):
+    """Подпись вкладки без переводов строк и лишних пробелов (`sanitizeMapTabName`)."""
+    return " ".join(str(value or "").split())[:MAP_TAB_NAME_MAX]
+
+
+def _map_tab_kind(value):
+    """Неизвестный вид — карта Кас-Хатара (`normalizeMapTabKind`)."""
+    return "grid" if str(value or "").strip().lower() == "grid" else "kas-khatar"
+
+
+def ensure_map_tabs(raw):
+    """
+    Вкладки комнаты (`ensureMapTabs`): старые документы без поля получают одну
+    вкладку «Кас-Хатар», мусор и повторяющиеся id выбрасываются. Первая вкладка
+    всегда остаётся картой Кас-Хатара — к ней относятся записи без `tab`.
+    """
+    tabs = []
+    seen = set()
+    for entry in as_list(raw)[:MAX_MAP_TABS]:
+        item = as_dict(entry)
+        tab_id = str(item.get("id") or "").strip()[:64]
+        if not tab_id or tab_id in seen:
+            continue
+        seen.add(tab_id)
+        created = to_number(item.get("createdAt"))
+        tabs.append(
+            {
+                "id": tab_id,
+                "name": _map_tab_name(item.get("name")) or "Карта %d" % (len(tabs) + 1),
+                "kind": _map_tab_kind(item.get("kind")),
+                "createdAt": int(created) if created is not None and created > 0 else 0,
+            }
+        )
+    if not tabs:
+        return [default_map_tab()]
+    if tabs[0]["kind"] != "kas-khatar":
+        tabs[0]["kind"] = "kas-khatar"
+    return tabs
+
+
+def _find_map_tab(tabs, value):
+    """Вкладка по id; None — такой вкладки в комнате нет."""
+    wanted = str(value or "").strip()
+    if not wanted:
+        return None
+    for tab in tabs:
+        if tab["id"] == wanted:
+            return tab
+    return None
+
+
+def _map_tab_id(tabs, value):
+    """
+    Вкладка, к которой относится действие: без поля (старый клиент) — первая,
+    неизвестный id — ошибка (`mapTabId` в Node-версии).
+    """
+    if value is None or value == "":
+        return tabs[0]["id"]
+    tab = _find_map_tab(tabs, value)
+    if tab is None:
+        raise AppError(400, "Вкладка карты не найдена")
+    return tab["id"]
+
+
+def _map_tab_of(entry, tabs):
+    """К какой вкладке относится запись: её `tab`, иначе первая (`entryTabId`)."""
+    fallback = tabs[0]["id"] if tabs else MAP_TAB_DEFAULT_ID
+    wanted = str(as_dict(entry).get("tab") or "").strip()
+    for tab in tabs:
+        if tab["id"] == wanted:
+            return tab["id"]
+    return fallback
+
+
+def _next_map_tab_name(tabs):
+    """Имя следующей вкладки: «Карта 2», «Карта 3», … — номер не повторяется."""
+    last = 1
+    for tab in tabs:
+        match = re.match(r"^Карта\s+(\d+)$", str(tab.get("name") or "").strip(), re.IGNORECASE)
+        if match:
+            last = max(last, int(match.group(1)))
+    return "Карта %d" % (last + 1)
+
+
 def ensure_map(doc):
     state = doc.get("map")
     if not isinstance(state, dict) or not isinstance(state.get("strokes"), list):
@@ -131,32 +238,37 @@ def ensure_map(doc):
             state["cursors"] = {}
         if not isinstance(state.get("pings"), list):
             state["pings"] = []
+        # Комнаты до 0.4.66 не знали вкладок: у них появляется одна — «Кас-Хатар».
+        state["tabs"] = ensure_map_tabs(state.get("tabs"))
         if not isinstance(state.get("texts"), list):
             state["texts"] = []
         else:
             # Надписи могли прийти из старой комнаты или из Node-версии:
             # приводим их к тем же правилам, что и update_map.
             texts = []
-            for entry in state["texts"]:
-                item = as_dict(entry)
+            for raw_entry in state["texts"]:
+                item = as_dict(raw_entry)
                 label = _map_text(item.get("text"))
                 x = _map_coord(item.get("x"))
                 y = _map_coord(item.get("y"))
                 if not label or x is None or y is None:
                     continue
-                texts.append(
-                    {
-                        "id": str(item.get("id") or uid("txt")),
-                        "author": str(item.get("author") or ""),
-                        "text": label,
-                        "x": x,
-                        "y": y,
-                        "color": _color_or(item.get("color"), "#f8fafc"),
-                        "font": _map_font(item.get("font")),
-                        "size": _map_text_size(item.get("size")),
-                        "kind": _map_text_kind(item.get("kind")),
-                    }
-                )
+                entry = {
+                    "id": str(item.get("id") or uid("txt")),
+                    "author": str(item.get("author") or ""),
+                    "text": label,
+                    "x": x,
+                    "y": y,
+                    "color": _color_or(item.get("color"), "#f8fafc"),
+                    "font": _map_font(item.get("font")),
+                    "size": _map_text_size(item.get("size")),
+                    "kind": _map_text_kind(item.get("kind")),
+                }
+                # Вкладку нельзя терять при чтении: иначе запись уедет на Кас-Хатар.
+                tab_id = str(item.get("tab") or "").strip()
+                if tab_id:
+                    entry["tab"] = tab_id
+                texts.append(entry)
             state["texts"] = texts
     return doc
 
@@ -807,7 +919,7 @@ def _stroke_touched(stroke, erase_points, radius):
 
 
 def update_map(code, raw_actor, raw_action):
-    """Действия с картой: метка, линия, ластик, очистка."""
+    """Действия с картой: метка, линия, ластик, надписи, очистка и вкладки."""
     actor = normalize_name(raw_actor)
     if not actor:
         raise AppError(400, "Сначала войдите в комнату")
@@ -820,7 +932,12 @@ def update_map(code, raw_actor, raw_action):
             raise AppError(400, "Сначала войдите в комнату")
         touch_player(doc, actor)
         state = doc["map"]
+        tabs = ensure_map_tabs(state.get("tabs"))
+        state["tabs"] = tabs
         now = _now()
+        # К какой вкладке относится действие: рисование, метка, надпись и очистка
+        # работают только с выбранной картой, остальные вкладки не трогаются.
+        tab_id = _map_tab_id(tabs, action.get("tab"))
 
         if kind == "ping":
             x = _map_coord(action.get("x"))
@@ -834,7 +951,15 @@ def update_map(code, raw_actor, raw_action):
             color = own_color or _color_or(action.get("color"), "#fb7185")
             pings = as_list(state.get("pings"))
             pings.append(
-                {"id": uid("png"), "name": actor, "x": x, "y": y, "color": color, "createdAt": now}
+                {
+                    "id": uid("png"),
+                    "name": actor,
+                    "x": x,
+                    "y": y,
+                    "color": color,
+                    "createdAt": now,
+                    "tab": tab_id,
+                }
             )
             if len(pings) > MAX_PINGS:
                 del pings[: len(pings) - MAX_PINGS]
@@ -852,6 +977,7 @@ def update_map(code, raw_actor, raw_action):
                     "color": _color_or(action.get("color"), "#e11d48"),
                     "width": width,
                     "points": points,
+                    "tab": tab_id,
                 }
             )
             if len(strokes) > MAX_STROKES:
@@ -865,7 +991,9 @@ def update_map(code, raw_actor, raw_action):
             state["strokes"] = [
                 stroke
                 for stroke in as_list(state.get("strokes"))
-                if not _stroke_touched(stroke, points, radius)
+                # Ластик стирает только линии выбранной вкладки.
+                if _map_tab_of(stroke, tabs) != tab_id
+                or not _stroke_touched(stroke, points, radius)
             ]
         elif kind in ("text", "textUpdate", "textRemove"):
             # Надписи поверх карты — только мастер: игроки рисуют и ставят метки.
@@ -891,6 +1019,7 @@ def update_map(code, raw_actor, raw_action):
                         "font": _map_font(action.get("font")),
                         "size": _map_text_size(action.get("size")),
                         "kind": _map_text_kind(action.get("kind")),
+                        "tab": tab_id,
                     }
                 )
                 if len(texts) > MAX_MAP_TEXTS:
@@ -932,8 +1061,52 @@ def update_map(code, raw_actor, raw_action):
         elif kind == "clear":
             if str(doc.get("gm") or "").strip().lower() != actor.lower():
                 raise AppError(403, "Очистить карту может только мастер")
-            state["strokes"] = []
-            state["texts"] = []
+            # «Очистить» убирает рисунки и надписи выбранной вкладки, остальные карты целы.
+            state["strokes"] = [
+                stroke
+                for stroke in as_list(state.get("strokes"))
+                if _map_tab_of(stroke, tabs) != tab_id
+            ]
+            state["texts"] = [
+                entry
+                for entry in as_list(state.get("texts"))
+                if _map_tab_of(entry, tabs) != tab_id
+            ]
+        elif kind == "tabAdd":
+            if str(doc.get("gm") or "").strip().lower() != actor.lower():
+                raise AppError(403, "Вкладки карты добавляет только мастер")
+            if len(tabs) >= MAX_MAP_TABS:
+                raise AppError(400, "Больше %d вкладок карты не добавить" % MAX_MAP_TABS)
+            tabs.append(
+                {
+                    "id": uid("tab"),
+                    "name": _next_map_tab_name(tabs),
+                    "kind": "grid",
+                    "createdAt": now,
+                }
+            )
+            state["tabs"] = tabs
+        elif kind == "tabRemove":
+            if str(doc.get("gm") or "").strip().lower() != actor.lower():
+                raise AppError(403, "Удалить вкладку карты может только мастер")
+            wanted = str(action.get("id") or "")
+            index = next((i for i, tab in enumerate(tabs) if tab["id"] == wanted), -1)
+            if index < 0:
+                raise AppError(404, "Вкладка карты не найдена")
+            if index == 0:
+                raise AppError(400, "Карту Кас-Хатара удалить нельзя")
+            del tabs[index]
+            state["tabs"] = tabs
+            # Вместе с вкладкой уходят её линии, надписи и метки.
+            state["strokes"] = [
+                stroke for stroke in as_list(state.get("strokes")) if as_dict(stroke).get("tab") != wanted
+            ]
+            state["texts"] = [
+                entry for entry in as_list(state.get("texts")) if as_dict(entry).get("tab") != wanted
+            ]
+            state["pings"] = [
+                ping for ping in as_list(state.get("pings")) if as_dict(ping).get("tab") != wanted
+            ]
         else:
             raise AppError(400, "Неизвестное действие с картой")
 

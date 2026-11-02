@@ -159,9 +159,13 @@ test("Node-сервер: надписи правит только мастер, 
   );
   assert.match(store, /MAP_TEXT_LIMIT/, "число надписей ограничено");
   const clearAt = store.indexOf('} else if (kind === "clear")');
-  const clearBlock = store.slice(clearAt, clearAt + 400);
-  assert.match(clearBlock, /map\.strokes = \[\]/);
-  assert.match(clearBlock, /map\.texts = \[\]/, "«Очистить» убирает и надписи");
+  const clearBlock = store.slice(clearAt, clearAt + 500);
+  assert.match(
+    clearBlock,
+    /map\.strokes = map\.strokes\.filter\(\(stroke\) => entryTabId\(stroke, tabs\) !== tab\)/,
+    "«Очистить» чистит линии выбранной вкладки",
+  );
+  assert.match(clearBlock, /map\.texts = map\.texts\.filter/, "«Очистить» убирает и надписи");
 });
 
 test("Python-сервер повторяет правила надписей", () => {
@@ -181,7 +185,8 @@ test("Python-сервер повторяет правила надписей", (
     /if action\.get\("kind"\) is not None:\s*\n\s*entry\["kind"\] = _map_text_kind/,
     "правка вида записи в Python-версии",
   );
-  assert.match(store, /"strokes": \[\], "texts": \[\]/, "пустая карта получает список надписей");
+  assert.match(store, /"texts": \[\]/, "пустая карта получает список надписей");
+  assert.match(store, /"tabs": \[default_map_tab\(\)\]/, "и вкладку Кас-Хатара");
   assert.match(store, /if not isinstance\(state\.get\("texts"\), list\)/);
   assert.match(
     store,
@@ -189,7 +194,11 @@ test("Python-сервер повторяет правила надписей", (
     "надписи в Python-версии тоже только у мастера",
   );
   const clearAt = store.indexOf('elif kind == "clear":');
-  const clearBlock = store.slice(clearAt, clearAt + 400);
-  assert.match(clearBlock, /state\["strokes"\] = \[\]/);
-  assert.match(clearBlock, /state\["texts"\] = \[\]/);
+  const clearBlock = store.slice(clearAt, clearAt + 700);
+  assert.match(
+    clearBlock,
+    /if _map_tab_of\(stroke, tabs\) != tab_id/,
+    "«Очистить» чистит линии выбранной вкладки",
+  );
+  assert.match(clearBlock, /if _map_tab_of\(entry, tabs\) != tab_id/, "и надписи выбранной вкладки");
 });

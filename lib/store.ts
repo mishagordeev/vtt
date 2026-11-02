@@ -10,6 +10,14 @@ import {
   normalizeMapTextSize,
   sanitizeMapText,
 } from "./mapText.ts";
+import {
+  MAP_TABS_LIMIT,
+  defaultMapTab,
+  ensureMapTabs,
+  entryTabId,
+  findMapTab,
+  nextMapTabName,
+} from "./mapTabs.ts";
 import { RULES } from "./rules";
 import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
@@ -20,6 +28,7 @@ import type {
   MapPoint,
   MapState,
   MapStroke,
+  MapTab,
   MapText,
   MusicState,
   MusicTrack,
@@ -52,7 +61,14 @@ const MAX_WEATHER_SEED = 100_000;
 const PLAYER_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 export function emptyMap(): MapState {
-  return { strokes: [], texts: [], cursors: {}, pings: [], updatedAt: Date.now() };
+  return {
+    tabs: [defaultMapTab()],
+    strokes: [],
+    texts: [],
+    cursors: {},
+    pings: [],
+    updatedAt: Date.now(),
+  };
 }
 
 export function emptyMusic(): MusicState {
@@ -103,6 +119,8 @@ function ensureMap(doc: RoomState): RoomState {
     if (!doc.map.cursors || typeof doc.map.cursors !== "object") doc.map.cursors = {};
     if (!Array.isArray(doc.map.pings)) doc.map.pings = [];
     if (!Array.isArray(doc.map.texts)) doc.map.texts = [];
+    // Комнаты до 0.4.66 не знали вкладок: у них появляется одна — «Кас-Хатар».
+    doc.map.tabs = ensureMapTabs(doc.map.tabs);
   }
   return doc;
 }
@@ -881,6 +899,17 @@ function mapCoord(value: unknown): number | null {
   return Math.max(0, Math.min(1, number));
 }
 
+/**
+ * Вкладка, к которой относится действие: клиент присылает её id, а запрос без
+ * поля (старый клиент) попадает на первую — карту Кас-Хатара.
+ */
+function mapTabId(tabs: MapTab[], value: unknown): string {
+  if (value === undefined || value === null || value === "") return tabs[0].id;
+  const found = findMapTab(tabs, value);
+  if (!found) throw new AppError(400, "Вкладка карты не найдена");
+  return found.id;
+}
+
 function readMapPoints(raw: unknown): MapPoint[] {
   if (!Array.isArray(raw)) return [];
   const points: MapPoint[] = [];
@@ -922,8 +951,13 @@ export async function updateMap(
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
     const map = doc.map;
+    const tabs = ensureMapTabs(map.tabs);
+    map.tabs = tabs;
     const kind = String(action.action ?? "");
     const now = Date.now();
+    // К какой вкладке относится действие: рисование, метка, надпись и очистка
+    // работают только с выбранной картой, остальные вкладки не трогаются.
+    const tab = mapTabId(tabs, action.tab);
 
     if (kind === "ping") {
       const x = mapCoord(action.x);
@@ -934,7 +968,7 @@ export async function updateMap(
       const color = ownColor || (/^#[0-9a-f]{6}$/i.test(String(action.color ?? ""))
         ? String(action.color)
         : "#fb7185");
-      const ping: MapPing = { id: uid("png"), name: actor, x, y, color, createdAt: now };
+      const ping: MapPing = { id: uid("png"), name: actor, x, y, color, createdAt: now, tab };
       map.pings.push(ping);
       if (map.pings.length > MAX_PINGS) {
         map.pings.splice(0, map.pings.length - MAX_PINGS);
@@ -944,7 +978,7 @@ export async function updateMap(
       if (points.length === 0) throw new AppError(400, "Пустая линия");
       const color = /^#[0-9a-f]{6}$/i.test(String(action.color ?? "")) ? String(action.color) : "#e11d48";
       const width = Math.max(0.001, Math.min(0.02, Number(action.width) || 0.004));
-      const stroke: MapStroke = { id: uid("drw"), author: actor, color, width, points };
+      const stroke: MapStroke = { id: uid("drw"), author: actor, color, width, points, tab };
       map.strokes.push(stroke);
       if (map.strokes.length > MAX_STROKES) {
         map.strokes.splice(0, map.strokes.length - MAX_STROKES);
@@ -954,6 +988,8 @@ export async function updateMap(
       const radius = Math.max(0.005, Math.min(0.08, Number(action.radius) || 0.02));
       if (points.length === 0) throw new AppError(400, "Пустой ластик");
       map.strokes = map.strokes.filter((stroke) => {
+        // Ластик стирает только линии выбранной вкладки.
+        if (entryTabId(stroke, tabs) !== tab) return true;
         return !stroke.points.some((point, index) => {
           const previous = index > 0 ? stroke.points[index - 1] : null;
           const next = index + 1 < stroke.points.length ? stroke.points[index + 1] : null;
@@ -984,6 +1020,7 @@ export async function updateMap(
           font: normalizeMapFont(action.font),
           size: normalizeMapTextSize(action.size),
           kind: normalizeMapTextKind(action.kind),
+          tab,
         };
         map.texts.push(entry);
         if (map.texts.length > MAP_TEXT_LIMIT) {
@@ -1020,8 +1057,34 @@ export async function updateMap(
       if (doc.gm.trim().toLowerCase() !== actor.toLowerCase()) {
         throw new AppError(403, "Очистить карту может только мастер");
       }
-      map.strokes = [];
-      map.texts = [];
+      // «Очистить» убирает рисунки и надписи выбранной вкладки, остальные карты целы.
+      map.strokes = map.strokes.filter((stroke) => entryTabId(stroke, tabs) !== tab);
+      map.texts = map.texts.filter((entry) => entryTabId(entry, tabs) !== tab);
+    } else if (kind === "tabAdd") {
+      if (!isGm(doc, actor)) throw new AppError(403, "Вкладки карты добавляет только мастер");
+      if (tabs.length >= MAP_TABS_LIMIT) {
+        throw new AppError(400, `Больше ${MAP_TABS_LIMIT} вкладок карты не добавить`);
+      }
+      const added: MapTab = {
+        id: uid("tab"),
+        name: nextMapTabName(tabs),
+        kind: "grid",
+        createdAt: now,
+      };
+      tabs.push(added);
+      map.tabs = tabs;
+    } else if (kind === "tabRemove") {
+      if (!isGm(doc, actor)) throw new AppError(403, "Удалить вкладку карты может только мастер");
+      const id = String(action.id ?? "");
+      const index = tabs.findIndex((entry) => entry.id === id);
+      if (index < 0) throw new AppError(404, "Вкладка карты не найдена");
+      if (index === 0) throw new AppError(400, "Карту Кас-Хатара удалить нельзя");
+      tabs.splice(index, 1);
+      map.tabs = tabs;
+      // Вместе с вкладкой уходят её линии, надписи и метки.
+      map.strokes = map.strokes.filter((stroke) => stroke.tab !== id);
+      map.texts = map.texts.filter((entry) => entry.tab !== id);
+      map.pings = map.pings.filter((ping) => ping.tab !== id);
     } else {
       throw new AppError(400, "Неизвестное действие с картой");
     }

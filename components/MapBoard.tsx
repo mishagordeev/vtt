@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MAP_FONT_OPTIONS,
   MAP_FONT_STACK,
@@ -10,7 +10,8 @@ import {
   nearestMapTextSize,
   sanitizeMapText,
 } from "@/lib/mapText";
-import { HEX_SCALE } from "@/lib/mapScale";
+import { ensureMapTabs, entryTabId, MAP_GRID } from "@/lib/mapTabs";
+import { HEX_SCALE, MAP_RASTER } from "@/lib/mapScale";
 import type { MapFont, MapPoint, MapState, MapStroke, MapText } from "@/lib/types";
 
 interface MapBoardProps {
@@ -23,9 +24,6 @@ interface MapBoardProps {
 }
 
 const PING_TTL = 3_000;
-/** Размер растра карты: атрибуты width/height держат место до загрузки — стол не прыгает. */
-const MAP_WIDTH = 4333;
-const MAP_HEIGHT = 3064;
 const MAX_POINTS = 600;
 const POINT_STEP = 0.0025;
 const CLICK_DISTANCE = 0.006;
@@ -105,6 +103,28 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const [revealed, setRevealed] = useState<{ id: string; at: number } | null>(null);
   const [, setTick] = useState(0);
 
+  // Вкладки карты: сами вкладки общие (их список приходит с сервера), а какую
+  // смотрит игрок — решает он сам. Записи фильтруются по выбранной вкладке.
+  const tabs = useMemo(() => ensureMapTabs(map.tabs), [map.tabs]);
+  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  useEffect(() => {
+    if (!tabs.some((entry) => entry.id === activeTab)) setActiveTab(tabs[0].id);
+  }, [tabs, activeTab]);
+  const tab = tabs.find((entry) => entry.id === activeTab) ?? tabs[0];
+  const strokes = useMemo(
+    () => map.strokes.filter((stroke) => entryTabId(stroke, tabs) === tab.id),
+    [map.strokes, tabs, tab.id],
+  );
+
+  // Переключили вкладку — незаконченный штрих и редактор остаются от старой карты.
+  useEffect(() => {
+    currentRef.current = [];
+    setCurrent([]);
+    setEditingTextId(null);
+    setRevealed(null);
+    setErasePoint(null);
+  }, [activeTab]);
+
   // Картинка могла прийти из кэша до подписки на onLoad — тогда размер берём сразу.
   useEffect(() => {
     const image = imageRef.current;
@@ -156,13 +176,13 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     if (!context) return;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, size.width, size.height);
-    for (const stroke of map.strokes) {
+    for (const stroke of strokes) {
       drawStroke(context, stroke, size.width, size.height);
     }
     if (current.length > 0 && tool === "pen") {
       drawStroke(context, { points: current, color, width }, size.width, size.height);
     }
-  }, [map.strokes, current, size, tool, color, width]);
+  }, [strokes, current, size, tool, color, width]);
 
   function pointFrom(event: React.PointerEvent<HTMLDivElement>): MapPoint {
     const rect = wrapRef.current?.getBoundingClientRect();
@@ -264,7 +284,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
       currentRef.current = [];
       setCurrent([]);
       setErasePoint(null);
-      void onAction({ action: "ping", x: start.x, y: start.y, color: pingColor || colorFor(me) }).then((result) => {
+      void onAction({ action: "ping", x: start.x, y: start.y, color: pingColor || colorFor(me), tab: tab.id }).then((result) => {
         setError(result ? "" : "Не удалось показать метку");
       });
       return;
@@ -274,9 +294,33 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
 
   async function clearBoard() {
     if (!isGM) return;
-    if (!window.confirm("Очистить все линии и надписи на карте?")) return;
-    const result = await onAction({ action: "clear" });
+    if (!window.confirm("Очистить линии и надписи на этой вкладке?")) return;
+    const result = await onAction({ action: "clear", tab: tab.id });
     setError(result ? "" : "Очистить карту может только мастер");
+  }
+
+  /** Новая вкладка — белый лист с серой сеткой того же размера, что карта. */
+  async function addTab() {
+    const result = await onAction({ action: "tabAdd" });
+    if (!result) {
+      setError("Вкладку карты добавляет только мастер");
+      return;
+    }
+    const next = ensureMapTabs(result.tabs);
+    setError("");
+    setActiveTab(next[next.length - 1].id);
+  }
+
+  async function removeTab() {
+    if (!isGM || tab.kind === "kas-khatar") return;
+    if (!window.confirm(`Удалить вкладку «${tab.name}» вместе с рисунками и надписями?`)) return;
+    const result = await onAction({ action: "tabRemove", id: tab.id });
+    if (!result) {
+      setError("Удалить вкладку карты может только мастер");
+      return;
+    }
+    setError("");
+    setActiveTab(ensureMapTabs(result.tabs)[0].id);
   }
 
   /** Новая надпись или точка — по клику на карту, пока ничего не выбрано для правки. */
@@ -300,6 +344,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
       color: textColor,
       font: textFont,
       size: textSize,
+      tab: tab.id,
     });
     if (!result) {
       setError("Надпись не сохранилась: её ставит только мастер");
@@ -370,14 +415,16 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     setError("");
   }
 
-  const pings = (map.pings ?? []).filter((ping) => Date.now() - ping.createdAt < PING_TTL);
-  const texts = map.texts ?? [];
+  const pings = (map.pings ?? []).filter(
+    (ping) => Date.now() - ping.createdAt < PING_TTL && entryTabId(ping, tabs) === tab.id,
+  );
+  const texts = (map.texts ?? []).filter((entry) => entryTabId(entry, tabs) === tab.id);
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-            Карта Кас-Хатара
+            {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
           </h2>
           <p className="text-[10px] text-zinc-600">
             Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · мастер ставит
@@ -387,6 +434,50 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
           метки: {pings.length}
         </span>
+      </div>
+
+      {/* Вкладки карт: «Кас-Хатар» и полотна, которые мастер добавляет сам.
+          Новая вкладка — белый лист с серой сеткой по размеру карты. */}
+      <div className="flex flex-wrap items-center gap-1" data-map-tabs>
+        {tabs.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            onClick={() => setActiveTab(entry.id)}
+            title={
+              entry.kind === "kas-khatar"
+                ? "Карта Кас-Хатара"
+                : `Вкладка «${entry.name}»: пустой лист с сеткой`
+            }
+            className={`rounded-md border px-2 py-0.5 text-[10px] transition ${
+              entry.id === tab.id
+                ? "border-emerald-400/70 bg-emerald-500/15 text-emerald-100"
+                : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+            }`}
+          >
+            {entry.kind === "kas-khatar" ? "Кас-Хатар" : entry.name}
+          </button>
+        ))}
+        {isGM ? (
+          <button
+            type="button"
+            onClick={() => void addTab()}
+            title="Новая вкладка: белый лист с серой сеткой по размеру карты"
+            className="rounded-md border border-dashed border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300 transition hover:border-emerald-400/70 hover:text-emerald-200"
+          >
+            + вкладка
+          </button>
+        ) : null}
+        {isGM && tab.kind !== "kas-khatar" ? (
+          <button
+            type="button"
+            onClick={() => void removeTab()}
+            title={`Удалить вкладку «${tab.name}»`}
+            className="rounded-md border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-500 transition hover:border-rose-400/60 hover:text-rose-300"
+          >
+            × удалить
+          </button>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
@@ -404,28 +495,68 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                 : "cursor-cell"
           }`}
         >
-          {/* Формат выбирает браузер: берётся первый поддержанный <source>, JPEG
-              остаётся запасным. Статика собирается без оптимизатора картинок
-              (images.unoptimized), поэтому здесь <picture>, а не next/image.
-              Файлы собирает `py -3.13 tools/make-map-formats.py`. */}
-          <picture className="block">
-            <source type="image/avif" srcSet="/map/kas-khatar.avif" />
-            <source type="image/webp" srcSet="/map/kas-khatar.webp" />
-            <img
-              ref={imageRef}
-              src="/map/kas-khatar.jpg"
-              alt="Карта Кас-Хатара"
-              width={MAP_WIDTH}
-              height={MAP_HEIGHT}
-              decoding="async"
-              draggable={false}
-              onLoad={(event) => {
-                const { naturalWidth, naturalHeight } = event.currentTarget;
-                setPixels({ width: naturalWidth, height: naturalHeight });
-              }}
-              className="block h-auto w-full"
-            />
-          </picture>
+          {tab.kind === "kas-khatar" ? (
+            /* Формат выбирает браузер: берётся первый поддержанный <source>, JPEG
+                остаётся запасным. Статика собирается без оптимизатора картинок
+                (images.unoptimized), поэтому здесь <picture>, а не next/image.
+                Файлы собирает `py -3.13 tools/make-map-formats.py`. */
+            <picture className="block">
+              <source type="image/avif" srcSet="/map/kas-khatar.avif" />
+              <source type="image/webp" srcSet="/map/kas-khatar.webp" />
+              <img
+                ref={imageRef}
+                src="/map/kas-khatar.jpg"
+                alt="Карта Кас-Хатара"
+                width={MAP_RASTER.width}
+                height={MAP_RASTER.height}
+                decoding="async"
+                draggable={false}
+                onLoad={(event) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget;
+                  setPixels({ width: naturalWidth, height: naturalHeight });
+                }}
+                className="block h-auto w-full"
+              />
+            </picture>
+          ) : (
+            /* Пустой лист: белое полотно с серой сеткой того же размера, что карта
+                (4333×3064). Сетка — SVG-узор, поэтому тянется вместе с полем. */
+            <div
+              className="block w-full bg-white"
+              style={{ aspectRatio: `${MAP_RASTER.width} / ${MAP_RASTER.height}` }}
+              data-map-blank
+            >
+              <svg
+                className="block h-full w-full"
+                viewBox={`0 0 ${MAP_RASTER.width} ${MAP_RASTER.height}`}
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="Пустая карта с сеткой"
+              >
+                <defs>
+                  <pattern
+                    id="map-blank-grid"
+                    width={MAP_GRID.step}
+                    height={MAP_GRID.step}
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <path
+                      d={`M ${MAP_GRID.step} 0 L 0 0 0 ${MAP_GRID.step}`}
+                      fill="none"
+                      stroke={MAP_GRID.color}
+                      strokeWidth={MAP_GRID.stroke}
+                    />
+                  </pattern>
+                </defs>
+                <rect width={MAP_RASTER.width} height={MAP_RASTER.height} fill="#ffffff" />
+                <rect
+                  width={MAP_RASTER.width}
+                  height={MAP_RASTER.height}
+                  fill="url(#map-blank-grid)"
+                />
+              </svg>
+            </div>
+          )}
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
           {/* Записи мастера поверх карты: надпись видна всегда, точка — только кружком.
@@ -690,8 +821,11 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           </div>
 
           <span className="pointer-events-none absolute bottom-1 right-2 rounded bg-zinc-950/70 px-1.5 py-0.5 text-[9px] text-zinc-400">
-            1 гекс ≈ {HEX_SCALE.miles} миль (≈{HEX_SCALE.km} км)
-            {pixels ? ` · ${pixels.width}×${pixels.height}` : ""}
+            {tab.kind === "kas-khatar"
+              ? `1 гекс ≈ ${HEX_SCALE.miles} миль (≈${HEX_SCALE.km} км)${
+                  pixels ? ` · ${pixels.width}×${pixels.height}` : ""
+                }`
+              : `пустой лист ${MAP_RASTER.width}×${MAP_RASTER.height}`}
           </span>
         </div>
       </div>

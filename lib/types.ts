@@ -190,6 +190,23 @@ export interface MapStroke {
   /** Толщина линии как доля ширины карты. */
   width: number;
   points: MapPoint[];
+  /** Вкладка карты (id из `MapState.tabs`); в старых комнатах поля нет — первая вкладка. */
+  tab?: string;
+}
+
+/** Вкладка карты: `kas-khatar` — исходный растр, `grid` — пустой лист с сеткой. */
+export type MapTabKind = "kas-khatar" | "grid";
+
+/**
+ * Вкладка над столом: записи лежат в общих списках `strokes`/`texts` и помечены
+ * полем `tab`, а здесь хранятся только имя и вид полотна.
+ */
+export interface MapTab {
+  id: string;
+  /** Подпись на вкладке: «Кас-Хатар», «Карта 2», … */
+  name: string;
+  kind: MapTabKind;
+  createdAt: number;
 }
 
 /** Шрифт надписи на карте: ключ закрытого набора из `lib/mapText.ts`. */
@@ -215,6 +232,8 @@ export interface MapText {
   size: number;
   /** В комнатах до 0.4.65 поля нет — это обычная надпись. */
   kind?: MapTextKind;
+  /** Вкладка карты (id из `MapState.tabs`); в старых комнатах поля нет — первая вкладка. */
+  tab?: string;
 }
 
 export interface MapCursor {
@@ -231,9 +250,16 @@ export interface MapPing {
   y: number;
   color: string;
   createdAt: number;
+  /** Вкладка карты; в старых комнатах поля нет — первая вкладка. */
+  tab?: string;
 }
 
 export interface MapState {
+  /**
+   * Вкладки карт: первая всегда «Кас-Хатар», остальные мастер добавляет пустым
+   * полотном с сеткой. В старых комнатах поля нет — считается одна вкладка.
+   */
+  tabs?: MapTab[];
   strokes: MapStroke[];
   /** Надписи мастера поверх карты; в старых комнатах поля нет. */
   texts: MapText[];

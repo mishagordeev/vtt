@@ -439,6 +439,93 @@ test("Python-сервер: комната, чат с броском, лист, �
   assert.equal(mapCleared.payload.map.texts.length, 0, "очистка убирает надписи");
   assert.equal(mapCleared.payload.map.strokes.length, 0, "очистка убирает линии");
 
+  // --- вкладки карты: мастер добавляет пустое полотно с сеткой ---
+  const tabDenied = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "tabAdd",
+  });
+  assert.equal(tabDenied.status, 403, "вкладки добавляет только мастер");
+
+  const tabAdded = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "tabAdd",
+  });
+  assert.equal(tabAdded.status, 200, server.log());
+  assert.equal(tabAdded.payload.map.tabs.length, 2, "к Кас-Хатару добавилась вкладка");
+  const kasTab = tabAdded.payload.map.tabs[0];
+  const blankTab = tabAdded.payload.map.tabs[1];
+  assert.equal(kasTab.kind, "kas-khatar", "первая вкладка — карта Кас-Хатара");
+  assert.equal(blankTab.kind, "grid", "новая вкладка — пустое полотно с сеткой");
+  assert.equal(blankTab.name, "Карта 2");
+
+  const blankStroke = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "stroke",
+    tab: blankTab.id,
+    points: [
+      { x: 0.2, y: 0.2 },
+      { x: 0.6, y: 0.6 },
+    ],
+  });
+  assert.equal(blankStroke.status, 200, server.log());
+  assert.equal(blankStroke.payload.map.strokes.length, 1);
+  assert.equal(blankStroke.payload.map.strokes[0].tab, blankTab.id, "линия легла на новую вкладку");
+
+  const kasStroke = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "stroke",
+    tab: kasTab.id,
+    points: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.3, y: 0.3 },
+    ],
+  });
+  assert.equal(kasStroke.status, 200, server.log());
+  assert.equal(kasStroke.payload.map.strokes.length, 2, "у каждой вкладки своя линия");
+  assert.ok(
+    kasStroke.payload.map.strokes.some((item) => item.tab === kasTab.id),
+    "линия Кас-Хатара помнит вкладку",
+  );
+
+  const clearBlank = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "clear",
+    tab: blankTab.id,
+  });
+  assert.equal(clearBlank.status, 200, server.log());
+  assert.equal(clearBlank.payload.map.strokes.length, 1, "очистка не тронула карту Кас-Хатара");
+  assert.equal(clearBlank.payload.map.strokes[0].tab, kasTab.id);
+
+  const tabRemoved = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "tabRemove",
+    id: blankTab.id,
+  });
+  assert.equal(tabRemoved.status, 200, server.log());
+  assert.equal(tabRemoved.payload.map.tabs.length, 1, "вкладка удалена");
+  assert.equal(tabRemoved.payload.map.strokes.length, 1, "линии удалённой вкладки ушли вместе с ней");
+
+  const kasRemoveDenied = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "tabRemove",
+    id: kasTab.id,
+  });
+  assert.equal(kasRemoveDenied.status, 400, "карту Кас-Хатара удалить нельзя");
+
+  const unknownTab = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "stroke",
+    tab: "нет-такой",
+    points: [{ x: 0.5, y: 0.5 }],
+  });
+  assert.equal(unknownTab.status, 400, "неизвестная вкладка — отказ");
+
+  await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "clear",
+    tab: kasTab.id,
+  });
+
   // --- музыка ---
   const added = await call(baseUrl, "POST", `/api/rooms/${code}/music`, {
     actor: "Игрок",
