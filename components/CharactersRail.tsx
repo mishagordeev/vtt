@@ -22,8 +22,9 @@ const sameName = (a?: string | null, b?: string | null) =>
 
 /**
  * Блок персонажей в правой панели комнаты: сначала листы текущего игрока,
- * а если своих нет (или за столом мастер) — все листы комнаты. Полный список
- * открывается кнопкой «Все», лист — кликом по карточке.
+ * а если своих нет (у игрока) — все листы комнаты. Мастеру в панели видны
+ * только его собственные листы, остальные открываются кнопкой «Персонажи»
+ * в шапке стола. Полный список — кнопка «Все», лист — клик по карточке.
  */
 export function CharactersRail({
   characters,
@@ -39,9 +40,10 @@ export function CharactersRail({
     (character) =>
       (character.players ?? []).some((name) => sameName(name, me)) || sameName(character.owner, me),
   );
-  const list = isGM || mine.length === 0 ? characters : mine;
+  // Мастеру — только свои листы: чужие он смотрит кнопкой «Персонажи» сверху.
+  const list = isGM ? mine : mine.length === 0 ? characters : mine;
   const note = isGM
-    ? `${characters.length} в комнате`
+    ? `${mine.length} своих · ${characters.length} в комнате`
     : mine.length === 0
       ? `${characters.length} в комнате · своих листов нет`
       : `${mine.length} своих · ${characters.length} в комнате`;
@@ -85,7 +87,9 @@ export function CharactersRail({
         ))}
         {list.length === 0 ? (
           <p className="px-2 py-4 text-center text-xs text-zinc-600">
-            Пока ни одного листа. Нажмите «Новый».
+            {isGM
+              ? "Своих листов нет. Все листы комнаты — кнопка «Персонажи» сверху."
+              : "Пока ни одного листа. Нажмите «Новый»."}
           </p>
         ) : null}
       </div>

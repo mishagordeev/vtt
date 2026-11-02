@@ -345,7 +345,7 @@ export function CharactersPanel({
         ) : (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-sm text-center">
-              <p className="text-sm text-zinc-400">Выберите персонажа в списке справа от стола.</p>
+              <p className="text-sm text-zinc-400">Выберите персонажа в панели справа от карты.</p>
               <p className="mt-1 text-xs text-zinc-600">
                 Кнопка «Новый» в том же списке открывает пустой лист: в нём сверху имя,
                 происхождение, возраст и дата рождения, ниже характеристики, испытания, ОЗ и

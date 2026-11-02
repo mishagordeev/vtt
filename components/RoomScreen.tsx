@@ -130,6 +130,9 @@ export default function RoomScreen({ code }: { code: string }) {
   /** id уже показанных бросков: старые не анимируем, даже после полной перечитки ленты. */
   const animatedRollsRef = useRef<Set<string>>(new Set());
 
+  /** Я мастер: мне доступны полный список листов, музыка и запуск треков. */
+  const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
+
   /** Цвет моего профиля — для метки на карте. */
   const myColor = useMemo(
     () =>
@@ -748,17 +751,33 @@ export default function RoomScreen({ code }: { code: string }) {
             {copied ? "скопировано" : code}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setCharactersOpen(true)}
-            title="Полный список персонажей комнаты"
-            className="ml-auto rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
-          >
-            Персонажи
-            {characters.length > 0 ? (
-              <span className="ml-1 font-mono text-[10px] text-zinc-500">{characters.length}</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCharactersOpen(true)}
+              title="Полный список персонажей комнаты"
+              className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+            >
+              Персонажи
+              {characters.length > 0 ? (
+                <span className="ml-1 font-mono text-[10px] text-zinc-500">{characters.length}</span>
+              ) : null}
+            </button>
+            {/* Мастеру — добавление и настройка музыки: панель откроется слева поверх карты. */}
+            {isGM ? (
+              <button
+                type="button"
+                onClick={() => setMusicOpen(true)}
+                title="Добавить трек и настроить музыку стола"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+              >
+                Музыка
+                {music.tracks.length > 0 ? (
+                  <span className="ml-1 font-mono text-[10px] text-zinc-500">{music.tracks.length}</span>
+                ) : null}
+              </button>
             ) : null}
-          </button>
+          </div>
 
           <div className="flex items-center gap-1.5">
             <button
@@ -829,8 +848,9 @@ export default function RoomScreen({ code }: { code: string }) {
         </section>
 
         {/* Правая панель: музыка → персонажи → чат → ввод с кубиками.
-            Ширины хватает, чтобы все семь костей и «+1»/«−1» встали в строку. */}
-        <section className="flex min-h-[46vh] flex-1 flex-col border-zinc-800/80 lg:min-h-0 lg:w-[440px] lg:flex-none lg:border-l xl:w-[480px]">
+            Ширина ровно по ряду d4…d100 и «+1»/«−1» с небольшим запасом:
+            ряд не переносится, а лишнего места справа не остаётся. */}
+        <section className="flex min-h-[46vh] flex-1 flex-col border-zinc-800/80 lg:min-h-0 lg:w-[352px] lg:flex-none lg:border-l">
           <MusicPlaylist
             me={me}
             gm={gm}
@@ -872,11 +892,7 @@ export default function RoomScreen({ code }: { code: string }) {
       ) : null}
 
       {musicOpen ? (
-        <SheetDialog
-          title="Музыка стола"
-          hint="ссылка YouTube, свой mp3, общая громкость"
-          onClose={() => setMusicOpen(false)}
-        >
+        <SheetDialog title="Музыка стола" onClose={() => setMusicOpen(false)}>
           <MusicPanel
             code={code}
             me={me}
@@ -892,8 +908,8 @@ export default function RoomScreen({ code }: { code: string }) {
 
       {sheetOpen ? (
         <SheetDialog
+          size="wide"
           title={sheetCharacter?.name?.trim() || "Новый персонаж"}
-          hint="поля сохраняются сами"
           onClose={closeSheet}
         >
           <CharactersPanel

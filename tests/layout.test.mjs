@@ -4,7 +4,7 @@
 // второй, дальше характеристики → испытания → ОЗ и КБ → груз и деньги →
 // навыки и знания → заметки, а снаряжение — справа шире. В комнате карта
 // видна всегда, справа идут музыка → персонажи → чат → ввод с кубиками,
-// лист и полный список листов открываются карточками поверх стола.
+// лист и полный список листов открываются левой панелью поверх карты.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -102,10 +102,24 @@ test("стол виден всегда, а правая панель идёт: �
   );
   assert.match(
     room,
-    /lg:w-\[440px\][^"]*xl:w-\[480px\]/,
-    "правой панели хватает ширины на семь костей и «+1»/«−1» в строку",
+    /lg:w-\[352px\][^"]*lg:flex-none/,
+    "правая панель ровно по ряду костей и модификаторов, без лишней ширины",
+  );
+  assert.ok(
+    !/xl:w-\[480px\]|lg:w-\[440px\]/.test(room),
+    "широкие 440/480 px убраны: панель шире ряда кубиков не нужна",
+  );
+  assert.match(
+    room,
+    /const isGM = me\.trim\(\)\.length > 0 && me\.trim\(\)\.toLowerCase\(\) === gm\.trim\(\)\.toLowerCase\(\)/,
+    "мастер определяется по имени в комнате",
   );
   assert.match(room, /onOpenPanel=\{\(\) => setMusicOpen\(true\)\}/, "музыка открывает свою панель");
+  assert.match(
+    room,
+    /\{isGM \? \(\s*<button[\s\S]{0,400}setMusicOpen\(true\)/,
+    "кнопка «Музыка» в шапке есть только у мастера",
+  );
 
   const rail = read("components", "CharactersRail.tsx");
   assert.match(rail, /onOpenAll/, "в списке есть кнопка «Все» — полный список персонажей");
@@ -116,6 +130,11 @@ test("стол виден всегда, а правая панель идёт: �
     /const mine = characters\.filter/,
     "в панели сначала листы текущего игрока",
   );
+  assert.match(
+    rail,
+    /const list = isGM \? mine :/,
+    "мастеру в правой панели видны только его листы, чужие — кнопкой «Персонажи» сверху",
+  );
 
   const feed = read("components", "ChatFeed.tsx");
   assert.match(feed, /Лента переписки/, "чат вернулся в правую панель");
@@ -125,7 +144,7 @@ test("стол виден всегда, а правая панель идёт: �
 test("кнопка «Персонажи» в шапке открывает полный список листов комнаты", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.match(room, /onClick=\{\(\) => setCharactersOpen\(true\)\}/, "кнопка стоит в шапке стола");
-  assert.match(room, /<CharactersDialog[\s\S]{0,300}onClose=/, "список открывается карточкой поверх стола");
+  assert.match(room, /<CharactersDialog[\s\S]{0,300}onClose=/, "список открывается левой панелью поверх карты");
 
   const dialog = read("components", "CharactersDialog.tsx");
   assert.match(dialog, /<SheetDialog/, "полный список живёт в карточке поверх стола");
@@ -133,21 +152,22 @@ test("кнопка «Персонажи» в шапке открывает по�
   assert.match(dialog, /onCreate/, "в полном списке есть кнопка «Новый»");
 });
 
-test("лист персонажа открывается карточкой, кнопка «Закрыть» — в правом верхнем углу", () => {
+test("лист и список открываются панелью слева поверх карты, а не всплывающим окном", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.match(
     room,
     /sheetOpen \? \([\s\S]{0,600}<CharactersPanel/,
-    "лист рендерится только в открытой карточке",
+    "лист рендерится только в открытой панели",
   );
   assert.match(
     room,
     /<SheetDialog[\s\S]{0,300}onClose=\{closeSheet\}/,
-    "карточка листа закрывается кнопкой и Esc",
+    "панель листа закрывается кнопкой, кликом по карте и Esc",
   );
+  assert.match(room, /size="wide"[\s\S]{0,120}onClose=\{closeSheet\}/, "листу нужна панель шире списка");
 
   const dialog = read("components", "SheetDialog.tsx");
-  assert.match(dialog, /✕ Закрыть/, "у карточки есть кнопка закрытия");
+  assert.match(dialog, /✕ Закрыть/, "у панели есть кнопка закрытия");
   assert.match(
     dialog,
     /ml-auto flex shrink-0 items-center gap-1\.5/,
@@ -155,17 +175,34 @@ test("лист персонажа открывается карточкой, к�
   );
   assert.match(
     dialog,
-    /z-\[60\][^"]*fixed inset-0|fixed inset-0 z-\[60\]/,
-    "карточка перекрывает стол, а не заменяет его",
+    /data-sheet-side="left"/,
+    "панель прижата к левому краю окна — поверх карты, а не по центру",
   );
-  assert.match(dialog, /event\.key === "Escape"/, "Esc закрывает карточку");
+  assert.match(
+    dialog,
+    /fixed inset-0 z-\[60\] flex items-stretch/,
+    "слой панели растянут на окно поверх стола",
+  );
+  assert.ok(
+    !/bg-zinc-950\/75|backdrop-blur/.test(dialog),
+    "затемнения нет: карта справа остаётся видна",
+  );
+  assert.match(
+    dialog,
+    /data-sheet-backdrop=""/,
+    "видимая карта справа остаётся кликабельной областью закрытия",
+  );
+  assert.match(dialog, /onPointerDown=\{onClose\}/, "клик по карте закрывает панель");
+  assert.match(dialog, /event\.key === "Escape"/, "Esc закрывает панель");
+  assert.match(dialog, /w-\[min\(100%,50rem\)\]/, "лист открывается широкой панелью");
+  assert.match(dialog, /w-\[min\(100%,34rem\)\]/, "список и музыка — узкой панелью");
 
-  // Бросок виден и поверх открытого листа: кубики падают на стол, а не под карточку.
+  // Бросок виден и поверх открытого листа: кубики падают на стол, а не под панелью.
   const dice = read("components", "DiceOverlay.tsx");
   assert.match(
     dice,
     /fixed inset-0 z-\[70\]/,
-    "3d-кубики должны быть выше карточки листа (z-[60]) и ниже портрета (z-[80])",
+    "3d-кубики должны быть выше панели листа (z-[60]) и ниже портрета (z-[80])",
   );
 });
 
@@ -190,6 +227,26 @@ test("список персонажей больше не занимает вк�
   assert.match(panel, /openId\?: string \| null/, "панель принимает лист из правой колонки");
   assert.match(panel, /createRequest\?: number/, "панель принимает заявку на новый лист");
   assert.match(panel, /canAssign=/, "кнопка «Игроки» переехала в шапку листа");
+});
+
+test("в правой панели нет старых пояснений, а пустой плейлист не занимает места", () => {
+  const playlist = read("components", "MusicPlaylist.tsx");
+  assert.ok(!/Пока пусто/.test(playlist), "подпись «Пока пусто. Вкладка «Музыка»…» убрана");
+  assert.match(
+    playlist,
+    /\{music\.tracks\.length > 0 \? \(/,
+    "при пустом плейлисте блок треков не рендерится вовсе",
+  );
+
+  const room = read("components", "RoomScreen.tsx");
+  assert.ok(!/поля сохраняются сами/.test(room), "пояснение про автосохранение под заголовком листа убрано");
+  assert.ok(!/hint="ссылка YouTube/.test(room), "у панели музыки нет длинной подписи в заголовке");
+
+  const sheet = read("components", "CharacterSheet.tsx");
+  assert.ok(
+    !/Изменения сохраняются сами|Поля сохраняются сами/.test(sheet),
+    "в листе больше нет пояснения про сохранение вместо кнопки «Сохранить»",
+  );
 });
 
 test("дебаг-панель мастера показывает pid и uptime процесса сервера", () => {

@@ -1219,10 +1219,10 @@ export function CharacterSheet({
                   </button>
                 ) : (
                   <span
-                    title="Поля сохраняются сами — кнопка «Сохранить» больше не нужна"
+                    title="Автосохранение листа"
                     className="text-[11px] text-zinc-500"
                   >
-                    {busy ? "Сохраняю…" : savedAt ? `Сохранено в ${savedAt}` : "Изменения сохраняются сами"}
+                    {busy ? "Сохраняю…" : savedAt ? `Сохранено в ${savedAt}` : ""}
                   </span>
                 )}
                 <button

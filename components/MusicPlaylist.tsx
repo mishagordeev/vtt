@@ -17,8 +17,9 @@ interface MusicPlaylistProps {
 }
 
 /**
- * Музыка в правой панели комнаты: треки всегда на виду. Добавление и
- * настройки — в панели по кнопке «+ Трек», она открывается поверх стола.
+ * Музыка в правой панели комнаты: у мастера — треки отдельными строками и
+ * общая громкость. Добавление и настройки — в панели по кнопке «+ Трек» или
+ * «Музыка» в шапке; она открывается слева поверх карты.
  */
 export function MusicPlaylist({
   me,
@@ -162,11 +163,7 @@ export function MusicPlaylist({
         </div>
       ) : null}
 
-      {music.tracks.length === 0 ? (
-        <p className="mt-1 text-[10px] text-zinc-600">
-          Пока пусто. «+ Трек» → вставьте ссылку YouTube или загрузите mp3.
-        </p>
-      ) : (
+      {music.tracks.length > 0 ? (
         <div className="scroll-thin mt-1 max-h-[26vh] space-y-1 overflow-y-auto pr-0.5">
           {music.tracks.map((track) => (
             <MusicTrackRow
@@ -181,7 +178,7 @@ export function MusicPlaylist({
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       {error ? <p className="mt-1 text-[10px] text-rose-300">{error}</p> : null}
     </div>
