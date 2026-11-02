@@ -1,9 +1,10 @@
 // Вёрстка, которой пользуются за столом: порядок блоков листа персонажа и
-// правая колонка комнаты. Проверяется не «файлы на месте», а раскладка:
+// правая панель комнаты. Проверяется не «файлы на месте», а раскладка:
 // шапка листа с именем и происхождением одной строкой, возраст и дата рождения
 // второй, дальше характеристики → испытания → ОЗ и КБ → груз и деньги →
-// навыки и знания → заметки, а снаряжение — справа шире. В комнате справа
-// живут список персонажей и только поле ввода с кубиками: ленты сообщений нет.
+// навыки и знания → заметки, а снаряжение — справа шире. В комнате карта
+// видна всегда, справа идут музыка → персонажи → чат → ввод с кубиками,
+// лист и полный список листов открываются карточками поверх стола.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -81,22 +82,98 @@ test("порядок блоков листа: характеристики → �
   );
 });
 
-test("правая колонка комнаты: список персонажей и только поле ввода с кубиками", () => {
+test("стол виден всегда, а правая панель идёт: музыка → персонажи → чат → ввод", () => {
   const room = read("components", "RoomScreen.tsx");
-  assert.match(room, /<CharactersRail/, "список персонажей должен стоять в правой колонке");
-  assert.match(room, /<Composer onSend=\{send\} \/>/, "внизу правой колонки — только поле ввода");
-  assert.ok(!/ChatPanel/.test(room), "лента сообщений убрана из комнаты");
+  assert.ok(!/const TABS|setTab\(|tab === /.test(room), "вкладок стола больше нет");
+
+  const deskAt = room.indexOf("<DeskPanel");
+  const musicAt = room.indexOf("<MusicPlaylist");
+  const railAt = room.indexOf("<CharactersRail");
+  const feedAt = room.indexOf("<ChatFeed");
+  const composerAt = room.indexOf("<Composer onSend={send} />");
+  assert.ok(deskAt > 0, "стол должен быть в комнате");
+  assert.ok(musicAt > deskAt, "музыка — в правой панели после стола");
+  assert.ok(railAt > musicAt, "под музыкой идёт список персонажей");
+  assert.ok(feedAt > railAt, "под персонажами — чат");
+  assert.ok(composerAt > feedAt, "ввод с кубиками — внизу правой панели");
   assert.ok(
-    !fs.existsSync(path.join(projectDir, "components", "ChatPanel.tsx")),
-    "компонент ленты сообщений удалён, чтобы не тянуть его в чанк",
+    !/<DeskPanel[\s\S]{0,80}\?/.test(room.slice(0, deskAt)),
+    "стол не должен зависеть от выбранной вкладки",
   );
-  assert.match(room, /<CharactersPanel[\s\S]{0,400}openId=\{focusCharacter\}/, "лист открывается из списка");
-  assert.match(room, /createRequest=\{createRequest\}/, "кнопка «Новый» открывает пустой лист");
+  assert.match(
+    room,
+    /lg:w-\[440px\][^"]*xl:w-\[480px\]/,
+    "правой панели хватает ширины на семь костей и «+1»/«−1» в строку",
+  );
+  assert.match(room, /onOpenPanel=\{\(\) => setMusicOpen\(true\)\}/, "музыка открывает свою панель");
 
   const rail = read("components", "CharactersRail.tsx");
-  assert.match(rail, /onOpen/, "карточка открывает лист");
+  assert.match(rail, /onOpenAll/, "в списке есть кнопка «Все» — полный список персонажей");
   assert.match(rail, /onCreate/, "в списке есть кнопка «Новый»");
   assert.match(rail, /Персонажи/, "у списка есть заголовок");
+  assert.match(
+    rail,
+    /const mine = characters\.filter/,
+    "в панели сначала листы текущего игрока",
+  );
+
+  const feed = read("components", "ChatFeed.tsx");
+  assert.match(feed, /Лента переписки/, "чат вернулся в правую панель");
+  assert.match(feed, /onDelete/, "своё сообщение можно удалить");
+});
+
+test("кнопка «Персонажи» в шапке открывает полный список листов комнаты", () => {
+  const room = read("components", "RoomScreen.tsx");
+  assert.match(room, /onClick=\{\(\) => setCharactersOpen\(true\)\}/, "кнопка стоит в шапке стола");
+  assert.match(room, /<CharactersDialog[\s\S]{0,300}onClose=/, "список открывается карточкой поверх стола");
+
+  const dialog = read("components", "CharactersDialog.tsx");
+  assert.match(dialog, /<SheetDialog/, "полный список живёт в карточке поверх стола");
+  assert.match(dialog, /<CharacterCard/, "карточки листов общие с правой панелью");
+  assert.match(dialog, /onCreate/, "в полном списке есть кнопка «Новый»");
+});
+
+test("лист персонажа открывается карточкой, кнопка «Закрыть» — в правом верхнем углу", () => {
+  const room = read("components", "RoomScreen.tsx");
+  assert.match(
+    room,
+    /sheetOpen \? \([\s\S]{0,600}<CharactersPanel/,
+    "лист рендерится только в открытой карточке",
+  );
+  assert.match(
+    room,
+    /<SheetDialog[\s\S]{0,300}onClose=\{closeSheet\}/,
+    "карточка листа закрывается кнопкой и Esc",
+  );
+
+  const dialog = read("components", "SheetDialog.tsx");
+  assert.match(dialog, /✕ Закрыть/, "у карточки есть кнопка закрытия");
+  assert.match(
+    dialog,
+    /ml-auto flex shrink-0 items-center gap-1\.5/,
+    "кнопка закрытия прижата вправо",
+  );
+  assert.match(
+    dialog,
+    /z-\[60\][^"]*fixed inset-0|fixed inset-0 z-\[60\]/,
+    "карточка перекрывает стол, а не заменяет его",
+  );
+  assert.match(dialog, /event\.key === "Escape"/, "Esc закрывает карточку");
+});
+
+test("кубики и модификаторы встают в одну строку без переноса", () => {
+  const composer = read("components", "Composer.tsx");
+  assert.match(
+    composer,
+    /className="mt-2 flex flex-nowrap items-center gap-1"/,
+    "ряд кубиков не переносится",
+  );
+  assert.match(composer, /shrink-0 rounded-md border border-zinc-700/, "кнопки не сжимаются и не рвут строку");
+  const diceRow = composer.slice(composer.indexOf("flex flex-nowrap items-center gap-1"));
+  assert.ok(
+    !/Очистить/.test(diceRow.slice(0, diceRow.indexOf("</div>"))),
+    "«Очистить» уходит второй строкой, чтобы ряд костей помещался",
+  );
 });
 
 test("список персонажей больше не занимает вкладку: лист идёт на всю ширину", () => {

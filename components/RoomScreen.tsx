@@ -7,7 +7,9 @@ import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
 import type { ChatMessage, Character, CharacterDraft, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
+import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
+import { ChatFeed } from "./ChatFeed";
 import { Composer } from "./Composer";
 import { DebugPanel } from "./DebugPanel";
 import { DeskPanel } from "./DeskPanel";
@@ -17,6 +19,7 @@ import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 import { MusicPlaylist } from "./MusicPlaylist";
 import { PlayerProfile } from "./PlayerProfile";
+import { SheetDialog } from "./SheetDialog";
 
 const EMPTY_MAP: MapState = { strokes: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
@@ -32,21 +35,14 @@ const EMPTY_WORLD: WorldState = {
 const MUSIC_VOLUME_KEY = "pp:music:volume";
 const DEFAULT_MUSIC_VOLUME = 50;
 
-type Tab = "table" | "characters" | "music";
 type Phase = "boot" | "join" | "room" | "missing";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "table", label: "Стол" },
-  { id: "characters", label: "Персонажи" },
-  { id: "music", label: "Музыка" },
-];
 
 const nameKey = (code: string) => `pp:room:${code}:name`;
 
 /**
- * Вкладка персонажей — половина веса комнаты: лист персонажа, каталоги
- * снаряжения и знаний, производные характеристики. Она подключается отдельным
- * чанком: `/r` открывается без него, а сам чанк греется в фоне (`prefetchCharacters`).
+ * Лист персонажа — половина веса комнаты: каталоги снаряжения и знаний,
+ * производные характеристики. Он подключается отдельным чанком: `/r`
+ * открывается без него, а сам чанк греется в фоне (`prefetchCharacters`).
  */
 const CharactersPanel = dynamic(
   () => import("./CharactersPanel").then((mod) => mod.CharactersPanel),
@@ -62,7 +58,7 @@ const CharactersPanel = dynamic(
 
 /**
  * Тёплый запуск: чанк персонажей и листа тянем в фоне после входа в комнату,
- * чтобы первое нажатие по вкладке не упиралось в сеть.
+ * чтобы первое открытие листа не упиралось в сеть.
  */
 function prefetchCharacters(): void {
   void import("./CharactersPanel").catch(() => undefined);
@@ -71,7 +67,6 @@ function prefetchCharacters(): void {
 export default function RoomScreen({ code }: { code: string }) {
   const [phase, setPhase] = useState<Phase>("boot");
   const [me, setMe] = useState("");
-  const [tab, setTab] = useState<Tab>("table");
   const [players, setPlayers] = useState<Player[]>([]);
   const [gm, setGm] = useState("");
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -87,12 +82,18 @@ export default function RoomScreen({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const [musicVolume, setMusicVolume] = useState(DEFAULT_MUSIC_VOLUME);
   const [lastSyncAt, setLastSyncAt] = useState(0);
-  /** Какой лист открыт во вкладке «Персонажи»: его выбирает список в правой колонке. */
+  /** Какой лист открыт: его выбирает список персонажей в правой панели. */
   const [focusCharacter, setFocusCharacter] = useState<string | null>(null);
   /** Счётчик «Новый персонаж»: каждое нажатие открывает пустой лист. */
   const [createRequest, setCreateRequest] = useState(0);
   /** Счётчик кликов по списку персонажей: повторный клик по тому же листу тоже открывает его. */
   const [openRequest, setOpenRequest] = useState(0);
+  /** Лист персонажа — карточка поверх стола, а не отдельная вкладка. */
+  const [sheetOpen, setSheetOpen] = useState(false);
+  /** Полный список листов комнаты — кнопка «Персонажи» в шапке. */
+  const [charactersOpen, setCharactersOpen] = useState(false);
+  /** Панель музыки: ссылка YouTube, свой mp3, общая громкость. */
+  const [musicOpen, setMusicOpen] = useState(false);
   const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
   const [profileFor, setProfileFor] = useState<string | null>(null);
   const [knownPlayers, setKnownPlayers] = useState<Player[]>([]);
@@ -107,7 +108,7 @@ export default function RoomScreen({ code }: { code: string }) {
   }, []);
 
   // Чанк персонажей подтягиваем, когда стол уже открыт: первый экран, карта и
-  // лента чата успевают загрузиться, а вкладка открывается без ожидания сети.
+  // лента чата успевают загрузиться, а лист открывается без ожидания сети.
   useEffect(() => {
     if (phase !== "room") return;
     const timer = window.setTimeout(prefetchCharacters, 4000);
@@ -128,6 +129,10 @@ export default function RoomScreen({ code }: { code: string }) {
   );
   const profilePlayer = profileFor
     ? players.find((player) => player.name === profileFor)
+    : undefined;
+  /** Открытый лист — у карточки поверх стола имя персонажа в заголовке. */
+  const sheetCharacter = focusCharacter
+    ? characters.find((character) => character.id === focusCharacter)
     : undefined;
 
   /** Сколько данных сейчас в комнате — для дебаг-панели мастера. */
@@ -243,7 +248,7 @@ export default function RoomScreen({ code }: { code: string }) {
   }, [code, join]);
 
   // Запросы в базу — только по действиям. Фонового опроса по таймеру нет:
-  // читаем комнату после своих правок, при возврате на вкладку и по кнопке «⟳».
+  // читаем комнату после своих правок, при возврате к столу и по кнопке «⟳».
   useEffect(() => {
     if (phase !== "room") return;
     const onVisibility = () => {
@@ -260,16 +265,18 @@ export default function RoomScreen({ code }: { code: string }) {
     };
   }, [phase, load]);
 
-  // Переключение вкладки — тоже действие игрока: обновляем данные один раз.
-  const tabFirstRef = useRef(true);
+  // Открытие и закрытие карточек поверх стола (лист, список персонажей, музыка) —
+  // тоже действие игрока: вернувшись к столу, читаем комнату один раз.
+  const overFirstRef = useRef(true);
+  const overLayer = `${sheetOpen ? 1 : 0}${charactersOpen ? 1 : 0}${musicOpen ? 1 : 0}`;
   useEffect(() => {
-    if (tabFirstRef.current) {
-      tabFirstRef.current = false;
+    if (overFirstRef.current) {
+      overFirstRef.current = false;
       return;
     }
     if (phase !== "room") return;
     void load();
-  }, [tab, phase, load]);
+  }, [overLayer, phase, load]);
 
   // Показываем 3d-кубики только для новых бросков: старые помечены как просмотренные.
   useEffect(() => {
@@ -414,21 +421,41 @@ export default function RoomScreen({ code }: { code: string }) {
   );
 
   /**
-   * Клик по персонажу в правой колонке: открываем его лист на вкладке «Персонажи».
-   * Номер клика растёт, чтобы повторное нажатие по тому же листу тоже открывало его.
+   * Клик по персонажу: лист открывается карточкой поверх стола. Номер клика
+   * растёт, чтобы повторное нажатие по тому же листу тоже открывало его.
    */
   const openCharacter = useCallback((id: string) => {
     setFocusCharacter(id);
     setOpenRequest((value) => value + 1);
-    setTab("characters");
+    setCharactersOpen(false);
+    setSheetOpen(true);
   }, []);
 
-  /** «Новый» в списке персонажей: пустой лист на вкладке «Персонажи». */
+  /** «Новый» в списке персонажей: пустой лист в той же карточке. */
   const newCharacter = useCallback(() => {
     setFocusCharacter(null);
     setCreateRequest((value) => value + 1);
-    setTab("characters");
+    setCharactersOpen(false);
+    setSheetOpen(true);
   }, []);
+
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
+
+  /** Удалить сообщение: своё — автору, любое — мастеру. */
+  const deleteMessage = useCallback(
+    async (id: string) => {
+      try {
+        const result = await api<{ id: string }>(
+          `/api/rooms/${code}/messages/${id}?actor=${encodeURIComponent(meRef.current)}`,
+          { method: "DELETE" },
+        );
+        setMessages((prev) => prev.filter((message) => message.id !== result.id));
+      } catch {
+        setLoadError("Не удалось удалить сообщение");
+      }
+    },
+    [code],
+  );
 
   /** Полная перечитка ленты — нужна после переименования игрока. */
   const reloadMessages = useCallback(async () => {
@@ -508,7 +535,9 @@ export default function RoomScreen({ code }: { code: string }) {
     setDiceQueue([]);
     setMessages([]);
     setMe("");
-    setTab("table");
+    setSheetOpen(false);
+    setCharactersOpen(false);
+    setMusicOpen(false);
     setPhase("join");
   }
 
@@ -587,32 +616,17 @@ export default function RoomScreen({ code }: { code: string }) {
             {copied ? "скопировано" : code}
           </button>
 
-          <nav className="ml-auto flex rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5 text-xs">
-            {TABS.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => setTab(entry.id)}
-                className={`rounded-md px-2.5 py-1 transition ${
-                  tab === entry.id
-                    ? "bg-emerald-500/15 text-emerald-200"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {entry.label}
-                {entry.id === "characters" && characters.length > 0 ? (
-                  <span className="ml-1 font-mono text-[10px] text-zinc-500">
-                    {characters.length}
-                  </span>
-                ) : null}
-                {entry.id === "music" && music.tracks.length > 0 ? (
-                  <span className="ml-1 font-mono text-[10px] text-zinc-500">
-                    {music.tracks.filter((track) => track.playing).length || music.tracks.length}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </nav>
+          <button
+            type="button"
+            onClick={() => setCharactersOpen(true)}
+            title="Полный список персонажей комнаты"
+            className="ml-auto rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+          >
+            Персонажи
+            {characters.length > 0 ? (
+              <span className="ml-1 font-mono text-[10px] text-zinc-500">{characters.length}</span>
+            ) : null}
+          </button>
 
           <div className="flex items-center gap-1.5">
             <button
@@ -652,81 +666,108 @@ export default function RoomScreen({ code }: { code: string }) {
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <section
-          className={
-            tab === "table"
-              ? "scroll-thin min-h-0 flex-1 overflow-y-auto lg:block lg:flex-1"
-              : "scroll-thin min-h-0 flex-1 overflow-y-auto"
-          }
-        >
-          {tab === "table" ? (
-            <DeskPanel
-              code={code}
-              me={me}
-              gm={gm}
-              players={players}
-              characters={characters}
-              map={map}
-              world={world}
-              clockOffset={clockOffset}
-              myColor={myColor}
-              onMapAction={mapAction}
-              onWorldAction={worldAction}
-              onOpenProfile={(name) => setProfileFor(name)}
-            />
-          ) : tab === "music" ? (
-            <MusicPanel
-              code={code}
-              me={me}
-              gm={gm}
-              music={music}
-              volume={musicVolume}
-              onVolume={(value) => setMusicVolume(value)}
-              onAction={musicAction}
-              onUploaded={setMusic}
-            />
-          ) : (
-            <CharactersPanel
-              me={me}
-              gm={gm}
-              characters={characters}
-              players={players}
-              openId={focusCharacter}
-              openRequest={openRequest}
-              createRequest={createRequest}
-              onCreate={createCharacter}
-              onUpdate={updateCharacter}
-              onDelete={removeCharacter}
-              onAssignPlayers={assignCharacterPlayers}
-            />
-          )}
+        {/* Стол виден всегда: карта, часы и игроки не исчезают ни при открытии
+            листа, ни в панели музыки — те открываются карточками поверх. */}
+        <section className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+          <DeskPanel
+            code={code}
+            me={me}
+            gm={gm}
+            players={players}
+            characters={characters}
+            map={map}
+            world={world}
+            clockOffset={clockOffset}
+            myColor={myColor}
+            onMapAction={mapAction}
+            onWorldAction={worldAction}
+            onOpenProfile={(name) => setProfileFor(name)}
+          />
         </section>
 
-        <section
-          className={`min-h-0 flex-col border-zinc-800/80 lg:flex lg:w-[380px] lg:flex-none lg:border-l xl:w-[420px] ${
-            tab === "table" ? "flex min-h-[46vh] flex-1 lg:min-h-0" : "hidden"
-          }`}
-        >
-          {tab === "table" ? (
-            <MusicPlaylist
-              me={me}
-              gm={gm}
-              music={music}
-              volume={musicVolume}
-              clockOffset={clockOffset}
-              onVolume={(value) => setMusicVolume(value)}
-              onAction={musicAction}
-            />
-          ) : null}
+        {/* Правая панель: музыка → персонажи → чат → ввод с кубиками.
+            Ширины хватает, чтобы все семь костей и «+1»/«−1» встали в строку. */}
+        <section className="flex min-h-[46vh] flex-1 flex-col border-zinc-800/80 lg:min-h-0 lg:w-[440px] lg:flex-none lg:border-l xl:w-[480px]">
+          <MusicPlaylist
+            me={me}
+            gm={gm}
+            music={music}
+            volume={musicVolume}
+            clockOffset={clockOffset}
+            onVolume={(value) => setMusicVolume(value)}
+            onAction={musicAction}
+            onOpenPanel={() => setMusicOpen(true)}
+          />
           <CharactersRail
             characters={characters}
+            me={me}
+            gm={gm}
             activeId={focusCharacter}
             onOpen={openCharacter}
             onCreate={newCharacter}
+            onOpenAll={() => setCharactersOpen(true)}
+          />
+          <ChatFeed
+            messages={messages}
+            me={me}
+            gm={gm}
+            connected={connected}
+            onDelete={deleteMessage}
           />
           <Composer onSend={send} />
         </section>
       </div>
+
+      {charactersOpen ? (
+        <CharactersDialog
+          characters={characters}
+          activeId={focusCharacter}
+          onOpen={openCharacter}
+          onCreate={newCharacter}
+          onClose={() => setCharactersOpen(false)}
+        />
+      ) : null}
+
+      {musicOpen ? (
+        <SheetDialog
+          title="Музыка стола"
+          hint="ссылка YouTube, свой mp3, общая громкость"
+          onClose={() => setMusicOpen(false)}
+        >
+          <MusicPanel
+            code={code}
+            me={me}
+            gm={gm}
+            music={music}
+            volume={musicVolume}
+            onVolume={(value) => setMusicVolume(value)}
+            onAction={musicAction}
+            onUploaded={setMusic}
+          />
+        </SheetDialog>
+      ) : null}
+
+      {sheetOpen ? (
+        <SheetDialog
+          title={sheetCharacter?.name?.trim() || "Новый персонаж"}
+          hint="поля сохраняются сами"
+          onClose={closeSheet}
+        >
+          <CharactersPanel
+            me={me}
+            gm={gm}
+            characters={characters}
+            players={players}
+            openId={focusCharacter}
+            openRequest={openRequest}
+            createRequest={createRequest}
+            onCreate={createCharacter}
+            onUpdate={updateCharacter}
+            onDelete={removeCharacter}
+            onAssignPlayers={assignCharacterPlayers}
+          />
+        </SheetDialog>
+      ) : null}
 
       {diceQueue.length > 0 ? (
         <DiceOverlay

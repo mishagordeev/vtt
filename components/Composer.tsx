@@ -158,7 +158,9 @@ export function Composer({ disabled, onSend }: ComposerProps) {
         </button>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1">
+      {/* Кубики и модификаторы — одной строкой без переноса: ширина правой
+          панели рассчитана так, что все семь костей и «+1»/«−1» влезают. */}
+      <div className="mt-2 flex flex-nowrap items-center gap-1">
         {DICE.map((sides) => (
           <button
             key={sides}
@@ -168,13 +170,13 @@ export function Composer({ disabled, onSend }: ComposerProps) {
               event.preventDefault();
               removeDie(sides);
             }}
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:bg-emerald-500/10 hover:text-emerald-200"
+            className="shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 font-mono text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:bg-emerald-500/10 hover:text-emerald-200"
             title={`d${sides}: ЛКМ — добавить, ПКМ — убрать`}
           >
             d{sides}
           </button>
         ))}
-        <span className="mx-1 h-4 w-px bg-zinc-800" aria-hidden />
+        <span className="mx-0.5 h-4 w-px shrink-0 bg-zinc-800" aria-hidden />
         <button
           type="button"
           onClick={() => adjustModifier(1)}
@@ -182,7 +184,7 @@ export function Composer({ disabled, onSend }: ComposerProps) {
             event.preventDefault();
             adjustModifier(-1);
           }}
-          className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+          className="shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 font-mono text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
           title="+1 к броску · ПКМ — −1"
         >
           +1
@@ -194,19 +196,22 @@ export function Composer({ disabled, onSend }: ComposerProps) {
             event.preventDefault();
             adjustModifier(1);
           }}
-          className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
+          className="shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 font-mono text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
           title="−1 к броску · ПКМ — +1"
         >
           −1
         </button>
+      </div>
+
+      <div className="mt-1 flex items-center gap-2">
         <button
           type="button"
           onClick={() => setText("")}
-          className="rounded-md border border-transparent px-2 py-1 text-xs text-zinc-500 transition hover:text-zinc-300"
+          className="rounded-md border border-transparent px-2 py-1 text-[11px] text-zinc-500 transition hover:text-zinc-300"
         >
           Очистить
         </button>
-        <span className="ml-auto text-[11px] text-emerald-300/80">
+        <span className="ml-auto truncate text-[11px] text-emerald-300/80">
           {preview ? `Бросок: ${preview}` : ""}
         </span>
       </div>

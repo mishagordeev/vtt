@@ -12,11 +12,13 @@ interface MusicPlaylistProps {
   clockOffset: number;
   onVolume: (value: number) => void;
   onAction: (payload: Record<string, unknown>) => Promise<MusicState | null>;
+  /** Открыть панель музыки: ссылка YouTube, свой mp3, общая громкость. */
+  onOpenPanel?: () => void;
 }
 
 /**
- * Плейлист живёт над чатом в правой колонке: треки всегда на виду, а
- * добавление и настройки — на левой панели вкладки «Музыка».
+ * Музыка в правой панели комнаты: треки всегда на виду. Добавление и
+ * настройки — в панели по кнопке «+ Трек», она открывается поверх стола.
  */
 export function MusicPlaylist({
   me,
@@ -26,6 +28,7 @@ export function MusicPlaylist({
   clockOffset,
   onVolume,
   onAction,
+  onOpenPanel,
 }: MusicPlaylistProps) {
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
@@ -98,13 +101,23 @@ export function MusicPlaylist({
     <div className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/60 px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <h2 className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          Плейлист
+          Музыка
         </h2>
         <span className="font-mono text-[10px] text-zinc-600">
           {playing > 0 ? `${playing} играет` : `${music.tracks.length} треков`}
         </span>
 
         <div className="ml-auto flex items-center gap-1">
+          {onOpenPanel ? (
+            <button
+              type="button"
+              onClick={onOpenPanel}
+              className="rounded border border-zinc-700 px-1 py-0.5 text-[10px] text-zinc-300 hover:border-emerald-400/60 hover:text-emerald-200"
+              title="Добавить трек и настроить звук"
+            >
+              + Трек
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={toggleMute}
@@ -151,7 +164,7 @@ export function MusicPlaylist({
 
       {music.tracks.length === 0 ? (
         <p className="mt-1 text-[10px] text-zinc-600">
-          Пока пусто. Вкладка «Музыка» → вставьте ссылку YouTube.
+          Пока пусто. «+ Трек» → вставьте ссылку YouTube или загрузите mp3.
         </p>
       ) : (
         <div className="scroll-thin mt-1 max-h-[26vh] space-y-1 overflow-y-auto pr-0.5">
