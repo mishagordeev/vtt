@@ -34,6 +34,8 @@ const EMPTY_WORLD: WorldState = {
 };
 const MUSIC_VOLUME_KEY = "pp:music:volume";
 const DEFAULT_MUSIC_VOLUME = 50;
+/** Через сколько на экране загрузки появляется «Повторить», если комната молчит. */
+const BOOT_SLOW_MS = 8000;
 
 type Phase = "boot" | "join" | "room" | "missing";
 
@@ -97,6 +99,12 @@ export default function RoomScreen({ code }: { code: string }) {
   const [diceQueue, setDiceQueue] = useState<DiceRollShow[]>([]);
   const [profileFor, setProfileFor] = useState<string | null>(null);
   const [knownPlayers, setKnownPlayers] = useState<Player[]>([]);
+  /** Попытка открыть комнату: повтор по кнопке и при возврате на вкладку. */
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootSlow, setBootSlow] = useState(false);
+  /** Имя, с которым входили: экран входа показывает его после неудачной попытки. */
+  const [attemptName, setAttemptName] = useState("");
 
   useEffect(() => {
     const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
@@ -195,12 +203,20 @@ export default function RoomScreen({ code }: { code: string }) {
     }
   }, [code]);
 
+  /** Вход уже идёт: второй клик (или автоповтор при возврате на вкладку) не нужен. */
+  const joinBusyRef = useRef(false);
+  /** Имя неудачной попытки входа: вернувшись на вкладку, пробуем ещё раз без нажатий. */
+  const retryNameRef = useRef<string | null>(null);
+
   const join = useCallback(
     async (rawName: string) => {
       const name = rawName.trim();
-      if (!name) return;
+      if (!name || joinBusyRef.current) return;
+      joinBusyRef.current = true;
       setJoinBusy(true);
       setJoinError(null);
+      setAttemptName(name);
+      retryNameRef.current = null;
       try {
         await api(`/api/rooms/${code}/join`, {
           method: "POST",
@@ -217,35 +233,105 @@ export default function RoomScreen({ code }: { code: string }) {
           setPhase("missing");
           return;
         }
+        // Сервер не ответил (таймаут 408 или нет связи) — имя запоминаем, чтобы
+        // после возврата на вкладку попробовать вход снова.
+        if (!(error instanceof AppError) || error.status === 0 || error.status === 408) {
+          retryNameRef.current = name;
+        }
         setJoinError(error instanceof Error ? error.message : "Не удалось войти");
+        // Автоматический вход с сохранённым именем шёл с экрана «Открываем
+        // комнату…»: без перехода на форму игрок видел только зависший текст,
+        // потому что кнопки и сообщения об ошибке там нет.
+        setPhase((current) => (current === "boot" ? "join" : current));
       } finally {
+        joinBusyRef.current = false;
         setJoinBusy(false);
       }
     },
     [code, load],
   );
 
-  const bootedRef = useRef(false);
+  /** Когда началась текущая попытка: «focus» и «visibilitychange» приходят парой. */
+  const bootStartedRef = useRef(0);
+
+  /** «Повторить» на экране загрузки (и автоматически при возврате на вкладку). */
+  const retryBoot = useCallback((fromEvent = false) => {
+    if (fromEvent && Date.now() - bootStartedRef.current < 2000) return;
+    setBootError(null);
+    setBootSlow(false);
+    bootStartedRef.current = Date.now();
+    setBootAttempt((value) => value + 1);
+  }, []);
 
   // Первый вход: если имя уже сохранено на устройстве — садимся за стол без вопросов.
+  // Сначала узнаём, кто уже за столом: имена подскажем списком, а сохранённое —
+  // сразу используем для входа без вопросов. Попытку можно повторить кнопкой,
+  // а также она повторяется сама, когда вкладка возвращается из фона: браузер
+  // в фоне душит сеть и таймеры, и первый запрос мог не вернуться вовсе.
   useEffect(() => {
-    if (bootedRef.current) return;
-    bootedRef.current = true;
+    if (phase !== "boot") return;
+    bootStartedRef.current = Date.now();
+    let cancelled = false;
     const saved =
       window.localStorage.getItem(nameKey(code)) ?? window.localStorage.getItem("pp:name");
-    // Сначала узнаём, кто уже за столом: имена подскажем списком, а сохранённое —
-    // сразу используем для входа без вопросов.
     void (async () => {
+      let names: Player[] = [];
       try {
         const info = await api<{ players: Player[] }>(`/api/rooms/${code}/players`);
-        setKnownPlayers(info.players);
-      } catch {
-        setKnownPlayers([]);
+        names = info.players;
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof AppError && error.status === 404) {
+          setPhase("missing");
+          return;
+        }
+        // Список имён — подсказка, а не условие входа: показываем ошибку,
+        // но форму входа всё равно открываем.
+        setBootError(error instanceof Error ? error.message : "Комната не отвечает");
       }
+      if (cancelled) return;
+      setKnownPlayers(names);
       if (saved) void join(saved);
       else setPhase("join");
     })();
-  }, [code, join]);
+    return () => {
+      cancelled = true;
+    };
+  }, [code, join, phase, bootAttempt]);
+
+  // Долгое ожидание без объяснений выглядит как зависший стол: через 8 секунд
+  // показываем на экране загрузки кнопку «Повторить».
+  useEffect(() => {
+    if (phase !== "boot") {
+      setBootSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setBootSlow(true), BOOT_SLOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [phase, bootAttempt]);
+
+  // Вернулись на вкладку — повторяем то, что не успело: открытие комнаты или
+  // неудачный вход. Это лекарство от «застыло на попытке входа» после фона.
+  useEffect(() => {
+    if (phase !== "boot" && phase !== "join") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (phase === "boot") {
+        retryBoot(true);
+        return;
+      }
+      const name = retryNameRef.current;
+      if (!name || joinBusyRef.current) return;
+      retryNameRef.current = null;
+      void join(name);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [phase, join, retryBoot]);
 
   // Запросы в базу — только по действиям. Фонового опроса по таймеру нет:
   // читаем комнату после своих правок, при возврате к столу и по кнопке «⟳».
@@ -538,6 +624,9 @@ export default function RoomScreen({ code }: { code: string }) {
     setSheetOpen(false);
     setCharactersOpen(false);
     setMusicOpen(false);
+    setAttemptName("");
+    setJoinError(null);
+    retryNameRef.current = null;
     setPhase("join");
   }
 
@@ -575,8 +664,31 @@ export default function RoomScreen({ code }: { code: string }) {
 
   if (phase === "boot") {
     return (
-      <main className="flex min-h-dvh items-center justify-center">
-        <p className="animate-pulse text-sm text-zinc-500">Открываем комнату {code}…</p>
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-emerald-400/80">
+          Poison Press
+        </p>
+        <p className="animate-pulse text-sm text-zinc-500">
+          {bootSlow ? `Комната ${code} не отвечает…` : `Открываем комнату ${code}…`}
+        </p>
+        {bootError ? (
+          <p className="max-w-md text-sm leading-relaxed text-rose-400">{bootError}</p>
+        ) : null}
+        {bootError || bootSlow ? (
+          <div className="flex flex-col items-center gap-2">
+            <button
+              type="button"
+              onClick={() => retryBoot()}
+              className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400"
+            >
+              Повторить
+            </button>
+            <p className="max-w-sm text-xs leading-relaxed text-zinc-500">
+              Стол и листы сохранены на сервере. Если вкладка была в фоне — вернитесь на неё,
+              вход продолжится сам.
+            </p>
+          </div>
+        ) : null}
       </main>
     );
   }
@@ -588,6 +700,7 @@ export default function RoomScreen({ code }: { code: string }) {
         error={joinError}
         busy={joinBusy}
         players={knownPlayers}
+        defaultName={attemptName}
         onJoin={(name) => void join(name)}
       />
     );

@@ -9,11 +9,20 @@ interface JoinGateProps {
   busy: boolean;
   /** Кто уже за столом: имена подсказываются списком. */
   players?: Player[];
+  /** Имя прошлой попытки: после таймаута игрок не вводит его заново. */
+  defaultName?: string;
   onJoin: (name: string) => void;
 }
 
-export function JoinGate({ code, error, busy, players = [], onJoin }: JoinGateProps) {
-  const [name, setName] = useState("");
+export function JoinGate({
+  code,
+  error,
+  busy,
+  players = [],
+  defaultName = "",
+  onJoin,
+}: JoinGateProps) {
+  const [name, setName] = useState(defaultName);
 
   return (
     <div className="flex min-h-dvh items-center justify-center px-4 py-10">
@@ -74,7 +83,15 @@ export function JoinGate({ code, error, busy, players = [], onJoin }: JoinGatePr
           </div>
         ) : null}
 
-        {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+        {error ? (
+          <div className="space-y-1">
+            <p className="text-sm text-rose-400">{error}</p>
+            <p className="text-xs leading-relaxed text-zinc-500">
+              Имя уже вписано — нажмите «Сесть за стол» ещё раз. Стол и листы сохранены
+              на сервере.
+            </p>
+          </div>
+        ) : null}
 
         <button
           type="submit"
