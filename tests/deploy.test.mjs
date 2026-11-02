@@ -297,3 +297,50 @@ test("API идёт через CGI-адаптер, а не через mod_wsgi", 
   assert.match(deployPy, /cgi-bin\/api\.cgi/, "deploy.py должен выгружать cgi-bin/api.cgi");
 });
 
+// Проверка выкладки идёт с аккаунта через ssh, а её вывод — UTF-8 (HTML сайта
+// с кириллицей). Со старым чтением в cp1251 на русской Windows поток падал
+// с UnicodeDecodeError, а вместе с ним терялся тип ответа: рабочий сайт
+// печатал «/ — 200, без типа» и выкладка считалась неудачной. Тест держит оба
+// конца: разбор хвоста curl и явную кодировку чтения ssh.
+test("проверка выкладки читает ssh-вывод в UTF-8 и видит тип ответа", { skip: pythonReady ? false : SKIP_PY }, () => {
+  const deployPy = path.join(projectDir, "deploy", "apache", "deploy.py");
+  const code = [
+    "import importlib.util, json",
+    `spec = importlib.util.spec_from_file_location("vtt_deploy", ${JSON.stringify(deployPy)})`,
+    "module = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(module)",
+    "module.ssh_capture = lambda args, command, timeout=30: (0, 'body\\n200 text/html; charset=UTF-8', '')",
+    "args = module.parse_args([])",
+    "print(json.dumps({",
+    '    "tail": module.CURL_TAIL,',
+    '    "parsed": module.parse_curl_tail("body\\n200 text/html; charset=UTF-8"),',
+    '    "noTail": module.parse_curl_tail("plain text"),',
+    '    "fromAccount": module.fetch_from_account(args, "/"),',
+    "}, ensure_ascii=False))",
+  ].join("\n");
+  const done = spawnSync(PY.command, [...PY.args, "-c", code], { encoding: "utf8", cwd: projectDir });
+  assert.equal(done.status, 0, `deploy.py не импортируется: ${done.stderr}`);
+  const facts = JSON.parse(done.stdout);
+
+  assert.equal(
+    facts.tail,
+    "\\n%{http_code} %{content_type}",
+    "curl должен отдавать код и тип содержимого: без типа рабочий сайт выглядел сломанным",
+  );
+  assert.deepEqual(
+    facts.parsed,
+    [200, "text/html; charset=UTF-8", "body"],
+    "хвост curl разбирается на код, тип и тело",
+  );
+  assert.equal(facts.noTail[0], 0, "вывод без хвоста — не 200, а неудачный ответ");
+  assert.deepEqual(
+    facts.fromAccount,
+    [200, "text/html; charset=UTF-8", "body"],
+    "запрос с аккаунта возвращает тип ответа, как и прямой",
+  );
+
+  const source = read("deploy", "apache", "deploy.py");
+  assert.match(source, /encoding="utf-8"/, "ssh-вывод читается в UTF-8: на русской Windows по умолчанию cp1251");
+  assert.match(source, /errors="replace"/, "нечитаемый байт не должен ронять проверку выкладки");
+});
+

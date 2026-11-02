@@ -237,15 +237,21 @@ def ssh_capture(args: argparse.Namespace, command: str, *, timeout: int = 30) ->
     в отличие от `run()`, который просто печатает команду и её вывод.
     """
     try:
+        # Кодировка задана явно: на русской Windows по умолчанию стоит cp1251,
+        # а ssh отдаёт UTF-8 (HTML сайта, кириллица в curl). Без этого проверка
+        # выкладки падала с UnicodeDecodeError и «'NoneType' has no attribute
+        # 'strip'»: поток чтения умирал, stdout оставался None.
         done = subprocess.run(
             ssh_base(args) + [command],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return 255, "", str(error)
-    return done.returncode, done.stdout.strip(), done.stderr.strip()
+    return done.returncode, (done.stdout or "").strip(), (done.stderr or "").strip()
 
 
 # Каталоги сайтов аккаунта: `~/<имя>/public_html/api.wsgi` и `~/public_html/api.wsgi`.
@@ -579,18 +585,35 @@ def fetch(url: str) -> tuple[int, str, str]:
         return 0, "", str(error)
 
 
+# Хвост ответа `curl -w`: код и тип содержимого. Тип нужен, чтобы проверка
+# через ssh с аккаунта видела ту же картину, что и прямой запрос: иначе рабочий
+# сайт печатал «/ — 200, без типа» и выкладка считалась неудачной.
+CURL_TAIL = r"\n%{http_code} %{content_type}"
+
+
+def parse_curl_tail(out: str) -> tuple[int, str, str]:
+    """Разобрать вывод `curl -w`: тело, затем строка «код тип содержимого».
+
+    Возвращает (код, тип, тело). Хвоста нет — код 0, и вызывающий считает ответ
+    неудачным, как при сетевой ошибке: так вывод ssh не превращается в «200».
+    """
+    body, _, tail = out.rpartition("\n")
+    status, _, kind = tail.strip().partition(" ")
+    try:
+        code = int(status)
+    except ValueError:
+        return 0, "", out
+    return code, kind.strip(), body
+
+
 def fetch_from_account(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
     """GET к сайту с самого аккаунта: локальный фильтр (ESET) и TLS до домена не пускают."""
     url = args.url.rstrip("/") + path
-    command = f"curl -sS -m 20 -w '\\n%{{http_code}}' {shlex.quote(url)}"
+    command = f"curl -sS -m 20 -w '{CURL_TAIL}' {shlex.quote(url)}"
     code, out, error = ssh_capture(args, command, timeout=45)
     if code != 0 or not out:
         return 0, "", error or out
-    body, _, status = out.rpartition("\n")
-    try:
-        return int(status.strip()), "", body
-    except ValueError:
-        return 0, "", out
+    return parse_curl_tail(out)
 
 
 def fetch_site(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
