@@ -6,8 +6,16 @@ import { recordRequest, utf8Size } from "./metrics";
  *
  * Каждый запрос измеряется (размер ответа и время) и попадает в счётчики
  * дебаг-панели мастера — второй раз данные никуда не отправляются.
+ *
+ * `options.acceptStatuses` перечисляет коды, которые считаются успехом:
+ * `/api/health` отвечает 503 при недоступном Redis, но тело с диагностикой
+ * (в том числе блок `process`) всё равно нужно разобрать.
  */
-export async function api<T>(url: string, init?: RequestInit): Promise<T> {
+export async function api<T>(
+  url: string,
+  init?: RequestInit,
+  options?: { acceptStatuses?: number[] },
+): Promise<T> {
   const method = init?.method ?? "GET";
   const startedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -65,7 +73,7 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     ok: res.ok,
   });
 
-  if (!res.ok) {
+  if (!res.ok && !(options?.acceptStatuses ?? []).includes(res.status)) {
     throw new AppError(res.status, payload?.error ?? "Не удалось выполнить запрос");
   }
 

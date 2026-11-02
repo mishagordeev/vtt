@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   formatBytes,
   resetUsage,
@@ -9,7 +9,7 @@ import {
   type UsageSnapshot,
 } from "@/lib/metrics";
 import { api } from "@/lib/client";
-import type { StorageHealth } from "@/lib/types";
+import type { HealthResponse, ProcessHealth, StorageHealth } from "@/lib/types";
 
 interface DebugPanelProps {
   code: string;
@@ -45,6 +45,31 @@ function storageLabel(storage: StorageHealth | null): string {
   return `хранилище: Redis${latency}${host}`;
 }
 
+/** «42 с», «5 мин 03 с», «2 ч 14 мин», «3 сут 4 ч» — компактно, без лишних нулей. */
+function formatUptime(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total} с`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes} мин ${String(total % 60).padStart(2, "0")} с`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ч ${String(minutes % 60).padStart(2, "0")} мин`;
+  return `${Math.floor(hours / 24)} сут ${hours % 24} ч`;
+}
+
+function processLabel(info: ProcessHealth | null): string {
+  if (!info) return "процесс: не проверено";
+  return `процесс: pid ${info.pid} · ${formatUptime(info.uptimeSeconds)}`;
+}
+
+function processTitle(info: ProcessHealth | null): string {
+  if (!info) {
+    return "После перезапуска сервера pid сменится, а uptime начнётся заново (на mod_wsgi перезапуск — touch api.wsgi)";
+  }
+  const startedAt = new Date(info.startedAt).toLocaleString("ru-RU");
+  return `pid ${info.pid}, старт ${startedAt}, живёт ${info.uptimeSeconds} с. После перезапуска сервера pid сменится, uptime начнётся заново`;
+}
+
+
 function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-2 py-1.5">
@@ -74,8 +99,11 @@ export function DebugPanel({
   );
   const [open, setOpen] = useState(false);
   const [storage, setStorage] = useState<StorageHealth | null>(null);
+  const [processInfo, setProcessInfo] = useState<ProcessHealth | null>(null);
+  const [previousPid, setPreviousPid] = useState<number | null>(null);
   const [healthBusy, setHealthBusy] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const processRef = useRef<ProcessHealth | null>(null);
 
   useEffect(() => {
     setOpen(window.localStorage.getItem(OPEN_KEY) === "1");
@@ -87,8 +115,17 @@ export function DebugPanel({
     setHealthBusy(true);
     setHealthError(null);
     try {
-      const payload = await api<{ storage: StorageHealth }>("/api/health?deep=1");
-      setStorage(payload.storage);
+      // 503 — это недоступный Redis, но блок process в теле ответа всё равно нужен:
+      // по нему видно, перечитал ли сервер приложение после touch api.wsgi.
+      const payload = await api<HealthResponse>("/api/health?deep=1", undefined, {
+        acceptStatuses: [503],
+      });
+      const next = payload?.process ?? null;
+      const previous = processRef.current;
+      setPreviousPid(next && previous && previous.pid !== next.pid ? previous.pid : null);
+      processRef.current = next;
+      setProcessInfo(next);
+      if (payload?.storage) setStorage(payload.storage);
     } catch (error) {
       setHealthError(error instanceof Error ? error.message : "Хранилище не ответило");
     } finally {
@@ -129,6 +166,9 @@ export function DebugPanel({
           {open ? "▾" : "▸"} диагностика мастера
         </button>
         <span className="font-mono text-zinc-500">{storageLabel(storage)}</span>
+        <span className="font-mono text-zinc-500" title={processTitle(processInfo)}>
+          {processLabel(processInfo)}
+        </span>
         <span className="font-mono">
           запросов сегодня: <span className="text-zinc-200">{usage.today.requests}</span>
         </span>
@@ -244,7 +284,20 @@ export function DebugPanel({
                 </dd>
                 <dt className="text-zinc-500">комната</dt>
                 <dd className="font-mono text-zinc-300">{code}</dd>
+                <dt className="text-zinc-500">процесс</dt>
+                <dd className="font-mono text-zinc-300" title={processTitle(processInfo)}>
+                  {processInfo ? `pid ${processInfo.pid}` : "—"}
+                </dd>
+                <dt className="text-zinc-500">живёт</dt>
+                <dd className="text-zinc-300" title={processTitle(processInfo)}>
+                  {processInfo ? formatUptime(processInfo.uptimeSeconds) : "—"}
+                </dd>
               </dl>
+              {previousPid !== null && processInfo ? (
+                <p className="mt-1 text-[10px] text-emerald-300">
+                  Процесс перезапущен: был pid {previousPid}, стал {processInfo.pid}.
+                </p>
+              ) : null}
               {healthError ? (
                 <p className="mt-1 text-[10px] text-rose-300">{healthError}</p>
               ) : null}

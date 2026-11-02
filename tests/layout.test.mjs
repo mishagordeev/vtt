@@ -106,3 +106,38 @@ test("список персонажей больше не занимает вк�
   assert.match(panel, /createRequest\?: number/, "панель принимает заявку на новый лист");
   assert.match(panel, /canAssign=/, "кнопка «Игроки» переехала в шапку листа");
 });
+
+test("дебаг-панель мастера показывает pid и uptime процесса сервера", () => {
+  const panel = read("components", "DebugPanel.tsx");
+  assert.match(
+    panel,
+    /import type \{ HealthResponse, ProcessHealth, StorageHealth \}/,
+    "панель должна знать про блок process из /api/health",
+  );
+  assert.match(
+    panel,
+    /const next = payload\?\.process \?\? null/,
+    "блок process нужно разбирать из ответа /api/health",
+  );
+  assert.match(
+    panel,
+    /acceptStatuses: \[503\]/,
+    "503 от /api/health — это недоступный Redis, но pid из тела нужен",
+  );
+  assert.match(panel, /processInfo \? `pid \$\{processInfo\.pid\}` : "—"/, "pid должен быть строкой панели");
+  assert.match(
+    panel,
+    /formatUptime\(processInfo\.uptimeSeconds\)/,
+    "uptime процесса должен быть виден рядом с pid",
+  );
+  assert.match(
+    panel,
+    /\{processLabel\(processInfo\)\}/,
+    "свёрнутая строка панели должна показывать pid и uptime без раскрытия",
+  );
+  assert.match(
+    panel,
+    /Процесс перезапущен: был pid \{previousPid\}/,
+    "после перезапуска сервера панель должна показать смену pid",
+  );
+});

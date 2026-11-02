@@ -257,3 +257,24 @@ export interface StorageHealth {
   error?: string | null;
 }
 
+/** Признаки процесса сервера из /api/health — по ним видно перезапуск. */
+export interface ProcessHealth {
+  /** pid процесса, обслуживающего запрос (в mod_wsgi — процесс Apache). */
+  pid: number;
+  /** Время старта процесса, мс с эпохи. */
+  startedAt: number;
+  /** Сколько процесс живёт, секунды от старта. */
+  uptimeSeconds: number;
+}
+
+/** Ответ /api/health: хранилище комнат и признаки процесса сервера. */
+export interface HealthResponse {
+  /** false — Redis настроен, но не отвечает или не может писать (HTTP 503). */
+  ok: boolean;
+  deep: boolean;
+  storage: StorageHealth;
+  /** Блок может отсутствовать у старого сервера — панель это учитывает. */
+  process?: ProcessHealth;
+  checkedAt?: number;
+}
+
