@@ -195,7 +195,13 @@ export interface MapStroke {
 /** Шрифт надписи на карте: ключ закрытого набора из `lib/mapText.ts`. */
 export type MapFont = "sans" | "serif" | "mono" | "hand";
 
-/** Надпись поверх карты: ставит и правит только мастер. */
+/**
+ * Как показывается запись на карте: `label` — надпись видна всегда,
+ * `point` — на карте только точка, её текст открывается нажатием.
+ */
+export type MapTextKind = "label" | "point";
+
+/** Запись поверх карты (надпись или точка): ставит и правит только мастер. */
 export interface MapText {
   id: string;
   author: string;
@@ -207,6 +213,8 @@ export interface MapText {
   font: MapFont;
   /** Кегль как доля ширины карты. */
   size: number;
+  /** В комнатах до 0.4.65 поля нет — это обычная надпись. */
+  kind?: MapTextKind;
 }
 
 export interface MapCursor {

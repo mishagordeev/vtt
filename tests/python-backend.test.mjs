@@ -367,6 +367,44 @@ test("Python-сервер: комната, чат с броском, лист, �
   assert.equal(mapTextEdited.payload.map.texts[0].font, "sans", "неизвестный шрифт — обычный");
   assert.equal(mapTextEdited.payload.map.texts[0].size, 0.008, "кегль не меньше нижнего предела");
 
+  // Точка: тот же `text`, но с видом point — текст на карте не виден до нажатия.
+  const mapPoint = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "text",
+    kind: "point",
+    text: "Сундук",
+    x: 0.6,
+    y: 0.7,
+    color: "#38bdf8",
+  });
+  assert.equal(mapPoint.status, 200, server.log());
+  assert.equal(mapPoint.payload.map.texts.length, 2, "точка и надпись живут в одном списке");
+  const pointEntry = mapPoint.payload.map.texts.find((item) => item.text === "Сундук");
+  assert.equal(pointEntry.kind, "point", "точка сохраняется с видом point");
+  assert.equal(pointEntry.color, "#38bdf8");
+  assert.equal(mapPoint.payload.map.texts[0].kind, "label", "старая надпись осталась надписью");
+
+  const mapPointEdited = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textUpdate",
+    id: pointEntry.id,
+    kind: "label",
+  });
+  assert.equal(mapPointEdited.status, 200, server.log());
+  assert.equal(
+    mapPointEdited.payload.map.texts.find((item) => item.id === pointEntry.id).kind,
+    "label",
+    "вид записи меняется правкой",
+  );
+
+  const mapPointRemoved = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textRemove",
+    id: pointEntry.id,
+  });
+  assert.equal(mapPointRemoved.status, 200, server.log());
+  assert.equal(mapPointRemoved.payload.map.texts.length, 1, "точка удалена");
+
   const mapEraseAgain = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
     actor: "Игрок",
     action: "erase",

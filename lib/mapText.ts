@@ -1,4 +1,4 @@
-import type { MapFont } from "./types";
+import type { MapFont, MapTextKind } from "./types";
 
 /**
  * Надписи поверх карты: набор шрифтов и размеров закрыт, потому что ключи
@@ -34,13 +34,26 @@ export const MAP_TEXT_MIN_SIZE = 0.008;
 export const MAP_TEXT_MAX_SIZE = 0.06;
 /** Больше — уже не подпись, а абзац поверх карты. */
 export const MAP_TEXT_MAX_LENGTH = 120;
-/** Сколько надписей держим на карте. */
+/** Сколько надписей и точек держим на карте. */
 export const MAP_TEXT_LIMIT = 60;
+/** Сколько показывается текст точки после нажатия. */
+export const MAP_TEXT_REVEAL_MS = 5_000;
+/** Виды записи на карте: надпись видна всегда, точка — только по нажатию. */
+export const MAP_TEXT_KINDS: MapTextKind[] = ["label", "point"];
 
 /** Текст надписи без переводов строк и лишних пробелов. */
 export function sanitizeMapText(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, MAP_TEXT_MAX_LENGTH);
+}
+
+/**
+ * Вид записи: всё, кроме явной `point`, — обычная надпись.
+ * Старые комнаты поля не знают и должны выглядеть как раньше.
+ */
+export function normalizeMapTextKind(value: unknown): MapTextKind {
+  const text = String(value ?? "").trim().toLowerCase();
+  return text === "point" ? "point" : "label";
 }
 
 /** Неизвестный шрифт — «обычный»: в CSS не должно попасть произвольной строки. */

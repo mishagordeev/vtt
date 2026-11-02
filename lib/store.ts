@@ -6,6 +6,7 @@ import { roomCode, uid } from "./ids";
 import {
   MAP_TEXT_LIMIT,
   normalizeMapFont,
+  normalizeMapTextKind,
   normalizeMapTextSize,
   sanitizeMapText,
 } from "./mapText.ts";
@@ -982,6 +983,7 @@ export async function updateMap(
           color: PLAYER_COLOR_RE.test(String(action.color ?? "")) ? String(action.color) : "#f8fafc",
           font: normalizeMapFont(action.font),
           size: normalizeMapTextSize(action.size),
+          kind: normalizeMapTextKind(action.kind),
         };
         map.texts.push(entry);
         if (map.texts.length > MAP_TEXT_LIMIT) {
@@ -1004,6 +1006,7 @@ export async function updateMap(
           }
           if (action.font !== undefined) entry.font = normalizeMapFont(action.font);
           if (action.size !== undefined) entry.size = normalizeMapTextSize(action.size);
+          if (action.kind !== undefined) entry.kind = normalizeMapTextKind(action.kind);
           const nextX = action.x === undefined ? entry.x : mapCoord(action.x);
           const nextY = action.y === undefined ? entry.y : mapCoord(action.y);
           if (nextX === null || nextY === null) {

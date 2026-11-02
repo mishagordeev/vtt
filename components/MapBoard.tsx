@@ -5,6 +5,7 @@ import {
   MAP_FONT_OPTIONS,
   MAP_FONT_STACK,
   MAP_TEXT_MAX_LENGTH,
+  MAP_TEXT_REVEAL_MS,
   MAP_TEXT_SIZES,
   nearestMapTextSize,
   sanitizeMapText,
@@ -86,7 +87,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const imageRef = useRef<HTMLImageElement>(null);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [tool, setTool] = useState<"pen" | "erase" | "text">("pen");
+  const [tool, setTool] = useState<"pen" | "erase" | "text" | "point">("pen");
   const [color, setColor] = useState(COLORS[0]);
   const [width, setWidth] = useState(WIDTHS[1].value);
   const [current, setCurrent] = useState<MapPoint[]>([]);
@@ -100,6 +101,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const [textFont, setTextFont] = useState<MapFont>("serif");
   const [textSize, setTextSize] = useState(MAP_TEXT_SIZES[1].value);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  // Открытый текст точки: id и время нажатия (по нему перезапускается таймер).
+  const [revealed, setRevealed] = useState<{ id: string; at: number } | null>(null);
   const [, setTick] = useState(0);
 
   // Картинка могла прийти из кэша до подписки на onLoad — тогда размер берём сразу.
@@ -132,9 +135,16 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
 
   useEffect(() => {
     if (tool === "pen") setErasePoint(null);
-    // Ушли с инструмента надписей — выбор снимается, введённый текст не теряется.
-    if (tool !== "text") setEditingTextId(null);
+    // Ушли с инструмента надписей и точек — выбор снимается, введённый текст не теряется.
+    if (tool !== "text" && tool !== "point") setEditingTextId(null);
   }, [tool]);
+
+  // Подпись точки видна 5 секунд; повторное нажатие по ней перезапускает отсчёт.
+  useEffect(() => {
+    if (!revealed) return;
+    const timer = setTimeout(() => setRevealed(null), MAP_TEXT_REVEAL_MS);
+    return () => clearTimeout(timer);
+  }, [revealed]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -179,7 +189,12 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if (tool === "text") {
+    // Открытый текст точки закрывается кликом по карте — и не ставит заодно метку.
+    if (revealed) {
+      setRevealed(null);
+      return;
+    }
+    if (tool === "text" || tool === "point") {
       // Надпись ставит только мастер; игроку — подсказка вместо клика.
       if (!isGM) {
         setError("Надписи на карте ставит только мастер");
@@ -204,7 +219,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const point = pointFrom(event);
-    if (tool === "text") {
+    if (tool === "text" || tool === "point") {
       if (!drawingRef.current) return;
       const start = startRef.current ?? point;
       if (Math.hypot(point.x - start.x, point.y - start.y) > CLICK_DISTANCE) movedRef.current = true;
@@ -240,7 +255,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     drawingRef.current = false;
     const start = startRef.current;
     startRef.current = null;
-    if (tool === "text") {
+    if (tool === "text" || tool === "point") {
       setErasePoint(null);
       if (!movedRef.current && start) void addText(start);
       return;
@@ -264,7 +279,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     setError(result ? "" : "Очистить карту может только мастер");
   }
 
-  /** Новая надпись — по клику на карту, пока ничего не выбрано для правки. */
+  /** Новая надпись или точка — по клику на карту, пока ничего не выбрано для правки. */
   async function addText(point: MapPoint) {
     if (editingTextId) {
       // Иначе клик по карте в режиме правки молча ставил бы дубль выбранной надписи.
@@ -273,11 +288,12 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     }
     const label = sanitizeMapText(text);
     if (!label) {
-      setError("Сначала введите текст надписи");
+      setError(tool === "point" ? "Сначала введите текст точки" : "Сначала введите текст надписи");
       return;
     }
     const result = await onAction({
       action: "text",
+      kind: tool === "point" ? "point" : "label",
       text: label,
       x: point.x,
       y: point.y,
@@ -293,14 +309,22 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     setText("");
   }
 
-  /** Выбрать надпись с карты: её текст, цвет, шрифт и размер едут в редактор. */
+  /** Выбрать надпись или точку с карты: её текст, цвет, шрифт и размер едут в редактор. */
   function pickText(entry: MapText) {
     setEditingTextId(entry.id);
+    setTool(entry.kind === "point" ? "point" : "text");
     setText(entry.text);
     setTextColor(entry.color);
     setTextFont(entry.font);
     setTextSize(nearestMapTextSize(entry.size));
     setError("");
+  }
+
+  /** Нажатие на точку: текст открывается на 5 секунд, мастеру ещё и редактор. */
+  function revealText(entry: MapText) {
+    setRevealed({ id: entry.id, at: Date.now() });
+    setError("");
+    if (isGM && (tool === "text" || tool === "point")) pickText(entry);
   }
 
   async function saveText() {
@@ -356,8 +380,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
             Карта Кас-Хатара
           </h2>
           <p className="text-[10px] text-zinc-600">
-            Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · мастер добавляет
-            надписи с цветом, шрифтом и размером
+            Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · мастер ставит
+            надписи и точки: нажатие на точку открывает её текст на 5 секунд
           </p>
         </div>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
@@ -373,7 +397,11 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
           className={`map-frame relative touch-none select-none ${
-            tool === "pen" ? "cursor-crosshair" : tool === "text" ? "cursor-text" : "cursor-cell"
+            tool === "pen" || tool === "point"
+              ? "cursor-crosshair"
+              : tool === "text"
+                ? "cursor-text"
+                : "cursor-cell"
           }`}
         >
           {/* Формат выбирает браузер: берётся первый поддержанный <source>, JPEG
@@ -400,31 +428,78 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           </picture>
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
-          {/* Надписи мастера поверх карты: игрокам они только видны, мастер может
-              выбрать надпись кликом и править её в панели инструментов. */}
-          {texts.map((entry) => (
-            <div
-              key={entry.id}
-              className={`absolute z-10 max-w-[45%] -translate-x-1/2 -translate-y-1/2 break-words px-1 leading-tight ${
-                isGM && tool === "text"
-                  ? "pointer-events-auto cursor-pointer hover:bg-zinc-950/40"
-                  : "pointer-events-none"
-              } ${editingTextId === entry.id ? "rounded ring-2 ring-amber-300/90" : ""}`}
-              style={{
-                left: `${entry.x * 100}%`,
-                top: `${entry.y * 100}%`,
-                color: entry.color,
-                fontFamily: MAP_FONT_STACK[entry.font] ?? MAP_FONT_STACK.sans,
-                fontSize: `${Math.max(9, entry.size * Math.max(size.width, 320))}px`,
-                textShadow: "0 1px 3px rgba(0,0,0,0.9)",
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => pickText(entry)}
-              title={isGM ? "Править надпись" : entry.text}
-            >
-              {entry.text}
-            </div>
-          ))}
+          {/* Записи мастера поверх карты: надпись видна всегда, точка — только кружком.
+              Нажатие на точку открывает её текст на 5 секунд; правит записи мастер. */}
+          {texts.map((entry) => {
+            if (entry.kind === "point") {
+              const diameter = Math.max(12, entry.size * Math.max(size.width, 320) * 1.4);
+              const open = revealed?.id === entry.id;
+              return (
+                <div
+                  key={entry.id}
+                  className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: `${entry.x * 100}%`, top: `${entry.y * 100}%` }}
+                >
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => revealText(entry)}
+                    className={`-m-2 block cursor-pointer rounded-full p-2 ${
+                      editingTextId === entry.id ? "ring-2 ring-amber-300/90" : ""
+                    }`}
+                    title="Точка на карте: нажмите, чтобы прочитать"
+                    aria-label="Точка на карте: нажмите, чтобы прочитать"
+                  >
+                    <span
+                      className="block rounded-full border-2 border-zinc-950/70"
+                      style={{
+                        width: `${diameter}px`,
+                        height: `${diameter}px`,
+                        backgroundColor: entry.color,
+                        boxShadow: "0 1px 6px rgba(0,0,0,0.85)",
+                      }}
+                    />
+                  </button>
+                  {open ? (
+                    <span
+                      className="pointer-events-none absolute left-1/2 top-full mt-1 w-max max-w-[14rem] -translate-x-1/2 whitespace-pre-wrap break-words rounded bg-zinc-950/90 px-1.5 py-1 text-center leading-tight shadow-lg"
+                      style={{
+                        color: entry.color,
+                        fontFamily: MAP_FONT_STACK[entry.font] ?? MAP_FONT_STACK.sans,
+                        fontSize: `${Math.max(10, entry.size * Math.max(size.width, 320))}px`,
+                        textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+                      }}
+                    >
+                      {entry.text}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={entry.id}
+                className={`absolute z-10 max-w-[45%] -translate-x-1/2 -translate-y-1/2 break-words px-1 leading-tight ${
+                  isGM && tool === "text"
+                    ? "pointer-events-auto cursor-pointer hover:bg-zinc-950/40"
+                    : "pointer-events-none"
+                } ${editingTextId === entry.id ? "rounded ring-2 ring-amber-300/90" : ""}`}
+                style={{
+                  left: `${entry.x * 100}%`,
+                  top: `${entry.y * 100}%`,
+                  color: entry.color,
+                  fontFamily: MAP_FONT_STACK[entry.font] ?? MAP_FONT_STACK.sans,
+                  fontSize: `${Math.max(9, entry.size * Math.max(size.width, 320))}px`,
+                  textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => pickText(entry)}
+                title={isGM ? "Править надпись" : entry.text}
+              >
+                {entry.text}
+              </div>
+            );
+          })}
 
           {pings.map((ping) => (
             <div
@@ -512,8 +587,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
             ) : null}
             </div>
 
-            {/* Вторая строка — под кистью и ластиком: надпись поверх карты.
-                Ставит и правит её только мастер. */}
+            {/* Вторая строка — под кистью и ластиком: надписи и точки поверх карты.
+                Ставит и правит их только мастер. */}
             {isGM ? (
               <div className="flex flex-wrap items-center gap-1 border-t border-zinc-700/60 pt-1">
                 <button
@@ -527,7 +602,18 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                 >
                   Текст
                 </button>
-                {tool === "text" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTool("point");
+                    setEditingTextId(null);
+                  }}
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "point" ? "bg-sky-300 text-sky-950" : "text-zinc-300 hover:text-sky-200"}`}
+                  title="Точка: текст открывается нажатием на 5 секунд"
+                >
+                  Точка
+                </button>
+                {tool === "text" || tool === "point" ? (
                   <>
                     <input
                       value={text}
@@ -591,11 +677,13 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                         </button>
                       </>
                     ) : (
-                      <span className="text-[10px] text-zinc-400">клик по карте — место</span>
+                      <span className="text-[10px] text-zinc-400">
+                        {tool === "point" ? "клик по карте — место точки" : "клик по карте — место"}
+                      </span>
                     )}
                   </>
                 ) : (
-                  <span className="text-[10px] text-zinc-500">надпись поверх карты</span>
+                  <span className="text-[10px] text-zinc-500">надписи и точки поверх карты</span>
                 )}
               </div>
             ) : null}

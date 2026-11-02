@@ -30,6 +30,7 @@ MAP_TEXT_MAX_LENGTH = 120
 MAP_TEXT_MIN_SIZE = 0.008
 MAP_TEXT_MAX_SIZE = 0.06
 MAP_FONTS = ("sans", "serif", "mono", "hand")
+MAP_TEXT_KINDS = ("label", "point")
 MAX_MUSIC_TRACKS = 20
 MAX_MUSIC_POSITION = 86_400
 MAX_DELETED_MESSAGES = 400
@@ -153,6 +154,7 @@ def ensure_map(doc):
                         "color": _color_or(item.get("color"), "#f8fafc"),
                         "font": _map_font(item.get("font")),
                         "size": _map_text_size(item.get("size")),
+                        "kind": _map_text_kind(item.get("kind")),
                     }
                 )
             state["texts"] = texts
@@ -769,6 +771,12 @@ def _map_text_size(value):
     return max(MAP_TEXT_MIN_SIZE, min(MAP_TEXT_MAX_SIZE, number))
 
 
+def _map_text_kind(value):
+    """Вид записи: всё, кроме явной `point`, — обычная надпись (`normalizeMapTextKind`)."""
+    text = str(value or "").strip().lower()
+    return text if text in MAP_TEXT_KINDS else "label"
+
+
 def _find_map_text(state, text_id):
     """Надпись по id: `map.texts.find` из Node-версии."""
     wanted = str(text_id or "")
@@ -882,6 +890,7 @@ def update_map(code, raw_actor, raw_action):
                         "color": _color_or(action.get("color"), "#f8fafc"),
                         "font": _map_font(action.get("font")),
                         "size": _map_text_size(action.get("size")),
+                        "kind": _map_text_kind(action.get("kind")),
                     }
                 )
                 if len(texts) > MAX_MAP_TEXTS:
@@ -912,6 +921,8 @@ def update_map(code, raw_actor, raw_action):
                         entry["font"] = _map_font(action.get("font"))
                     if action.get("size") is not None:
                         entry["size"] = _map_text_size(action.get("size"))
+                    if action.get("kind") is not None:
+                        entry["kind"] = _map_text_kind(action.get("kind"))
                     next_x = entry.get("x") if action.get("x") is None else _map_coord(action.get("x"))
                     next_y = entry.get("y") if action.get("y") is None else _map_coord(action.get("y"))
                     if next_x is None or next_y is None:
