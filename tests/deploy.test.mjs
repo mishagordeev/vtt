@@ -265,3 +265,35 @@ test("в автовыкладке и в README нет старого катал�
   );
 });
 
+
+// На аккаунте SpaceWeb Apache 2.2.29 без mod_wsgi: `.wsgi` отдаётся как текст,
+// `/api/health` отвечал 404. Поэтому `/api/**` идёт в CGI-адаптер, а `--reload`
+// остаётся проверкой живости (touch api.wsgi нужен только mod_wsgi).
+test("API идёт через CGI-адаптер, а не через mod_wsgi", { skip: pythonReady ? false : SKIP_PY }, () => {
+  const htaccess = read("deploy", "apache", ".htaccess");
+  assert.match(
+    htaccess,
+    /RewriteRule \^api\(\/\.\*\)\?\$ cgi-bin\/api\.cgi\$1 \[QSA,L\]/,
+    "/api/** должен уходить в cgi-bin/api.cgi: mod_wsgi к сайту не подключён",
+  );
+  assert.ok(
+    !/RewriteRule \^api\(\/\.\*\)\?\$ api\.wsgi\$1/.test(htaccess),
+    "старое правило на api.wsgi вернёт 404: .wsgi не исполняется",
+  );
+
+  const cgi = path.join(projectDir, "deploy", "apache", "api.cgi");
+  const raw = fs.readFileSync(cgi, "latin1");
+  assert.ok(!raw.includes("\r"), "api.cgi с CRLF: CGI ответит 500, env не найдёт python");
+  assert.match(raw, /^#!\/usr\/bin\/python3\.11/, "shebang должен звать python3.11: python3 в CGI — 3.4");
+
+  const parse = spawnSync(
+    PY.command,
+    [...PY.args, "-c", "import ast, sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())", cgi],
+    { encoding: "utf8" },
+  );
+  assert.equal(parse.status, 0, `api.cgi не разбирается Python-ом: ${parse.stderr}`);
+
+  const deployPy = read("deploy", "apache", "deploy.py");
+  assert.match(deployPy, /cgi-bin\/api\.cgi/, "deploy.py должен выгружать cgi-bin/api.cgi");
+});
+

@@ -229,18 +229,22 @@ test(
   },
 );
 
-test(".htaccess: API в mod_wsgi, комната файлом, служебное закрыто", () => {
+test(".htaccess: API в CGI-адаптер, комната файлом, служебное закрыто", () => {
   const raw = fs.readFileSync(path.join(projectDir, "deploy", "apache", ".htaccess"), "latin1");
   assert.ok(!raw.includes("\r"), "в .htaccess не должно быть CRLF — Apache ждёт LF");
   const conf = read("deploy", "apache", ".htaccess");
 
   assert.match(conf, /^DirectoryIndex index\.html$/m, "Apache должен отдавать index.html");
   assert.match(conf, /^ErrorDocument 404 \/404\.html$/m, "нужна страница 404 из сборки");
-  assert.match(conf, /^AddHandler wsgi-script \.wsgi$/m, "без этого mod_wsgi не подхватит api.wsgi");
   assert.match(
     conf,
-    /^\s*RewriteRule \^api\(\/\.\*\)\?\$ api\.wsgi\$1 \[QSA,L\]$/m,
-    "/api/** должен уходить в Python",
+    /^AddHandler wsgi-script \.wsgi$/m,
+    "обработчик .wsgi остаётся запасным путём: он нужен, если включат mod_wsgi",
+  );
+  assert.match(
+    conf,
+    /^\s*RewriteRule \^api\(\/\.\*\)\?\$ cgi-bin\/api\.cgi\$1 \[QSA,L\]$/m,
+    "/api/** должен уходить в CGI-адаптер: mod_wsgi к аккаунту не подключён",
   );
   assert.match(
     conf,
@@ -462,14 +466,15 @@ test("документация описывает статическую сбо�
   assert.match(apacheDoc, /--static out/, "нет команды локальной проверки");
   assert.match(
     apacheDoc,
-    /## Перезапуск mod_wsgi/,
-    "нет раздела о том, как перезапустить mod_wsgi после правок бэкенда",
+    /## Перезапуск бэкенда/,
+    "нет раздела о том, как перезапустить бэкенд после правок",
   );
   assert.match(apacheDoc, /touch api\.wsgi/, "перезапуск mod_wsgi — это touch api.wsgi");
+  assert.match(apacheDoc, /cgi-bin\/api\.cgi/, "не сказано, что /api/** идёт через CGI-адаптер");
   assert.match(
     apacheDoc,
-    /process\.pid/,
-    "не сказано, как проверить перезапуск по блоку process в /api/health",
+    /process`/,
+    "не сказано, как проверить живость по блоку process в /api/health",
   );
 
   const pythonDoc = read("python", "README.md");

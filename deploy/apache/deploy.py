@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Выкладка статики VTT на виртуальный хостинг SpaceWeb (Apache + mod_wsgi).
+"""Выкладка VTT на виртуальный хостинг SpaceWeb (Apache + CGI).
 
 Раскладка — из `deploy/apache/README.md`: содержимое `out/` в корень сайта,
-рядом каталог `python/`, файлы `api.wsgi`, `keys.env` и `.htaccess`.
+рядом каталог `python/`, файлы `api.wsgi`, `keys.env` и `.htaccess`, а в
+`cgi-bin/` — адаптер `api.cgi`, который и отвечает за `/api/**`: mod_wsgi
+к сайту не подключён, зато CGI в `cgi-bin` работает всегда.
 
     py -3.13 deploy/apache/deploy.py --check        # только проверка комплекта
     py -3.13 deploy/apache/deploy.py --dry-run      # показать команды выгрузки
     py -3.13 deploy/apache/deploy.py --build        # пересобрать out/ и выложить
     py -3.13 deploy/apache/deploy.py --archive      # комплект одним zip для панели
-    py -3.13 deploy/apache/deploy.py --reload       # только перезапустить mod_wsgi
+    py -3.13 deploy/apache/deploy.py --reload       # перезапустить бэкенд и проверить health
 
-Перезапуск mod_wsgi — это `touch api.wsgi`: mod_wsgi перечитывает приложение,
-когда меняется mtime точки входа, поэтому правки `python/` и `keys.env` без
-этого шага остаются невидимыми. Без оболочки SSH файл перезаливают или
-сохраняют в редакторе панели — подробности в разделе «Перезапуск mod_wsgi»
-файла `deploy/apache/README.md`.
+`--reload` остаётся универсальным: он делает `touch api.wsgi` (нужно mod_wsgi,
+если его когда-нибудь включат) и сразу проверяет `/api/health?deep=1`.
+В CGI-режиме перезапуск не требуется вовсе — каждый запрос поднимает новый
+процесс и видит свежие `python/` и `keys.env`.
 
 Параметры по умолчанию — аккаунт `onitselfgm` на `77.222.40.251`
 (ключ `~/.ssh/sweb_deploy`), корень сайта `vtt_poison_press/public_html`
@@ -28,9 +29,9 @@
   выставляются отдельным `ssh`, и если оболочки нет — скрипт предупреждает,
   а не падает.
 - `--rsync` — инкрементальная выгрузка (`out/` и `python/`), устаревшие
-  хешированные чанки удаляются, серверные `python/`, `api.wsgi`, `keys.env` и
-  `.htaccess` защищены от `--delete`, а после выгрузки скрипт делает
-  `touch api.wsgi`: mod_wsgi перечитывает приложение. Этот режим требует
+  хешированные чанки удаляются, серверные `python/`, `api.wsgi`, `keys.env`,
+  `cgi-bin/` и `.htaccess` защищены от `--delete`, а после выгрузки скрипт
+  делает `touch api.wsgi`: mod_wsgi перечитывает приложение. Этот режим требует
   оболочки на аккаунте и rsync на обеих сторонах — им пользуется CI
   (`.github/workflows/static.yml`).
 - `--archive` — ничего не отправляет, а собирает тот же комплект одним
@@ -147,23 +148,25 @@ def check(*, keys_file: Path) -> list[str]:
     if (PYTHON_DIR / "wsgi.py").exists():
         ok("python/ на месте (wsgi.py, vtt/, data/rules.json)")
 
-    for rel in ("api.wsgi", ".htaccess"):
+    for rel in ("api.wsgi", "api.cgi", ".htaccess"):
         path = APACHE_DIR / rel
         if not path.exists():
             blockers.append(f"нет deploy/apache/{rel}")
         elif b"\r" in path.read_bytes():
-            blockers.append(f"deploy/apache/{rel} с CRLF — Apache и mod_wsgi ждут LF")
+            blockers.append(f"deploy/apache/{rel} с CRLF — Apache и Python ждут LF")
         else:
             ok(f"deploy/apache/{rel} — LF, {path.stat().st_size} байт")
 
-    wsgi = APACHE_DIR / "api.wsgi"
-    if wsgi.exists() and not blockers:
+    for rel in ("api.wsgi", "api.cgi"):
+        entry = APACHE_DIR / rel
+        if not entry.exists() or blockers:
+            continue
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                py_compile.compile(str(wsgi), cfile=str(Path(tmp) / "api.pyc"), doraise=True)
-            ok("api.wsgi компилируется без ошибок")
+                py_compile.compile(str(entry), cfile=str(Path(tmp) / "entry.pyc"), doraise=True)
+            ok(f"{rel} компилируется без ошибок")
         except py_compile.PyCompileError as error:
-            blockers.append(f"api.wsgi не компилируется: {str(error.msg).strip()}")
+            blockers.append(f"{rel} не компилируется: {str(error.msg).strip()}")
 
     if keys_file.exists():
         body = keys_file.read_text(encoding="utf-8")
@@ -321,6 +324,10 @@ def rsync_steps(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
             + [f"{PYTHON_DIR.as_posix()}/", f"{remote}/python/"],
         ),
         ("api.wsgi", base + [f"{APACHE_DIR.as_posix()}/api.wsgi", f"{remote}/api.wsgi"]),
+        (
+            "cgi-bin/api.cgi",
+            base + [f"{APACHE_DIR.as_posix()}/api.cgi", f"{remote}/cgi-bin/api.cgi"],
+        ),
     ]
     if args.keys.exists():
         steps.append(
@@ -343,8 +350,13 @@ def reload_command(args: argparse.Namespace) -> list[str]:
 
 
 def reload_mod_wsgi(args: argparse.Namespace) -> None:
-    """touch api.wsgi: mod_wsgi перечитывает приложение, когда меняется mtime точки входа."""
-    log("\nПерезапуск mod_wsgi: touch api.wsgi")
+    """touch api.wsgi: mod_wsgi перечитывает приложение, когда меняется mtime точки входа.
+
+    В CGI-режиме (`cgi-bin/api.cgi`) перезапуск не нужен: каждый запрос — новый
+    процесс, поэтому свежие `python/` и `keys.env` видны сразу. touch остаётся
+    безвредным и пригодится, если Python/WSGI на сайте включат.
+    """
+    log("\nПерезапуск бэкенда: touch api.wsgi (в CGI-режиме не обязателен)")
     args.target = resolve_site_root(args)
     code = run(reload_command(args), dry_run=False)
     if code == 255:
@@ -399,6 +411,7 @@ def deploy(args: argparse.Namespace) -> None:
             ("страницы, чанки и карта", [str(path) for path in statics], f"{remote}/"),
             ("python/", [str(python_stage)], f"{remote}/python"),
             ("api.wsgi", [str(APACHE_DIR / "api.wsgi")], f"{remote}/api.wsgi"),
+            ("cgi-bin/api.cgi", [str(APACHE_DIR / "api.cgi")], f"{remote}/cgi-bin/api.cgi"),
         ]
         if args.keys.exists():
             steps.append(("keys.env", [str(args.keys)], f"{remote}/keys.env"))
@@ -407,10 +420,13 @@ def deploy(args: argparse.Namespace) -> None:
         # .htaccess последним: правила включаются, когда файлы уже на месте.
         steps.append((".htaccess", [str(APACHE_DIR / ".htaccess")], f"{remote}/.htaccess"))
 
-        for title, sources, destination in steps:
-            log(f"  → {title}")
-            if run(scp + sources + [destination], dry_run=args.dry_run) != 0:
-                die(f"scp не смог выгрузить «{title}»")
+    # cgi-bin на аккаунте уже есть (там php*.cgi), но scp каталогов не создаёт.
+    run(ssh_base(args) + [f"mkdir -p {shlex.quote(args.target.strip('/'))}/cgi-bin"], dry_run=args.dry_run)
+
+    for title, sources, destination in steps:
+        log(f"  → {title}")
+        if run(scp + sources + [destination], dry_run=args.dry_run) != 0:
+            die(f"scp не смог выгрузить «{title}»")
 
     if args.dry_run:
         return
@@ -431,7 +447,8 @@ def deploy(args: argparse.Namespace) -> None:
     ]
     fix = (
         f"cd {args.target} && chmod 600 keys.env 2>/dev/null; "
-        "chmod 755 python python/vtt 2>/dev/null; true"
+        "chmod 755 python python/vtt 2>/dev/null; "
+        "chmod 755 cgi-bin cgi-bin/api.cgi 2>/dev/null; true"
     )
     try:
         code = subprocess.call(ssh + [fix], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -463,6 +480,7 @@ def archive_members(python_stage: Path, *, keys_file: Path) -> list[tuple[Path, 
         if path.is_file():
             members.append((path, "python/" + path.relative_to(python_stage).as_posix()))
     members.append((APACHE_DIR / "api.wsgi", "api.wsgi"))
+    members.append((APACHE_DIR / "api.cgi", "cgi-bin/api.cgi"))
     if keys_file.exists():
         members.append((keys_file, "keys.env"))
     members.append((APACHE_DIR / ".htaccess", ".htaccess"))

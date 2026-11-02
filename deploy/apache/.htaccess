@@ -1,6 +1,7 @@
 # VTT на виртуальном хостинге SpaceWeb: страницы — статика из `out/`,
-# API — Python через mod_wsgi. Кладётся в `public_html` рядом с каталогом
-# `python/` и файлом `api.wsgi` (подробности — `deploy/apache/README.md`).
+# API — Python через CGI-адаптер `cgi-bin/api.cgi` (mod_wsgi на аккаунте нет,
+# `.wsgi` отдаётся как текст). Кладётся в `public_html` рядом с каталогом
+# `python/`, файлами `api.wsgi` и `cgi-bin/api.cgi` (подробности — `deploy/apache/README.md`).
 #
 # Проверено локально тем же набором правил: `python/devserver.py --static out`.
 
@@ -26,9 +27,10 @@ ErrorDocument 404 /404.html
   RewriteRule ^python(/|$) - [F,L]
   RewriteRule ^keys\.env$ - [F,L]
 
-  # API уходит в mod_wsgi: /api/rooms/A7K2QM/state -> api.wsgi/rooms/A7K2QM/state
+  # API уходит в CGI-адаптер: mod_wsgi на аккаунте нет, а CGI в cgi-bin работает.
+  # /api/rooms/A7K2QM/state -> cgi-bin/api.cgi/rooms/A7K2QM/state
   RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteRule ^api(/.*)?$ api.wsgi$1 [QSA,L]
+  RewriteRule ^api(/.*)?$ cgi-bin/api.cgi$1 [QSA,L]
 
   # Комната: /r/A7K2QM — это статическая страница r/index.html. Адрес в браузере
   # не меняется, код комнаты страница берёт из пути (статический экспорт не умеет

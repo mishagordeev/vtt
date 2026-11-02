@@ -8,5 +8,6 @@
 *.yml text eol=lf
 *.py text eol=lf
 *.wsgi text eol=lf
+*.cgi text eol=lf
 # .htaccess уезжает на Apache как есть: CRLF там ломает правила mod_rewrite.
 .htaccess text eol=lf
