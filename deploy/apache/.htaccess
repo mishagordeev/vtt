@@ -39,6 +39,17 @@ ErrorDocument 404 /404.html
 </IfModule>
 
 <IfModule mod_headers.c>
+  # HTML не кэшируем без проверки: страница из кэша ссылается на чанки прошлой
+  # сборки (у файлов Next хеш в имени), а на сервере их уже нет — приложение
+  # падает с ChunkLoadError. ETag остаётся, поэтому повтор запроса — дешёвый 304.
+  <FilesMatch "\.html?$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  # index.txt — тот же HTML в виде RSC-потока (нужен клиентской навигации Next).
+  <Files "index.txt">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </Files>
+
   # Хешированные файлы сборки Next (_next/static/**) не меняются — кэш навсегда.
   <FilesMatch "^.*-[0-9a-f]{8,}\.(js|css)$">
     Header set Cache-Control "public, max-age=31536000, immutable"

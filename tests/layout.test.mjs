@@ -141,3 +141,46 @@ test("дебаг-панель мастера показывает pid и uptime 
     "после перезапуска сервера панель должна показать смену pid",
   );
 });
+
+test("после смены сборки стол сам перезагружается, а не показывает английскую заглушку", () => {
+  const layout = read("app", "layout.tsx");
+  assert.match(
+    layout,
+    /import \{ StaleChunkRecovery \} from "@\/components\/StaleChunkRecovery"/,
+    "восстановление после старой сборки подключается в общий layout",
+  );
+  assert.match(layout, /<StaleChunkRecovery \/>/, "компонент восстановления должен быть на каждой странице");
+
+  const recovery = read("components", "StaleChunkRecovery.tsx");
+  assert.match(recovery, /^"use client";$/m, "слушатели window живут в клиентском компоненте");
+  assert.match(
+    recovery,
+    /window\.addEventListener\("error", onError, true\)/,
+    "ошибка загрузки <script> не всплывает — слушатель нужен в фазе capture",
+  );
+  assert.match(
+    recovery,
+    /window\.addEventListener\("unhandledrejection", onRejection\)/,
+    "ChunkLoadError приходит отклонённым промисом динамического импорта",
+  );
+  assert.match(recovery, /ChunkLoadError/, "признак устаревшей сборки — ChunkLoadError");
+  assert.match(
+    recovery,
+    /window\.location\.reload\(\)/,
+    "лечится перезагрузкой: она забирает HTML со свежими хешами чанков",
+  );
+  assert.match(
+    recovery,
+    /RELOAD_COOLDOWN_MS = 30_000/,
+    "без паузы перезагрузка зациклится, если чанк недоступен по другой причине",
+  );
+  assert.match(recovery, /sessionStorage/, "метка последней перезагрузки живёт до закрытия вкладки");
+
+  const errorPage = read("app", "error.tsx");
+  assert.match(errorPage, /^"use client";$/m, "error.tsx в статическом экспорте — клиентский компонент");
+  assert.match(errorPage, /Стол не открылся/, "вместо английской заглушки Next нужен русский заголовок");
+  assert.match(errorPage, /Перезагрузить страницу/, "первая кнопка — перезагрузка страницы");
+  assert.match(errorPage, /onClick=\{\(\) => reset\(\)\}/, "вторая кнопка повторяет отрисовку без перезагрузки");
+  assert.match(errorPage, /ChunkLoadError/, "про устаревшую сборку страница должна говорить отдельно");
+});
+

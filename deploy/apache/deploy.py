@@ -28,12 +28,13 @@
   поэтому на аккаунте должна работать оболочка. Права после загрузки
   выставляются отдельным `ssh`, и если оболочки нет — скрипт предупреждает,
   а не падает.
-- `--rsync` — инкрементальная выгрузка (`out/` и `python/`), устаревшие
-  хешированные чанки удаляются, серверные `python/`, `api.wsgi`, `keys.env`,
-  `cgi-bin/` и `.htaccess` защищены от `--delete`, а после выгрузки скрипт
-  делает `touch api.wsgi`: mod_wsgi перечитывает приложение. Этот режим требует
-  оболочки на аккаунте и rsync на обеих сторонах — им пользуется CI
-  (`.github/workflows/static.yml`).
+- `--rsync` — инкрементальная выгрузка (`out/` и `python/`), серверные `python/`,
+  `api.wsgi`, `keys.env`, `cgi-bin/` и `.htaccess` защищены от `--delete`, а после
+  выгрузки скрипт делает `touch api.wsgi`: mod_wsgi перечитывает приложение.
+  Чанки `_next/static` из удаления исключены и чистятся отдельным шагом по
+  возрасту (`CHUNK_TTL_DAYS`, 7 дней): по ним дорисовываются вкладки, открытые
+  до выкладки. Режим требует оболочки на аккаунте и rsync на обеих сторонах —
+  им пользуется CI (`.github/workflows/static.yml`).
 - `--archive` — ничего не отправляет, а собирает тот же комплект одним
   `vtt-site-<версия>.zip` для файлового менеджера панели SpaceWeb. Это
   единственный путь, когда ssh на аккаунте закрыт совсем: загрузить 1400 файлов
@@ -69,6 +70,16 @@ STATIC_OPTIONAL = ("index.txt", "404")
 # С `--delete` исключения защищают их и от удаления, иначе первый же прогон
 # снёс бы бэкенд и ключи вместе с устаревшими чанками.
 RSYNC_PROTECT = ("/python/", "/api.wsgi", "/keys.env", "/.htaccess", "/.well-known/", "/cgi-bin/")
+
+# `_next/static` из `--delete` исключаем фильтром protect: файлы ещё выгружаются,
+# но не удаляются. У игрока в открытой вкладке остаётся HTML прошлой сборки со
+# ссылками на прежние хеши — без этих файлов Next падает с ChunkLoadError
+# («Loading chunk … failed»), и стол показывает «Application error».
+RSYNC_PROTECT_CHUNKS = "P /_next/static/***"
+
+# Сколько дней держим чанки прошлых сборок. Дольше недели открытых вкладок не
+# бывает, а без уборки каждая выкладка оставляла бы в `_next/static` свой мегабайт.
+CHUNK_TTL_DAYS = 7
 
 # В python/ своё: байткод, ключи и комнаты файлового хранилища — они серверные.
 PYTHON_SKIP = ("__pycache__/", "*.pyc", "/keys.env", "/data/rooms/")
@@ -310,9 +321,9 @@ def rsync_steps(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
     base = ["rsync", "-a", "--itemize-changes", "-e", "ssh " + " ".join(ssh_options(args))]
     steps = [
         (
-            "out/ → корень сайта (устаревшие чанки удаляются)",
+            "out/ → корень сайта (устаревшие чанки чистятся по возрасту)",
             base
-            + ["--delete"]
+            + ["--delete", f"--filter={RSYNC_PROTECT_CHUNKS}"]
             + [f"--exclude={item}" for item in RSYNC_PROTECT]
             + [f"{STATIC_DIR.as_posix()}/", f"{remote}/"],
         ),
@@ -372,6 +383,18 @@ def reload_mod_wsgi(args: argparse.Namespace) -> None:
     ok("mtime api.wsgi обновлён")
 
 
+def prune_command(args: argparse.Namespace) -> list[str]:
+    """Удаление чанков прошлых сборок старше `CHUNK_TTL_DAYS`.
+
+    Сами по себе они не мешают, но копятся с каждой выкладкой: в имени файла
+    хеш, поэтому новая сборка добавляет новый комплект, а не заменяет старый.
+    Свежие чанки не трогаем — на них ещё могут ссылаться открытые у игроков
+    вкладки прошлой сборки.
+    """
+    target = shlex.quote(f"{args.target.strip('/')}/_next/static")
+    return ssh_base(args) + [f"find {target} -type f -mtime +{CHUNK_TTL_DAYS} -delete"]
+
+
 def deploy_rsync(args: argparse.Namespace) -> None:
     """Инкрементальная выгрузка: rsync отправляет только изменившиеся файлы."""
     if not args.dry_run and not shutil.which("rsync"):
@@ -382,8 +405,14 @@ def deploy_rsync(args: argparse.Namespace) -> None:
         if run(command, dry_run=args.dry_run) != 0:
             die(f"rsync не смог выгрузить «{title}»")
     if args.dry_run:
+        log(f"  → ssh … find _next/static -mtime +{CHUNK_TTL_DAYS} -delete (уборка чанков)")
         log("  → ssh … touch api.wsgi (перезапуск mod_wsgi)")
         return
+    log(f"\nУборка чанков прошлых сборок старше {CHUNK_TTL_DAYS} дней")
+    if run(prune_command(args), dry_run=False) != 0:
+        note("уборка старых чанков не прошла — на выкладку это не влияет")
+    else:
+        ok(f"чанки старше {CHUNK_TTL_DAYS} дней удалены")
     reload_mod_wsgi(args)
 
 

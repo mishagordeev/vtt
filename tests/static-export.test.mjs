@@ -273,6 +273,17 @@ test(".htaccess: API в CGI-адаптер, комната файлом, слу�
     conf.includes("|webp|avif|svg|"),
     "AVIF тоже должен кэшироваться на час, как остальные картинки",
   );
+  assert.match(
+    conf,
+    /^ {2}<FilesMatch "\\.html\?\$">$/m,
+    "у HTML нужна своя директива кэша: иначе после выкладки браузер отдаёт страницу со старыми хешами чанков",
+  );
+  assert.match(
+    conf,
+    /^ {4}Header set Cache-Control "no-cache, must-revalidate"$/m,
+    "HTML должен ревалидироваться по ETag, а не жить в кэше без проверки",
+  );
+  assert.match(conf, /^ {2}<Files "index\.txt">$/m, "index.txt — тот же HTML для клиентской навигации Next");
 });
 
 function freePort() {
@@ -575,6 +586,7 @@ test(
       "args = module.parse_args(['--rsync', '--host', '10.0.0.1', '--user', 'someone',",
       "                            '--target', 'site/public_html', '--keys', sys.argv[2]])",
       "steps = [{'title': title, 'command': command} for title, command in module.rsync_steps(args)]",
+      "steps.append({'title': 'prune', 'command': module.prune_command(args)})",
       "steps.append({'title': 'mod_wsgi', 'command': module.reload_command(args)})",
       "print(json.dumps(steps))",
     ].join("\n");
@@ -589,7 +601,11 @@ test(
     const staticStep = steps[0];
     assert.match(staticStep.title, /out\//, "первым уезжает out/");
     assert.equal(staticStep.command[0], "rsync");
-    assert.ok(staticStep.command.includes("--delete"), "без --delete чанки прошлых версий копятся");
+    assert.ok(staticStep.command.includes("--delete"), "без --delete удалённые файлы остаются на сайте мусором");
+    assert.ok(
+      staticStep.command.includes("--filter=P /_next/static/***"),
+      "чанки прошлых сборок нельзя удалять сразу: открытая у игрока вкладка со старым HTML упадёт с ChunkLoadError",
+    );
     for (const guarded of ["/python/", "/api.wsgi", "/keys.env", "/.htaccess"]) {
       assert.ok(
         staticStep.command.includes(`--exclude=${guarded}`),
@@ -624,7 +640,18 @@ test(
     assert.ok(keysStep, "keys.env не выгружается");
     assert.ok(keysStep.command.includes("--chmod=F600"), "ключи на сервере должны быть 600");
 
-    assert.match(steps.at(-2).title, /htaccess/, ".htaccess включается последним");
+    // Проба добавляет после rsync_steps два шага: уборку чанков и перезапуск,
+    // поэтому .htaccess — не последний, а третий с конца.
+    assert.match(steps.at(-3).title, /htaccess/, ".htaccess включается последним из выгрузки");
+
+    const prune = byTitle("prune").command;
+    assert.equal(prune[0], "ssh", "уборка старых чанков идёт отдельным ssh-шагом");
+    assert.equal(
+      prune.at(-1),
+      "find site/public_html/_next/static -type f -mtime +7 -delete",
+      "чанки старше недели чистятся: иначе каждая выкладка оставляет свой комплект навсегда",
+    );
+    assert.ok(prune.includes("BatchMode=yes"), "уборка не должна ждать пароль");
 
     const reload = byTitle("mod_wsgi").command;
     assert.equal(reload[0], "ssh");

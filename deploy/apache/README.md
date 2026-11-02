@@ -61,8 +61,9 @@ py -3.13 deploy/apache/deploy.py --build     # пересобрать out/ и в
 - `scp` (по умолчанию) — копирует комплект заново; файлы идут через тот же ssh,
   поэтому на аккаунте должна работать оболочка. Права после загрузки выставляет
   отдельный `ssh`, и если оболочки нет — скрипт предупреждает, а не падает.
-- `--rsync` — инкрементальная выгрузка: удаляет устаревшие чанки и последним
-  шагом делает `touch api.wsgi` — это нужно mod_wsgi, а CGI-режиму (нынешнему)
+- `--rsync` — инкрементальная выгрузка: чанки `_next/static` не удаляются сразу
+  (они чистятся отдельным шагом старше 7 дней, `CHUNK_TTL_DAYS`), последним
+  шагом делается `touch api.wsgi` — это нужно mod_wsgi, а CGI-режиму (нынешнему)
   перезапуск не требуется. Требует
   оболочки на аккаунте и rsync на обеих сторонах; им пользуется CI
   (см. «Автовыкладка из GitHub Actions»). На Windows проще оставить `scp`: пути
@@ -221,13 +222,18 @@ push в main
            out/     → public_html/          (только изменившееся, --delete)
            python/  → public_html/python/   (без байткода, rooms и keys.env)
            api.wsgi, cgi-bin/api.cgi, keys.env, .htaccess — по одному файлу
+           ssh … find _next/static -mtime +7 -delete (уборка прошлых сборок)
            ssh … touch public_html/api.wsgi (нужно mod_wsgi, CGI-режиму — нет)
        проверка сайта: /, /r/<КОД> (и версия в главной), /api/health?deep=1,
                        404 и закрытые keys.env / python/ / .htaccess
 ```
 
-`--delete` не даёт каталогу `_next/static` расти от каждой сборки: чанки прошлых
-версий удаляются. От удаления защищены серверные файлы — `python/`, `api.wsgi`,
+`--delete` убирает из корня то, чего больше нет в `out/`, но `_next/static`
+защищён фильтром `P /_next/static/***` (`RSYNC_PROTECT_CHUNKS` в `deploy.py`):
+у игрока в открытой вкладке остаётся HTML прошлой сборки со ссылками на прежние
+хеши, и без этих файлов Next падает с `ChunkLoadError`. Копятся они недолго —
+отдельный шаг `find … -mtime +7 -delete` (`CHUNK_TTL_DAYS`) чистит всё старше
+недели. От удаления защищены и серверные файлы — `python/`, `api.wsgi`,
 `keys.env`, `.htaccess`, `.well-known/` и `cgi-bin/` (список `RSYNC_PROTECT` в
 `deploy.py`), а внутри `python/` — `keys.env`, `data/rooms/` и `__pycache__`.
 
@@ -312,6 +318,16 @@ rsync ходит по ssh и требует оболочку. Когда обо�
 его не покажет. Поэтому в `.htaccess` есть блок `<IfModule mod_mime.c>` с
 `AddType image/webp .webp` и `AddType image/avif .avif`, а `<FilesMatch>` кэширует
 на час все три файла.
+
+HTML (`index.html`, `r/index.html`, `404.html`) отдаётся с
+`Cache-Control: no-cache, must-revalidate` (и `index.txt` — тот же HTML для
+клиентской навигации Next). Без этой директивы браузер держит страницу без
+проверки, а в ней зашиты имена чанков с хешем: после выкладки таких файлов на
+сервере уже нет, и игрок видит `ChunkLoadError` вместо стола. Ревалидация почти
+бесплатная — Apache отвечает `304` по `ETag`. Если вкладка всё же поймала старый
+HTML, `components/StaleChunkRecovery.tsx` один раз перезагружает страницу
+(не чаще раза в 30 секунд), а `app/error.tsx` показывает русскую страницу ошибки
+с кнопкой перезагрузки вместо английской заглушки Next.
 
 Если хостинг запрещает директивы в `.htaccess` и отдаёт 500, уберите строку
 `Options +ExecCGI -Indexes`: остальные правила `Options` не требуют, а листинг
