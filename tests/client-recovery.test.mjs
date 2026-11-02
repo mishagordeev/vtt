@@ -100,6 +100,29 @@ test("экран загрузки комнаты даёт повтор, а у в
   assert.match(room, /error\.status === 0 \|\| error\.status === 408/, "повтор входа нужен для таймаута и «нет связи»");
 });
 
+test("баннер ошибки чтения комнаты даёт «Повторить», а не только текст и «нет связи»", () => {
+  const room = read("components", "RoomScreen.tsx");
+
+  // Баннер — единственное место, где виден loadError: у стола после таймаута
+  // остаются только текст ошибки и красная точка «нет связи», перечитать нечем.
+  const bannerAt = room.indexOf("{loadError ? (");
+  assert.ok(bannerAt > 0, "ошибка чтения комнаты должна показываться баннером");
+  const bannerEnd = room.indexOf(") : null}", bannerAt);
+  assert.ok(bannerEnd > bannerAt, "у баннера есть закрытие");
+  const banner = room.slice(bannerAt, bannerEnd);
+
+  assert.match(banner, /\{loadError\}/, "текст ошибки остаётся в баннере");
+  assert.match(banner, /Повторить/, "рядом с ошибкой должна быть кнопка «Повторить»");
+  assert.match(banner, /onClick=\{\(\) => void retryLoad\(\)\}/, "кнопка перечитывает комнату");
+
+  assert.match(room, /const retryLoad = useCallback\(async \(\) => \{/, "у кнопки есть свой повтор");
+  assert.match(room, /if \(retryLoadBusyRef\.current\) return;/, "двойной клик не шлёт второй запрос");
+  assert.match(room, /await load\(\);/, "повтор — это та же перечитка комнаты");
+  assert.match(room, /Повторяем…/, "пока запрос идёт, кнопка говорит об этом");
+  assert.match(banner, /disabled=\{retryLoadBusy\}/, "на время повтора кнопка недоступна");
+  assert.match(room, /setLoadError\(null\)/, "успешная перечитка сама убирает баннер");
+});
+
 test("форма входа помнит имя прошлой попытки и объясняет, что делать", () => {
   const gate = read("components", "JoinGate.tsx");
 

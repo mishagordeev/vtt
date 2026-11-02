@@ -79,6 +79,8 @@ export default function RoomScreen({ code }: { code: string }) {
   const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Повтор чтения комнаты у баннера ошибки: кнопка показывает, что запрос идёт. */
+  const [retryLoadBusy, setRetryLoadBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -202,6 +204,23 @@ export default function RoomScreen({ code }: { code: string }) {
       );
     }
   }, [code]);
+
+  /**
+   * «Повторить» у баннера ошибки: перечитываем комнату, не перезагружая страницу.
+   * Без замка двойной клик отправил бы два запроса — держим ref, как у входа.
+   */
+  const retryLoadBusyRef = useRef(false);
+  const retryLoad = useCallback(async () => {
+    if (retryLoadBusyRef.current) return;
+    retryLoadBusyRef.current = true;
+    setRetryLoadBusy(true);
+    try {
+      await load();
+    } finally {
+      retryLoadBusyRef.current = false;
+      setRetryLoadBusy(false);
+    }
+  }, [load]);
 
   /** Вход уже идёт: второй клик (или автоповтор при возврате на вкладку) не нужен. */
   const joinBusyRef = useRef(false);
@@ -772,9 +791,20 @@ export default function RoomScreen({ code }: { code: string }) {
         </div>
       </header>
 
+      {/* Ошибка чтения комнаты: текст и «Повторить» рядом — у стола после таймаута
+          иначе остаются только текст и «нет связи», а перечитать нечем. */}
       {loadError ? (
-        <div className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100">
-          {loadError}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100">
+          <span className="min-w-0 flex-1">{loadError}</span>
+          <button
+            type="button"
+            onClick={() => void retryLoad()}
+            disabled={retryLoadBusy}
+            title="Перечитать комнату из базы"
+            className="shrink-0 rounded-md border border-amber-400/60 bg-amber-500/15 px-2.5 py-1 font-semibold text-amber-100 transition hover:bg-amber-500/25 disabled:cursor-progress disabled:opacity-60"
+          >
+            {retryLoadBusy ? "Повторяем…" : "Повторить"}
+          </button>
         </div>
       ) : null}
 
