@@ -585,25 +585,45 @@ def fetch(url: str) -> tuple[int, str, str]:
         return 0, "", str(error)
 
 
-# Хвост ответа `curl -w`: код и тип содержимого. Тип нужен, чтобы проверка
-# через ssh с аккаунта видела ту же картину, что и прямой запрос: иначе рабочий
-# сайт печатал «/ — 200, без типа» и выкладка считалась неудачной.
-CURL_TAIL = r"\n%{http_code} %{content_type}"
+# Хвост ответа `curl -w`: метка, код ответа и тип содержимого одной строкой.
+# Тип нужен, чтобы проверка через ssh с аккаунта видела ту же картину, что и
+# прямой запрос: без него рабочий сайт печатал «/ — 200, без типа» и выкладка
+# считалась неудачной. Метка отделяет хвост от тела: без неё вывод, в котором
+# хвост не дошёл, читался по последней строке тела — число «200» из JSON или
+# HTML превращалось в код ответа с пустым типом, то есть в тот же ложный «x».
+CURL_TAIL_MARK = "__vtt-deploy__"
+CURL_TAIL = rf"\n{CURL_TAIL_MARK}%{{http_code}} %{{content_type}}"
+# Отдельный запрос только за заголовком: тело уходит в /dev/null.
+CURL_TYPE = r"%{content_type}"
 
 
 def parse_curl_tail(out: str) -> tuple[int, str, str]:
-    """Разобрать вывод `curl -w`: тело, затем строка «код тип содержимого».
+    """Разобрать вывод `curl -w`: тело, затем строка «метка код тип».
 
     Возвращает (код, тип, тело). Хвоста нет — код 0, и вызывающий считает ответ
     неудачным, как при сетевой ошибке: так вывод ssh не превращается в «200».
     """
-    body, _, tail = out.rpartition("\n")
+    body, mark, tail = out.rpartition("\n" + CURL_TAIL_MARK)
+    if not mark:
+        return 0, "", out
     status, _, kind = tail.strip().partition(" ")
     try:
         code = int(status)
     except ValueError:
         return 0, "", out
     return code, kind.strip(), body
+
+
+def fetch_type_from_account(args: argparse.Namespace, url: str) -> str:
+    """Тип содержимого отдельным запросом за заголовками.
+
+    Нужен, когда хвост `curl -w` пришёл без типа: заголовок с аккаунта виден, но
+    в хвосте его нет. Без этого запроса такой ответ выглядел как «без типа», и
+    рабочая выкладка считалась неудачной.
+    """
+    command = f"curl -sS -m 20 -o /dev/null -w '{CURL_TYPE}' {shlex.quote(url)}"
+    code, out, _ = ssh_capture(args, command, timeout=45)
+    return out.strip() if code == 0 else ""
 
 
 def fetch_from_account(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
@@ -613,7 +633,19 @@ def fetch_from_account(args: argparse.Namespace, path: str) -> tuple[int, str, s
     code, out, error = ssh_capture(args, command, timeout=45)
     if code != 0 or not out:
         return 0, "", error or out
-    return parse_curl_tail(out)
+    status, kind, body = parse_curl_tail(out)
+    if status == 0:
+        return 0, "", out
+    if not kind:
+        kind = fetch_type_from_account(args, url)
+    return status, kind, body
+
+
+def describe(status: int, kind: str) -> str:
+    """Ответ для отчёта: «код, тип», а если ответа не было — так и говорим."""
+    if status == 0:
+        return "нет ответа"
+    return f"{status}, {kind}" if kind else f"{status}, без типа"
 
 
 def fetch_site(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
@@ -638,7 +670,7 @@ def verify(args: argparse.Namespace) -> bool:
     if status == 200 and "text/html" in kind and "Poison Press" in home:
         ok(f"/ — 200, text/html, {len(home.encode('utf-8'))} байт")
     else:
-        problem(f"/ — {status}, {kind or 'без типа'}")
+        problem(f"/ — {describe(status, kind)}")
         healthy = False
 
     # Версия вшита в главную при сборке — по ней видно, что на сайте эта
@@ -655,7 +687,7 @@ def verify(args: argparse.Namespace) -> bool:
     if status == 200 and "text/html" in kind and "Poison Press" in room and room != home:
         ok(f"/r/{code} — 200, отдельная страница комнаты")
     else:
-        problem(f"/r/{code} — {status}, {kind or 'без типа'}")
+        problem(f"/r/{code} — {describe(status, kind)}")
         healthy = False
 
     status, _, body = fetch_site(args, "/api/health?deep=1")
@@ -704,7 +736,7 @@ def health_report(args: argparse.Namespace) -> bool:
         note("адрес не ответил ни с этой машины, ни с аккаунта — проверьте сайт в браузере")
         return False
     if status not in (200, 503):
-        problem(f"/api/health?deep=1 — {status}, {kind or 'без типа'}: бэкенд не отвечает")
+        problem(f"/api/health?deep=1 — {describe(status, kind)}: бэкенд не отвечает")
         if "text/html" in kind or "<html" in body[:400].lower():
             note(
                 "ответ — обычная страница сайта: Apache отдал /api мимо mod_wsgi. "

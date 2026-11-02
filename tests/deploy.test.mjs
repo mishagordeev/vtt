@@ -301,7 +301,10 @@ test("API идёт через CGI-адаптер, а не через mod_wsgi", 
 // с кириллицей). Со старым чтением в cp1251 на русской Windows поток падал
 // с UnicodeDecodeError, а вместе с ним терялся тип ответа: рабочий сайт
 // печатал «/ — 200, без типа» и выкладка считалась неудачной. Тест держит оба
-// конца: разбор хвоста curl и явную кодировку чтения ssh.
+// конца: разбор хвоста curl и явную кодировку чтения ssh. Отдельно проверено,
+// что код не вычитывается из последней строки тела (иначе тело с числом «200»
+// даёт тот же ложный «без типа») и что недостающий тип дотягивается запросом
+// за заголовком: ложного «x» на рабочем сайте быть не должно.
 test("проверка выкладки читает ssh-вывод в UTF-8 и видит тип ответа", { skip: pythonReady ? false : SKIP_PY }, () => {
   const deployPy = path.join(projectDir, "deploy", "apache", "deploy.py");
   const code = [
@@ -309,14 +312,25 @@ test("проверка выкладки читает ssh-вывод в UTF-8 и 
     `spec = importlib.util.spec_from_file_location("vtt_deploy", ${JSON.stringify(deployPy)})`,
     "module = importlib.util.module_from_spec(spec)",
     "spec.loader.exec_module(module)",
-    "module.ssh_capture = lambda args, command, timeout=30: (0, 'body\\n200 text/html; charset=UTF-8', '')",
     "args = module.parse_args([])",
-    "print(json.dumps({",
-    '    "tail": module.CURL_TAIL,',
-    '    "parsed": module.parse_curl_tail("body\\n200 text/html; charset=UTF-8"),',
-    '    "noTail": module.parse_curl_tail("plain text"),',
-    '    "fromAccount": module.fetch_from_account(args, "/"),',
-    "}, ensure_ascii=False))",
+    "nl = chr(10)",
+    "mark = module.CURL_TAIL_MARK",
+    "def reply(text):",
+    "    module.ssh_capture = lambda args, command, timeout=30: (0, text, '')",
+    "    return module.fetch_from_account(args, '/')",
+    "tail = 'body' + nl + mark + '200 text/html; charset=UTF-8'",
+    "facts = {",
+    "    'tail': module.CURL_TAIL,",
+    "    'mark': mark,",
+    "    'parsed': module.parse_curl_tail(tail),",
+    "    'noTail': module.parse_curl_tail('plain text'),",
+    "    'bodyNumber': module.parse_curl_tail('answer' + nl + '200'),",
+    "    'fromAccount': reply(tail),",
+    "    'describe': [module.describe(0, ''), module.describe(200, ''), module.describe(200, 'text/html')],",
+    "}",
+    "module.fetch_type_from_account = lambda args, url: 'text/html; charset=UTF-8'",
+    "facts['typeFallback'] = reply('body' + nl + mark + '200 ')",
+    "print(json.dumps(facts))",
   ].join("\n");
   const done = spawnSync(PY.command, [...PY.args, "-c", code], { encoding: "utf8", cwd: projectDir });
   assert.equal(done.status, 0, `deploy.py не импортируется: ${done.stderr}`);
@@ -324,19 +338,35 @@ test("проверка выкладки читает ssh-вывод в UTF-8 и 
 
   assert.equal(
     facts.tail,
-    "\\n%{http_code} %{content_type}",
-    "curl должен отдавать код и тип содержимого: без типа рабочий сайт выглядел сломанным",
+    String.raw`\n__vtt-deploy__%{http_code} %{content_type}`,
+    "curl должен отдавать метку, код и тип содержимого: без типа рабочий сайт выглядел сломанным",
   );
+  assert.equal(facts.mark, "__vtt-deploy__", "метка хвоста и его разбор должны совпадать");
   assert.deepEqual(
     facts.parsed,
     [200, "text/html; charset=UTF-8", "body"],
     "хвост curl разбирается на код, тип и тело",
   );
   assert.equal(facts.noTail[0], 0, "вывод без хвоста — не 200, а неудачный ответ");
+  assert.equal(
+    facts.bodyNumber[0],
+    0,
+    "последняя строка тела без метки не считается кодом: тело с «200» давало ложный «200, без типа»",
+  );
   assert.deepEqual(
     facts.fromAccount,
     [200, "text/html; charset=UTF-8", "body"],
     "запрос с аккаунта возвращает тип ответа, как и прямой",
+  );
+  assert.deepEqual(
+    facts.typeFallback,
+    [200, "text/html; charset=UTF-8", "body"],
+    "если в хвосте типа нет, он запрашивается отдельно — заголовок с аккаунта приходит",
+  );
+  assert.deepEqual(
+    facts.describe,
+    ["нет ответа", "200, без типа", "200, text/html"],
+    "в отчёте видно, был ли ответ и был ли в нём тип",
   );
 
   const source = read("deploy", "apache", "deploy.py");
