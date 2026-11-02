@@ -726,12 +726,31 @@ test("Python-сервер: понятные ошибки вместо 500", asyn
   assert.equal(noName.status, 400);
   assert.equal(noName.payload.error, "Укажите имя персонажа");
 
+  // Первая особенность бесплатна: лист без изъянов допустим (1.3.1).
   const traitOnly = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
     owner: "Мастер",
     character: { name: "Без изъяна", traits: [rules.traits[0]] },
   });
-  assert.equal(traitOnly.status, 400);
-  assert.equal(traitOnly.payload.error, "Для каждой особенности нужен изъян");
+  assert.equal(traitOnly.status, 200, traitOnly.payload?.error);
+  assert.deepEqual(traitOnly.payload.character.flaws, [], "изъян за первую особенность не требуется");
+
+  const twoTraitsNoFlaw = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Мастер",
+    character: { name: "Два дара", traits: [rules.traits[0], rules.traits[1]] },
+  });
+  assert.equal(twoTraitsNoFlaw.status, 400);
+  assert.equal(twoTraitsNoFlaw.payload.error, "Для второй особенности нужен изъян");
+
+  const twoTraitsOneFlaw = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Мастер",
+    character: {
+      name: "Два дара за изъян",
+      traits: [rules.traits[0], rules.traits[1]],
+      flaws: [rules.flaws[0]],
+    },
+  });
+  assert.equal(twoTraitsOneFlaw.status, 200, twoTraitsOneFlaw.payload?.error);
+  assert.equal(twoTraitsOneFlaw.payload.character.flaws.length, 1, "вторая особенность оплачена одним изъяном");
 
   const wrongMethod = await call(baseUrl, "POST", `/api/rooms/${code}/state`);
   assert.equal(wrongMethod.status, 405);

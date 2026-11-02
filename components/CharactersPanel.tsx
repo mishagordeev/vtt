@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { exportCharacter } from "@/lib/characterExport";
-import { canEdit, draftFromCharacter, emptyDraft } from "@/lib/characters";
+import { MAX_FLAWS, MAX_TRAITS, canEdit, draftFromCharacter, emptyDraft, requiredFlaws } from "@/lib/characters";
 import type { Character, CharacterDraft, Player } from "@/lib/types";
 import type { SheetMode } from "./CharacterSheet";
 
@@ -57,10 +57,10 @@ function clockNow(): string {
 
 /** Проверки листа, которые не дают сохранить черновик. */
 function draftProblem(draft: CharacterDraft): string | null {
-  if (draft.traits.length > draft.flaws.length) {
-    return "Для каждой особенности нужен изъян: добавьте второй изъян или уберите особенность.";
+  if (draft.flaws.length < requiredFlaws(draft.traits.length)) {
+    return "Вторая особенность требует изъяна: первая — бесплатно. Добавьте изъян или уберите вторую особенность.";
   }
-  if (draft.traits.length > 2 || draft.flaws.length > 2) {
+  if (draft.traits.length > MAX_TRAITS || draft.flaws.length > MAX_FLAWS) {
     return "Можно выбрать не больше двух особенностей и двух изъянов.";
   }
   return null;

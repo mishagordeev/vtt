@@ -22,8 +22,19 @@ const LOCATIONS: ItemLocation[] = ["hands", "backpack"];
 const MAX_PORTRAIT = 280_000;
 const MAX_PORTRAIT_FULL = 560_000;
 const MAX_NAMES = 2;
+/** Пределы листа по 1.3.1: не больше двух особенностей и двух изъянов. */
+export const MAX_TRAITS = 2;
+export const MAX_FLAWS = 2;
 const LANGUAGE_NAMES = new Set(LANGUAGES.map((language) => language.name));
 const KIT_ITEM_NAMES = new Set(Object.values(STARTER_KITS).flat());
+
+/**
+ * Сколько изъянов требует набор особенностей (1.3.1 «Вторых»): первая особенность
+ * бесплатна, каждая следующая оплачивается одним изъяном.
+ */
+export function requiredFlaws(traits: number): number {
+  return Math.max(0, traits - 1);
+}
 
 function defaultFieldValue(field: (typeof FIELDS)[number]): string {
   return field.options?.[0] ?? "";

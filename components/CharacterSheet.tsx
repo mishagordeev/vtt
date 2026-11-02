@@ -54,6 +54,7 @@ import {
   type OriginDef,
   type SkillDef,
 } from "@/lib/rules";
+import { MAX_FLAWS, MAX_TRAITS, requiredFlaws } from "@/lib/characters";
 import type { CharacterDraft, InventoryItem, ItemLocation, Skill, SkillKind } from "@/lib/types";
 import type { ExportFormat } from "@/lib/characterExport";
 import { PortraitCrop } from "./PortraitCrop";
@@ -396,22 +397,21 @@ export function CharacterSheet({
   function toggleFeature(kind: "traits" | "flaws", name: string) {
     if (!editing) return;
     const current = kind === "traits" ? draft.traits : draft.flaws;
-    if (kind === "flaws" && current.includes(name) && current.length - 1 < draft.traits.length) {
-      setNotice("Сначала уберите особенность: изъян не может исчезнуть, пока она есть.");
+    const limit = kind === "traits" ? MAX_TRAITS : MAX_FLAWS;
+    // Изъян, которым оплачена вторая особенность, не снимается первым.
+    if (kind === "flaws" && current.includes(name) && current.length - 1 < requiredFlaws(draft.traits.length)) {
+      setNotice("Этот изъян оплачивает вторую особенность: сначала уберите её.");
       return;
     }
     const next = current.includes(name)
       ? current.filter((entry) => entry !== name)
       : [...current, name];
-    if (next.length > 2) {
+    if (next.length > limit) {
       setNotice("Можно выбрать не больше двух особенностей и двух изъянов.");
       return;
     }
-    if (kind === "traits" && next.length > draft.flaws.length && next.length > 1) {
-      setNotice("Для второй особенности нужен второй изъян.");
-    }
-    if (kind === "flaws" && next.length < draft.traits.length) {
-      setNotice("Особенность без изъяна не остаётся: сначала уберите особенность.");
+    if (kind === "traits" && draft.flaws.length < requiredFlaws(next.length)) {
+      setNotice("Вторая особенность требует изъяна: первая — бесплатно.");
     }
     patch({ [kind]: next } as Partial<CharacterDraft>);
   }
@@ -429,8 +429,8 @@ export function CharacterSheet({
     patch({ languages: next });
   }
   function setFeatureAt(kind: "traits" | "flaws", index: number, value: string) {
-    if (kind === "flaws" && !value && draft.flaws.length - 1 < draft.traits.length) {
-      setNotice("Сначала уберите особенность: изъян не может исчезнуть, пока она есть.");
+    if (kind === "flaws" && !value && draft.flaws.length - 1 < requiredFlaws(draft.traits.length)) {
+      setNotice("Этот изъян оплачивает вторую особенность: сначала уберите её.");
       return;
     }
     const current = [...(kind === "traits" ? draft.traits : draft.flaws)];
@@ -2161,7 +2161,7 @@ export function CharacterSheet({
               <div className="grid gap-4 lg:grid-cols-2">
                 <FeatureList
                   title="Особенности"
-                  hint="Можно выбрать до двух. Вторая особенность требует второго изъяна."
+                  hint="Можно выбрать до двух. Первая особенность бесплатна, вторая требует изъяна."
                   items={RULES.traits}
                   notes={TRAIT_NOTES}
                   selected={draft.traits}
@@ -2171,7 +2171,7 @@ export function CharacterSheet({
                 />
                 <FeatureList
                   title="Изъяны"
-                  hint="Можно выбрать до двух. Изъян без особенности разрешён; особенность без изъяна — нет."
+                  hint="Можно выбрать до двух. Изъян без особенности разрешён; вторая особенность без изъяна — нет."
                   items={RULES.flaws}
                   notes={FLAW_NOTES}
                   selected={draft.flaws}
@@ -2180,9 +2180,9 @@ export function CharacterSheet({
                   onToggle={(name) => toggleFeature("flaws", name)}
                 />
               </div>
-              {draft.traits.length > draft.flaws.length ? (
+              {draft.flaws.length < requiredFlaws(draft.traits.length) ? (
                 <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
-                  Для каждой особенности нужен изъян. Сейчас особенностей {draft.traits.length}, изъянов {draft.flaws.length}.
+                  Вторая особенность требует изъяна, первая — бесплатно. Сейчас особенностей {draft.traits.length}, изъянов {draft.flaws.length}.
                 </p>
               ) : null}
             </div>

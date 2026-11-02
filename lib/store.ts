@@ -1,4 +1,4 @@
-import { canEdit, draftFromCharacter, normalizeDraft } from "./characters";
+import { canEdit, draftFromCharacter, normalizeDraft, requiredFlaws } from "./characters";
 import { worldClock } from "./calendar";
 import { extractFormula, rollFormula } from "./dice";
 import { AppError, ROOM_NOT_FOUND } from "./errors";
@@ -696,8 +696,8 @@ export async function createCharacter(
 
   const draft = normalizeDraft(rawDraft);
   if (!draft.name) throw new AppError(400, "Укажите имя персонажа");
-  if (draft.traits.length > draft.flaws.length) {
-    throw new AppError(400, "Для каждой особенности нужен изъян");
+  if (draft.flaws.length < requiredFlaws(draft.traits.length)) {
+    throw new AppError(400, "Для второй особенности нужен изъян");
   }
 
   return withRoom(code, (doc) => {
@@ -795,8 +795,8 @@ export async function updateCharacter(
       fields: { ...current.fields, ...asRecord(patch.fields) },
     });
     if (!normalized.name) throw new AppError(400, "Укажите имя персонажа");
-    if (normalized.traits.length > normalized.flaws.length) {
-      throw new AppError(400, "Для каждой особенности нужен изъян");
+    if (normalized.flaws.length < requiredFlaws(normalized.traits.length)) {
+      throw new AppError(400, "Для второй особенности нужен изъян");
     }
     if (
       doc.characters.some(

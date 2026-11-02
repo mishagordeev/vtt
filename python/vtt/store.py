@@ -602,6 +602,11 @@ def post_message(code, raw_author, raw_text):
     return with_room(code, handler)
 
 
+def required_flaws(traits):
+    """Изъяны, которые требует набор особенностей: первая бесплатна, за вторую платят изъяном (1.3.1)."""
+    return max(0, len(traits) - 1)
+
+
 def create_character(code, raw_owner, raw_draft):
     """Новый лист персонажа; автор сразу привязан к нему."""
     owner = normalize_name(raw_owner)
@@ -610,8 +615,8 @@ def create_character(code, raw_owner, raw_draft):
     draft = normalize_draft(raw_draft)
     if not draft["name"]:
         raise AppError(400, "Укажите имя персонажа")
-    if len(draft["traits"]) > len(draft["flaws"]):
-        raise AppError(400, "Для каждой особенности нужен изъян")
+    if len(draft["flaws"]) < required_flaws(draft["traits"]):
+        raise AppError(400, "Для второй особенности нужен изъян")
 
     def handler(doc):
         if len(doc["characters"]) >= MAX_CHARACTERS:
@@ -719,8 +724,8 @@ def update_character(code, character_id, raw_actor, raw_patch):
         )
         if not normalized["name"]:
             raise AppError(400, "Укажите имя персонажа")
-        if len(normalized["traits"]) > len(normalized["flaws"]):
-            raise AppError(400, "Для каждой особенности нужен изъян")
+        if len(normalized["flaws"]) < required_flaws(normalized["traits"]):
+            raise AppError(400, "Для второй особенности нужен изъян")
 
         owner = str(character.get("owner") or "").lower()
         for entry in doc["characters"]:

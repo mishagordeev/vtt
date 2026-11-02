@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { draftFromCharacter, emptyDraft, normalizeDraft } from "../lib/characters.ts";
+import { draftFromCharacter, emptyDraft, normalizeDraft, requiredFlaws } from "../lib/characters.ts";
 import { FIELDS } from "../lib/rules.ts";
 
 /** Минимальный лист в том виде, в каком его отдаёт хранилище. */
@@ -68,4 +68,10 @@ test("чужие ключи и нестроковые значения поле�
   assert.equal(draft.fields.birth, "");
   assert.equal(draft.fields.age, "34");
   assert.equal(Object.hasOwn(draft.fields, "extra"), false);
+});
+
+test("первая особенность бесплатна, вторая требует изъяна (1.3.1)", () => {
+  assert.equal(requiredFlaws(0), 0, "без особенностей изъян не нужен");
+  assert.equal(requiredFlaws(1), 0, "за первую особенность платить нечем");
+  assert.equal(requiredFlaws(2), 1, "вторая особенность оплачивается одним изъяном");
 });
