@@ -199,10 +199,12 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     setCurrent([]);
     if (tool === "erase") setErasePoint(null);
     if (points.length === 0) return;
+    // Вкладка едет вместе со штрихом и ластиком: без неё сервер относит запись
+    // к первой карте, и линия со второй вкладки пропадала с глаз на первую.
     const payload =
       tool === "pen"
-        ? { action: "stroke", points, color, width }
-        : { action: "erase", points, radius: Math.max(0.02, width * 5) };
+        ? { action: "stroke", points, color, width, tab: tab.id }
+        : { action: "erase", points, radius: Math.max(0.02, width * 5), tab: tab.id };
     const result = await onAction(payload);
     setError(result ? "" : "Не удалось сохранить рисунок");
   }

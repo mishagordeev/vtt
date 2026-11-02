@@ -137,6 +137,25 @@ test("MapBoard: вкладки сверху, «+ вкладка» только �
   assert.match(board, /tab: tab\.id/, "метка, очистка и надпись несут выбранную вкладку");
 });
 
+// Каждое действие клиента, которое пишет в записи вкладки, обязано назвать
+// вкладку: сервер без `tab` относит запись к первой карте. Именно на этом
+// ломался рисунок — кисть и ластик уезжали на «Кас-Хатар» со второй вкладки.
+test("клиент: кисть, ластик, метка, надпись и очистка несут выбранную вкладку", () => {
+  const board = read("components", "MapBoard.tsx");
+  const wanted = ["stroke", "erase", "ping", "text", "clear"];
+  const payloads = [...board.matchAll(/action: "([a-zA-Z]+)"([\s\S]{0,400}?)\}/g)];
+  for (const action of wanted) {
+    const found = payloads.filter((match) => match[1] === action);
+    assert.equal(found.length, 1, `действие ${action} встречается в клиенте ровно раз`);
+    assert.match(found[0][2], /tab: tab\.id/, `действие ${action} называет вкладку`);
+  }
+  // Правка и удаление надписи идут по id записи — вкладка им не нужна.
+  for (const action of ["textUpdate", "textRemove", "tabAdd", "tabRemove"]) {
+    const found = payloads.filter((match) => match[1] === action);
+    assert.equal(found.length, 1, `действие ${action} встречается в клиенте ровно раз`);
+  }
+});
+
 test("Node-сервер: вкладки добавляет мастер, очистка не трогает соседние карты", () => {
   const store = read("lib", "store.ts");
   assert.match(store, /tabs: \[defaultMapTab\(\)\]/, "в пустой карте есть вкладка Кас-Хатара");
