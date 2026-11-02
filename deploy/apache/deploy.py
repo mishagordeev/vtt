@@ -17,7 +17,9 @@
 файла `deploy/apache/README.md`.
 
 Параметры по умолчанию — аккаунт `onitselfgm` на `77.222.40.251`
-(ключ `~/.ssh/sweb_deploy`), корень сайта `mishagordeev.com/public_html`.
+(ключ `~/.ssh/sweb_deploy`), корень сайта `vtt_poison_press/public_html`
+(адрес `https://vtt.poison.press`). Если в указанном каталоге нет `api.wsgi`,
+`--reload` ищет комплект на аккаунте сам и берёт единственный найденный.
 
 Транспортов три:
 
@@ -43,6 +45,7 @@ import argparse
 import json
 import py_compile
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -73,6 +76,13 @@ PYTHON_SKIP = ("__pycache__/", "*.pyc", "/keys.env", "/data/rooms/")
 ARCHIVE_STORE = (".jpg", ".jpeg", ".png", ".webp", ".avif", ".ico", ".woff2", ".mp3", ".zip", ".gz")
 
 ROOM_CODE = "A7K2QM"
+
+# Каталог сайта на аккаунте SpaceWeb (от домашнего каталога) и его адрес.
+# Домен живёт в `~/<имя_сайта>/public_html`: у vtt.poison.press каталог
+# называется `vtt_poison_press`, а `~/mishagordeev.com` на аккаунте нет —
+# из-за этого `touch mishagordeev.com/public_html/api.wsgi` и падал.
+SITE_TARGET = "vtt_poison_press/public_html"
+SITE_URL = "https://vtt.poison.press"
 
 
 def log(message: str) -> None:
@@ -201,6 +211,88 @@ def ssh_options(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def ssh_base(args: argparse.Namespace) -> list[str]:
+    """Начало любой ssh-команды: ключи соединения и адрес аккаунта."""
+    return ["ssh"] + ssh_options(args) + [f"{args.user}@{args.host}"]
+
+
+def ssh_capture(args: argparse.Namespace, command: str, *, timeout: int = 30) -> tuple[int, str, str]:
+    """Выполнить команду на аккаунте и вернуть код возврата, stdout и stderr.
+
+    Нужна там, где ответ сервера важен для решения (поиск каталога сайта),
+    в отличие от `run()`, который просто печатает команду и её вывод.
+    """
+    try:
+        done = subprocess.run(
+            ssh_base(args) + [command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 255, "", str(error)
+    return done.returncode, done.stdout.strip(), done.stderr.strip()
+
+
+# Каталоги сайтов аккаунта: `~/<имя>/public_html/api.wsgi` и `~/public_html/api.wsgi`.
+# Шаблон без совпадений остаётся как есть — его отсекает `-f`, а `true` в конце
+# гасит код последней неудачной проверки: иначе ssh вернёт 1 при живом ответе.
+SITE_ROOTS_COMMAND = (
+    'for f in "$HOME"/*/public_html/api.wsgi "$HOME"/public_html/api.wsgi; do '
+    '[ -f "$f" ] && echo "${f#$HOME/}"; done; true'
+)
+
+
+def pick_site_root(target: str, roots: list[str]) -> str | None:
+    """Какой каталог считать корнем сайта: указанный, иначе единственный найденный.
+
+    Функция без ssh — тесты проверяют выбор без сервера. `None` значит
+    «непонятно, какой из каталогов нужен»: их либо нет, либо несколько.
+    """
+    target = target.strip("/")
+    if target in roots:
+        return target
+    if len(roots) == 1:
+        return roots[0]
+    return None
+
+
+def find_site_roots(args: argparse.Namespace) -> list[str]:
+    """Каталоги аккаунта, в которых рядом с `api.wsgi` лежит комплект сайта."""
+    code, out, _ = ssh_capture(args, SITE_ROOTS_COMMAND)
+    if code != 0:
+        return []
+    suffix = "/api.wsgi"
+    return [line.strip()[: -len(suffix)] for line in out.splitlines() if line.strip().endswith(suffix)]
+
+
+def resolve_site_root(args: argparse.Namespace) -> str:
+    """Каталог сайта на аккаунте: `--target`, а если в нём нет `api.wsgi` — найденный.
+
+    Без этого `--reload` падал на неверном пути: `touch` не создаёт каталогов,
+    а на аккаунте домен лежит в `vtt_poison_press/public_html`, не в
+    `mishagordeev.com/public_html`. Ошибка теперь говорит, что именно нашлось.
+    """
+    target = args.target.strip("/")
+    roots = find_site_roots(args)
+    if target in roots:
+        return target
+    chosen = pick_site_root(target, roots)
+    if chosen is None:
+        if roots:
+            die(
+                f"в {target}/api.wsgi файла нет, а на аккаунте комплект лежит в: "
+                + ", ".join(roots)
+                + " — укажите нужный каталог флагом --target"
+            )
+        die(
+            f"на аккаунте нет api.wsgi ни в {target}, ни в других каталогах — "
+            "сначала выложите комплект (--rsync, scp или архив через панель)"
+        )
+    note(f"в {target}/api.wsgi файла нет — перезапускаю найденный {chosen}/api.wsgi")
+    return chosen
+
+
 def remote_root(args: argparse.Namespace) -> str:
     return f"{args.user}@{args.host}:{args.target.strip('/')}"
 
@@ -243,21 +335,29 @@ def rsync_steps(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
 
 def reload_command(args: argparse.Namespace) -> list[str]:
     """Команда перезапуска mod_wsgi: touch точки входа обновляет её mtime."""
+    entry = shlex.quote(f"{args.target.strip('/')}/api.wsgi")
     return ["ssh"] + ssh_options(args) + [
         f"{args.user}@{args.host}",
-        f"touch {args.target.strip('/')}/api.wsgi",
+        f"touch {entry}",
     ]
 
 
 def reload_mod_wsgi(args: argparse.Namespace) -> None:
     """touch api.wsgi: mod_wsgi перечитывает приложение, когда меняется mtime точки входа."""
     log("\nПерезапуск mod_wsgi: touch api.wsgi")
-    if run(reload_command(args), dry_run=False) != 0:
+    args.target = resolve_site_root(args)
+    code = run(reload_command(args), dry_run=False)
+    if code == 255:
         die(
-            "touch api.wsgi не прошёл — mod_wsgi остался на прежнем коде, "
-            "включите SSH в панели SpaceWeb",
+            "ssh не пустил на аккаунт — проверьте ключ ~/.ssh/sweb_deploy "
+            "и SSH-доступ в панели SpaceWeb",
         )
-    ok("mod_wsgi перезапущен: mtime api.wsgi обновлён")
+    if code != 0:
+        die(
+            f"touch {args.target.strip('/')}/api.wsgi не прошёл (код {code}) — "
+            "mod_wsgi остался на прежнем коде",
+        )
+    ok("mtime api.wsgi обновлён")
 
 
 def deploy_rsync(args: argparse.Namespace) -> None:
@@ -411,7 +511,7 @@ def deploy_archive(args: argparse.Namespace) -> None:
 
 
 def fetch(url: str) -> tuple[int, str, str]:
-    """GET без падений: код, тип и тело даже у ошибок."""
+    """GET без падений: код, тип и тело даже у ошибок. `0` — сеть/TLS не пустили."""
     request = urllib.request.Request(url, headers={"User-Agent": "vtt-deploy/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=25) as response:
@@ -422,6 +522,33 @@ def fetch(url: str) -> tuple[int, str, str]:
             )
     except urllib.error.HTTPError as error:
         return error.code, error.headers.get("content-type", ""), error.read().decode("utf-8", "replace")
+    except urllib.error.URLError as error:
+        return 0, "", str(error)
+
+
+def fetch_from_account(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
+    """GET к сайту с самого аккаунта: локальный фильтр (ESET) и TLS до домена не пускают."""
+    url = args.url.rstrip("/") + path
+    command = f"curl -sS -m 20 -w '\\n%{{http_code}}' {shlex.quote(url)}"
+    code, out, error = ssh_capture(args, command, timeout=45)
+    if code != 0 or not out:
+        return 0, "", error or out
+    body, _, status = out.rpartition("\n")
+    try:
+        return int(status.strip()), "", body
+    except ValueError:
+        return 0, "", out
+
+
+def fetch_site(args: argparse.Namespace, path: str) -> tuple[int, str, str]:
+    """Запрос к живому сайту: напрямую, а если фильтр не пускает — через ssh с аккаунта."""
+    if not getattr(args, "remote_only", False):
+        status, kind, body = fetch(args.url.rstrip("/") + path)
+        if status != 0:
+            return status, kind, body
+        args.remote_only = True
+        note(f"{path}: напрямую не отвечает ({body[:80]}) — дальше проверяю с аккаунта по ssh")
+    return fetch_from_account(args, path)
 
 
 def verify(args: argparse.Namespace) -> bool:
@@ -431,7 +558,7 @@ def verify(args: argparse.Namespace) -> bool:
     log(f"\nПроверка живого сайта {base}")
     healthy = True
 
-    status, kind, home = fetch(base + "/")
+    status, kind, home = fetch_site(args, "/")
     if status == 200 and "text/html" in kind and "Poison Press" in home:
         ok(f"/ — 200, text/html, {len(home.encode('utf-8'))} байт")
     else:
@@ -448,14 +575,14 @@ def verify(args: argparse.Namespace) -> bool:
             healthy = False
 
     # /r/<КОД> отдаётся файлом r/index.html: страница своя, а не заглушка главной.
-    status, kind, room = fetch(base + "/r/" + code)
+    status, kind, room = fetch_site(args, "/r/" + code)
     if status == 200 and "text/html" in kind and "Poison Press" in room and room != home:
         ok(f"/r/{code} — 200, отдельная страница комнаты")
     else:
         problem(f"/r/{code} — {status}, {kind or 'без типа'}")
         healthy = False
 
-    status, _, body = fetch(base + "/api/health?deep=1")
+    status, _, body = fetch_site(args, "/api/health?deep=1")
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
@@ -469,7 +596,7 @@ def verify(args: argparse.Namespace) -> bool:
         problem(f"/api/health?deep=1 — {status}, ответ {body[:160]}")
         healthy = False
 
-    status, _, _ = fetch(base + "/no-such-page")
+    status, _, _ = fetch_site(args, "/no-such-page")
     if status == 404:
         ok("/no-such-page — 404 страницей из сборки")
     else:
@@ -477,7 +604,7 @@ def verify(args: argparse.Namespace) -> bool:
         healthy = False
 
     for secret in ("/keys.env", "/python/keys.env", "/.htaccess"):
-        status, _, body = fetch(base + secret)
+        status, _, body = fetch_site(args, secret)
         if status == 404 or "UPSTASH" not in body:
             ok(f"{secret} — закрыт ({status})")
         else:
@@ -495,10 +622,19 @@ def health_report(args: argparse.Namespace) -> bool:
     `uptimeSeconds` начинается заново. Если блока нет — на сервере ещё прошлые
     `api.wsgi`/`python/`, то есть перезапуск не подхватился.
     """
-    url = args.url.rstrip("/") + "/api/health?deep=1"
-    status, kind, body = fetch(url)
+    status, kind, body = fetch_site(args, "/api/health?deep=1")
+    if status == 0:
+        problem(f"/api/health?deep=1 недоступен: {body[:200]}")
+        note("адрес не ответил ни с этой машины, ни с аккаунта — проверьте сайт в браузере")
+        return False
     if status not in (200, 503):
         problem(f"/api/health?deep=1 — {status}, {kind or 'без типа'}: бэкенд не отвечает")
+        if "text/html" in kind or "<html" in body[:400].lower():
+            note(
+                "ответ — обычная страница сайта: Apache отдал /api мимо mod_wsgi. "
+                "Проверьте, исполняется ли api.wsgi: curl -sSI <сайт>/api.wsgi "
+                "должен отдавать не text/plain"
+            )
         return False
     try:
         payload = json.loads(body)
@@ -527,6 +663,7 @@ def reload_only(args: argparse.Namespace) -> int:
     if args.dry_run:
         log("\nПерезапуск mod_wsgi (--dry-run), файлы не выгружаются:")
         log("  → " + " ".join(reload_command(args)))
+        note("на живом прогоне каталог сайта сверяется с аккаунтом: если в нём нет api.wsgi, берётся найденный")
         return 0
     reload_mod_wsgi(args)
     return 0 if health_report(args) else 1
@@ -548,10 +685,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        default="mishagordeev.com/public_html",
-        help="каталог сайта относительно домашнего каталога аккаунта",
+        default=SITE_TARGET,
+        help="каталог сайта относительно домашнего каталога аккаунта; если в нём нет api.wsgi, --reload берёт найденный",
     )
-    parser.add_argument("--url", default="http://mishagordeev.com", help="адрес сайта для проверки")
+    parser.add_argument("--url", default=SITE_URL, help="адрес сайта для проверки")
     parser.add_argument("--code", default=None, help=f"код комнаты для /r/ (по умолчанию {ROOM_CODE})")
     parser.add_argument("--keys", type=Path, default=APACHE_DIR / "keys.env", help="файл с ключами Upstash")
     parser.add_argument("--check", action="store_true", help="только проверить комплект, ничего не отправлять")

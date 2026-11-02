@@ -12,8 +12,8 @@ name: Выкладка статики на shared-хостинг
 #               STATIC_PORT (по умолчанию 22),
 #               UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN (необязательно:
 #               без них API работает с файловым хранилищем, mode: file)
-#   переменные: STATIC_TARGET (mishagordeev.com/public_html),
-#               STATIC_PUBLIC_URL (http://mishagordeev.com)
+#   переменные: STATIC_TARGET (vtt_poison_press/public_html),
+#               STATIC_PUBLIC_URL (https://vtt.poison.press)
 # Пока секретов нет, job «Статика и бэкенд на аккаунт» просто пропускается.
 #
 # rsync ходит по ssh и требует оболочку на аккаунте: на SpaceWeb она бывает
@@ -66,8 +66,8 @@ jobs:
       SSH_PORT: ${{ secrets.STATIC_PORT || '22' }}
       DEPLOY_USER: ${{ secrets.STATIC_USER }}
       HOST: ${{ secrets.STATIC_HOST }}
-      SITE_TARGET: ${{ vars.STATIC_TARGET || 'mishagordeev.com/public_html' }}
-      PUBLIC_URL: ${{ vars.STATIC_PUBLIC_URL || 'http://mishagordeev.com' }}
+      SITE_TARGET: ${{ vars.STATIC_TARGET || 'vtt_poison_press/public_html' }}
+      PUBLIC_URL: ${{ vars.STATIC_PUBLIC_URL || 'https://vtt.poison.press' }}
       UPSTASH_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
     steps:
@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           SSH="ssh -i $HOME/.ssh/id_static -p $SSH_PORT -o BatchMode=yes"
           if ! $SSH "$DEPLOY_USER@$HOST" 'command -v rsync >/dev/null && command -v touch >/dev/null'; then
-            echo "::error title=Нет rsync или оболочки::Выкладка по rsync невозможна. Включите SSH-доступ в панели SpaceWeb (Хостинг → SSH) либо выложите файлы вручную: py -3.13 deploy/apache/deploy.py (транспорт scp). Пока оболочка на аккаунте выключена (nologin), ни статику, ни python/ обновить нельзя."
+            echo "::error title=Нет rsync или оболочки::Выкладка по rsync невозможна: на аккаунте выключена оболочка или нет rsync. Включите SSH-доступ в панели SpaceWeb (Хостинг → SSH) либо выложите файлы вручную: py -3.13 deploy/apache/deploy.py (транспорт scp) или архивом через файловый менеджер панели."
             exit 1
           fi
           echo "rsync на аккаунте есть, оболочка работает."

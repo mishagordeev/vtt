@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -170,5 +171,97 @@ test("файлы деплоя без CRLF: bash на сервере не при�
       `в ${parts.join("/")} есть CRLF (.gitattributes должен давать LF)`,
     );
   }
+});
+
+// `deploy.py --reload` падал, потому что путь по умолчанию вёл в каталог
+// `mishagordeev.com/public_html`, которого на аккаунте нет: сайт лежит
+// в `~/vtt_poison_press/public_html`. Тесты держат оба конца — дефолт в
+// скрипте и рабочем процессе, — а выбор каталога проверяется без сервера.
+function pythonLauncher() {
+  if (process.env.VTT_PYTHON) return { command: process.env.VTT_PYTHON, args: [] };
+  if (process.platform === "win32") return { command: "py", args: ["-3.13"] };
+  return { command: "python3", args: [] };
+}
+
+const PY = pythonLauncher();
+const pythonReady = spawnSync(PY.command, [...PY.args, "--version"], { encoding: "utf8" }).status === 0;
+const SKIP_PY = "нет Python 3 (py -3.13 / python3) — проверка deploy.py недоступна";
+
+/** Факты из `deploy.py`: параметры по умолчанию, команда touch и выбор каталога. */
+function deployFacts() {
+  const deployPy = path.join(projectDir, "deploy", "apache", "deploy.py");
+  const code = [
+    "import importlib.util, json",
+    `spec = importlib.util.spec_from_file_location("vtt_deploy", ${JSON.stringify(deployPy)})`,
+    "module = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(module)",
+    "args = module.parse_args([])",
+    "print(json.dumps({",
+    '    "target": module.SITE_TARGET,',
+    '    "url": module.SITE_URL,',
+    '    "argTarget": args.target,',
+    '    "argUrl": args.url,',
+    '    "reload": module.reload_command(args),',
+    '    "exact": module.pick_site_root("vtt_poison_press/public_html", ["vtt_poison_press/public_html"]),',
+    '    "onlyFound": module.pick_site_root("mishagordeev.com/public_html", ["vtt_poison_press/public_html"]),',
+    '    "many": module.pick_site_root("mishagordeev.com/public_html", ["a/public_html", "b/public_html"]),',
+    '    "nothing": module.pick_site_root("mishagordeev.com/public_html", []),',
+    "}, ensure_ascii=False))",
+  ].join("\n");
+  const done = spawnSync(PY.command, [...PY.args, "-c", code], { encoding: "utf8", cwd: projectDir });
+  assert.equal(done.status, 0, `deploy.py не импортируется: ${done.stderr}`);
+  return JSON.parse(done.stdout);
+}
+
+test("--reload бьёт по настоящему каталогу сайта", { skip: pythonReady ? false : SKIP_PY }, () => {
+  const facts = deployFacts();
+
+  assert.equal(facts.target, "vtt_poison_press/public_html", "корень сайта по умолчанию");
+  assert.equal(facts.url, "https://vtt.poison.press", "адрес сайта по умолчанию");
+  assert.equal(facts.argTarget, facts.target, "флаг --target должен брать тот же корень");
+  assert.equal(facts.argUrl, facts.url, "флаг --url должен брать тот же адрес");
+
+  assert.equal(facts.reload[0], "ssh", "перезапуск идёт через ssh");
+  assert.equal(
+    facts.reload.at(-1),
+    "touch vtt_poison_press/public_html/api.wsgi",
+    "touch должен попадать в серверный api.wsgi, а не в несуществующий каталог",
+  );
+  assert.ok(facts.reload.includes("-i"), "ssh должен ходить по ключу, а не по паролю");
+});
+
+test("каталог сайта на аккаунте выбирается по одному найденному api.wsgi", { skip: pythonReady ? false : SKIP_PY }, () => {
+  const facts = deployFacts();
+
+  assert.equal(facts.exact, "vtt_poison_press/public_html", "указанный каталог главнее поиска");
+  assert.equal(
+    facts.onlyFound,
+    "vtt_poison_press/public_html",
+    "единственный найденный каталог берётся вместо ошибочного --target",
+  );
+  assert.equal(facts.many, null, "при нескольких комплектах выбор отдаётся человеку");
+  assert.equal(facts.nothing, null, "если комплекта нет вовсе, выдумывать каталог нельзя");
+});
+
+test("в автовыкладке и в README нет старого каталога mishagordeev.com", () => {
+  const workflow = read(".github", "workflows", "static.yml");
+  assert.ok(
+    workflow.includes("vtt_poison_press/public_html"),
+    "в workflow должен быть рабочий путь сайта по умолчанию",
+  );
+  assert.ok(
+    !workflow.includes("mishagordeev.com"),
+    "старый путь mishagordeev.com/public_html на аккаунте отсутствует",
+  );
+  assert.ok(
+    workflow.includes("https://vtt.poison.press"),
+    "проверять сайт нужно по его адресу, а не по чужому домену",
+  );
+
+  const readme = read("deploy", "apache", "README.md");
+  assert.ok(
+    !readme.includes("touch mishagordeev.com/public_html/api.wsgi"),
+    "README не должен предлагать touch по несуществующему каталогу",
+  );
 });
 
