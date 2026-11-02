@@ -434,6 +434,9 @@ def deploy(args: argparse.Namespace) -> None:
 
     statics = [STATIC_DIR / item for item in STATIC_REQUIRED + STATIC_OPTIONAL]
     statics = [path for path in statics if path.exists()]
+    # Весь блок выгрузки живёт внутри `with`: `python/` копируется из временного
+    # каталога, и если цикл scp окажется снаружи, каталог удалится раньше
+    # копирования — scp ответит «No such file or directory».
     with tempfile.TemporaryDirectory() as tmp:
         python_stage = stage_python(Path(tmp))
         steps = [
@@ -449,13 +452,16 @@ def deploy(args: argparse.Namespace) -> None:
         # .htaccess последним: правила включаются, когда файлы уже на месте.
         steps.append((".htaccess", [str(APACHE_DIR / ".htaccess")], f"{remote}/.htaccess"))
 
-    # cgi-bin на аккаунте уже есть (там php*.cgi), но scp каталогов не создаёт.
-    run(ssh_base(args) + [f"mkdir -p {shlex.quote(args.target.strip('/'))}/cgi-bin"], dry_run=args.dry_run)
+        # cgi-bin на аккаунте уже есть (там php*.cgi), но scp каталогов не создаёт.
+        run(
+            ssh_base(args) + [f"mkdir -p {shlex.quote(args.target.strip('/'))}/cgi-bin"],
+            dry_run=args.dry_run,
+        )
 
-    for title, sources, destination in steps:
-        log(f"  → {title}")
-        if run(scp + sources + [destination], dry_run=args.dry_run) != 0:
-            die(f"scp не смог выгрузить «{title}»")
+        for title, sources, destination in steps:
+            log(f"  → {title}")
+            if run(scp + sources + [destination], dry_run=args.dry_run) != 0:
+                die(f"scp не смог выгрузить «{title}»")
 
     if args.dry_run:
         return

@@ -665,6 +665,61 @@ test(
 );
 
 test(
+  "scp-выкладка копирует python/ из живого staging-каталога",
+  { skip: pythonReady ? false : SKIP },
+  () => {
+    const script = path.join(projectDir, "deploy", "apache", "deploy.py");
+    const keys = path.join(os.tmpdir(), `vtt-keys-scp-${process.pid}.env`);
+    fs.writeFileSync(keys, "UPSTASH_REDIS_REST_URL=\nUPSTASH_REDIS_REST_TOKEN=\n");
+    const probe = [
+      "import importlib.util, json, os, sys",
+      "spec = importlib.util.spec_from_file_location('vtt_deploy', sys.argv[1])",
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "args = module.parse_args(['--host', '10.0.0.1', '--user', 'someone',",
+      "                            '--target', 'site/public_html', '--keys', sys.argv[2],",
+      "                            '--dry-run'])",
+      "calls, missing = [], []",
+      "def fake_run(command, dry_run=False):",
+      "    command = [str(part) for part in command]",
+      "    calls.append(command)",
+      "    if command and command[0] == 'scp':",
+      "        for arg in command[1:]:",
+      "            if arg.startswith('-') or '@' in arg or '=' in arg or arg.isdigit():",
+      "                continue",
+      "            if not os.path.exists(arg):",
+      "                missing.append(arg)",
+      "    return 0",
+      "module.run = fake_run",
+      "module.deploy(args)",
+      "scp = [c for c in calls if c and c[0] == 'scp']",
+      "print(json.dumps({'missing': missing, 'scp': scp}))",
+    ].join("\n");
+    const result = spawnSync(PY.command, [...PY.args, "-c", probe, script, keys], {
+      encoding: "utf8",
+      // В консоли Windows stdout у Python — cp1251, и «→» в логах deploy.py
+      // роняет прогон ещё до выкладки. В остальных probe-тестах вывода не видно:
+      // там только json.dumps с ASCII.
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    fs.rmSync(keys, { force: true });
+    assert.equal(result.status, 0, `deploy.py по scp упал: ${result.stderr}`);
+    // deploy() печатает ход выкладки, поэтому json — последняя строка вывода.
+    const report = result.stdout.trim().split(/\r?\n/).at(-1);
+    const { missing, scp } = JSON.parse(report);
+    assert.deepEqual(
+      missing,
+      [],
+      "scp получил несуществующий путь: временный каталог со python/ удаляется раньше копирования",
+    );
+    assert.ok(
+      scp.some((command) => command.some((arg) => /[\\/]python$/.test(arg))),
+      "python/ должен уезжать отдельным шагом scp",
+    );
+  },
+);
+
+test(
   "deploy.py --archive собирает комплект одним zip для панели хостинга",
   {
     skip: !pythonReady
