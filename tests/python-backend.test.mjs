@@ -487,6 +487,43 @@ test("Python-сервер: комната, чат с броском, лист, �
     "линия Кас-Хатара помнит вкладку",
   );
 
+  // Ластик, точка и метка на открытой вкладке: соседняя карта остаётся целой.
+  const eraseBlank = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "erase",
+    tab: blankTab.id,
+    points: [
+      { x: 0.2, y: 0.2 },
+      { x: 0.6, y: 0.6 },
+    ],
+    radius: 0.02,
+  });
+  assert.equal(eraseBlank.status, 200, server.log());
+  assert.equal(eraseBlank.payload.map.strokes.length, 1, "ластик стёр линию открытой вкладки");
+  assert.equal(eraseBlank.payload.map.strokes[0].tab, kasTab.id, "линия соседней карты цела");
+
+  const blankText = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "text",
+    kind: "point",
+    text: "Вход",
+    tab: blankTab.id,
+    x: 0.5,
+    y: 0.5,
+  });
+  assert.equal(blankText.status, 200, server.log());
+  assert.equal(blankText.payload.map.texts.at(-1).tab, blankTab.id, "точка легла на открытую вкладку");
+
+  const blankPing = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "ping",
+    tab: blankTab.id,
+    x: 0.7,
+    y: 0.7,
+  });
+  assert.equal(blankPing.status, 200, server.log());
+  assert.equal(blankPing.payload.map.pings.at(-1).tab, blankTab.id, "метка легла на открытую вкладку");
+
   const clearBlank = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
     actor: "Мастер",
     action: "clear",
