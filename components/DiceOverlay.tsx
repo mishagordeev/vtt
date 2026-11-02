@@ -159,7 +159,7 @@ export function DiceOverlay({ entry, onDone }: DiceOverlayProps) {
   }, [entry.id]);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden">
+    <div className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
       {dice.map((die, index) => {
         const spot = layout[index] ?? {
           left: 50,
