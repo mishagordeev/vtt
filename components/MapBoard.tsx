@@ -266,6 +266,11 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
 
   /** Новая надпись — по клику на карту, пока ничего не выбрано для правки. */
   async function addText(point: MapPoint) {
+    if (editingTextId) {
+      // Иначе клик по карте в режиме правки молча ставил бы дубль выбранной надписи.
+      setError("Сначала сохраните или отмените правку надписи");
+      return;
+    }
     const label = sanitizeMapText(text);
     if (!label) {
       setError("Сначала введите текст надписи");
