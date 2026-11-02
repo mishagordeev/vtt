@@ -6,6 +6,7 @@
 """
 
 import math
+import os
 import random
 import re
 import time
@@ -37,6 +38,22 @@ PLAYER_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$", re.IGNORECASE)
 def _now():
     """`Date.now()` — целые миллисекунды."""
     return int(time.time() * 1000)
+
+
+# Процесс WSGI живёт до перезапуска mod_wsgi: pid и время импорта модуля
+# показывают, подхватил ли сервер свежий `api.wsgi` (перезапуск — `touch api.wsgi`,
+# см. «Перезапуск mod_wsgi» в deploy/apache/README.md).
+PROCESS_PID = os.getpid()
+PROCESS_STARTED_AT = _now()
+
+
+def process_info():
+    """Признаки процесса для /api/health: pid, время старта и сколько он живёт."""
+    return {
+        "pid": PROCESS_PID,
+        "startedAt": PROCESS_STARTED_AT,
+        "uptimeSeconds": int((_now() - PROCESS_STARTED_AT) / 1000),
+    }
 
 
 def _round(value):
@@ -1212,13 +1229,14 @@ def delete_message(code, raw_actor, raw_id):
 
 
 def health(deep=False):
-    """Ответ /api/health: состояние хранилища, звуков и конвертера."""
+    """Ответ /api/health: состояние хранилища, звуков, конвертера и процесса."""
     storage_info = storage.probe(deep)
     ok = storage_info.get("reachable") and storage_info.get("canWrite") is not False
     return {
         "ok": bool(ok),
         "deep": deep,
         "storage": storage_info,
+        "process": process_info(),
         "tracks": tracks.info(),
         "convert": convert.tooling(),
         "checkedAt": _now(),

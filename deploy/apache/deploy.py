@@ -8,6 +8,13 @@
     py -3.13 deploy/apache/deploy.py --dry-run      # показать команды выгрузки
     py -3.13 deploy/apache/deploy.py --build        # пересобрать out/ и выложить
     py -3.13 deploy/apache/deploy.py --archive      # комплект одним zip для панели
+    py -3.13 deploy/apache/deploy.py --reload       # только перезапустить mod_wsgi
+
+Перезапуск mod_wsgi — это `touch api.wsgi`: mod_wsgi перечитывает приложение,
+когда меняется mtime точки входа, поэтому правки `python/` и `keys.env` без
+этого шага остаются невидимыми. Без оболочки SSH файл перезаливают или
+сохраняют в редакторе панели — подробности в разделе «Перезапуск mod_wsgi»
+файла `deploy/apache/README.md`.
 
 Параметры по умолчанию — аккаунт `onitselfgm` на `77.222.40.251`
 (ключ `~/.ssh/sweb_deploy`), корень сайта `mishagordeev.com/public_html`.
@@ -480,6 +487,51 @@ def verify(args: argparse.Namespace) -> bool:
     return healthy
 
 
+def health_report(args: argparse.Namespace) -> bool:
+    """Короткая проверка `/api/health?deep=1`: режим хранилища и признаки процесса.
+
+    Блок `process` (pid, время старта) — единственный однозначный признак того,
+    что mod_wsgi перечитал приложение: после `touch api.wsgi` pid другой,
+    `uptimeSeconds` начинается заново. Если блока нет — на сервере ещё прошлые
+    `api.wsgi`/`python/`, то есть перезапуск не подхватился.
+    """
+    url = args.url.rstrip("/") + "/api/health?deep=1"
+    status, kind, body = fetch(url)
+    if status not in (200, 503):
+        problem(f"/api/health?deep=1 — {status}, {kind or 'без типа'}: бэкенд не отвечает")
+        return False
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        problem(f"/api/health?deep=1 отдал не JSON ({len(body)} байт) — это не наш API")
+        return False
+
+    storage = payload.get("storage") or {}
+    ok(
+        f"/api/health?deep=1 — {status}, mode: {storage.get('mode')}, "
+        f"canWrite: {storage.get('canWrite')}, source: {storage.get('source')}"
+    )
+    details = payload.get("process") or {}
+    if details:
+        ok(
+            f"процесс: pid {details.get('pid')}, живёт {details.get('uptimeSeconds')} с "
+            f"(старт {details.get('startedAt')})"
+        )
+    else:
+        note("в ответе нет блока process — сервер работает на прошлой версии бэкенда")
+    return bool(payload.get("ok"))
+
+
+def reload_only(args: argparse.Namespace) -> int:
+    """Только перезапуск mod_wsgi: выгрузки нет, есть touch и проверка ответа."""
+    if args.dry_run:
+        log("\nПерезапуск mod_wsgi (--dry-run), файлы не выгружаются:")
+        log("  → " + " ".join(reload_command(args)))
+        return 0
+    reload_mod_wsgi(args)
+    return 0 if health_report(args) else 1
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Выкладка статики VTT на виртуальный хостинг SpaceWeb",
@@ -509,6 +561,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="выгружать инкрементально rsync-ом и перезапускать mod_wsgi (нужна оболочка SSH)",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="только перезапустить mod_wsgi (touch api.wsgi) и проверить /api/health, ничего не выгружая",
+    )
     parser.add_argument("--build", action="store_true", help="пересобрать статику (npm run build:static)")
     parser.add_argument(
         "--archive",
@@ -526,6 +583,11 @@ def main(argv: list[str]) -> int:
     except (AttributeError, OSError):
         pass
     args = parse_args(argv)
+
+    # Перезапуск — самостоятельное действие: комплект и сборка ему не нужны,
+    # иначе `--reload` падал бы на несобранном out/ после смены версии.
+    if args.reload:
+        return reload_only(args)
 
     if args.build:
         log("\nСборка статики: npm run build:static")

@@ -460,6 +460,17 @@ test("документация описывает статическую сбо�
   assert.match(apacheDoc, /npm run build:static/, "нет команды сборки статики");
   assert.match(apacheDoc, /out\//, "не сказано, что в public_html кладётся out/");
   assert.match(apacheDoc, /--static out/, "нет команды локальной проверки");
+  assert.match(
+    apacheDoc,
+    /## Перезапуск mod_wsgi/,
+    "нет раздела о том, как перезапустить mod_wsgi после правок бэкенда",
+  );
+  assert.match(apacheDoc, /touch api\.wsgi/, "перезапуск mod_wsgi — это touch api.wsgi");
+  assert.match(
+    apacheDoc,
+    /process\.pid/,
+    "не сказано, как проверить перезапуск по блоку process в /api/health",
+  );
 
   const pythonDoc = read("python", "README.md");
   assert.match(pythonDoc, /build:static/, "python/README.md должен ссылаться на статическую сборку");
@@ -487,7 +498,7 @@ test("комплект выкладки готов: api.wsgi, keys.env.example �
   );
 
   const script = read("deploy", "apache", "deploy.py");
-  for (const flag of ["--check", "--dry-run", "--target", "--url"]) {
+  for (const flag of ["--check", "--dry-run", "--target", "--url", "--reload"]) {
     assert.ok(script.includes(flag), `в deploy.py нет флага ${flag}`);
   }
   assert.match(script, /scp/, "выгрузка идёт через scp");

@@ -155,6 +155,21 @@ test("Python-сервер: комната, чат с броском, лист, �
   assert.equal(health.payload.storage.mode, "file");
   assert.equal(health.payload.storage.canWrite, true);
 
+  // Блок process — по нему видно, перезапустился ли mod_wsgi после touch api.wsgi.
+  const processInfo = health.payload.process;
+  assert.ok(processInfo, "в /api/health нет блока process: перезапуск сервера не проверить");
+  assert.ok(Number.isInteger(processInfo.pid) && processInfo.pid > 0, "pid процесса не отдан");
+  assert.ok(processInfo.startedAt > 0, "время старта процесса не отдано");
+  assert.ok(processInfo.startedAt <= health.payload.checkedAt, "старт процесса позже ответа");
+  assert.ok(processInfo.uptimeSeconds >= 0, "отрицательный uptime");
+
+  const again = await call(baseUrl, "GET", "/api/health?deep=1");
+  assert.equal(again.payload.process.pid, processInfo.pid, "процесс не должен перезапускаться сам");
+  assert.ok(
+    again.payload.process.uptimeSeconds >= processInfo.uptimeSeconds,
+    "uptime должен расти от запроса к запросу",
+  );
+
   // --- комната и вход ---
   const created = await call(baseUrl, "POST", "/api/rooms");
   assert.equal(created.status, 200);
