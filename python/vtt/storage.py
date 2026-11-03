@@ -20,6 +20,10 @@ from .web import AppError
 
 ROOM_TTL_SECONDS = 60 * 60 * 24 * 30
 KEY_PREFIX = "poison-press:room:"
+# Боковые ключи комнаты: голова (номер изменения) и присутствие.
+REV_KEY_PREFIX = "poison-press:rev:"
+SEEN_KEY_PREFIX = "poison-press:seen:"
+SEEN_KEY_SECONDS = 600
 HTTP_TIMEOUT = 10
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,6 +80,16 @@ def storage_mode():
 
 def storage_key(code):
     return "%s%s" % (KEY_PREFIX, code)
+
+
+def rev_key(code):
+    """Боковой ключ головы: номер изменения без чтения документа."""
+    return "%s%s" % (REV_KEY_PREFIX, code)
+
+
+def seen_key(code):
+    """Боковой ключ присутствия: кто когда проверял голову."""
+    return "%s%s" % (SEEN_KEY_PREFIX, code)
 
 
 def snippet(text):
@@ -213,6 +227,115 @@ def write_doc(doc):
             raise storage_error(status, "write", snippet(text))
         return
     _file_write(doc)
+
+
+def _side_path(code, suffix):
+    return os.path.join(DATA_DIR, "%s.%s.json" % (code, suffix))
+
+
+def _side_read(code, suffix):
+    """Боковой JSON рядом с комнатой или None, если файла нет или он протух."""
+    path = _side_path(code, suffix)
+    try:
+        modified = os.path.getmtime(path)
+    except OSError:
+        return None
+    # Файл живёт столько же, сколько комната: иначе голова переживёт её и
+    # клиент будет считать, что удалённый стол на месте.
+    if time.time() - modified > ROOM_TTL_SECONDS:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _side_write(code, suffix, payload):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    path = _side_path(code, suffix)
+    temp = "%s.%d.tmp" % (path, threading.get_ident())
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+    os.replace(temp, path)
+
+
+def positive_int(value):
+    """Целое больше нуля из ответа Redis или файла; иначе None."""
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def read_rev(code):
+    """Номер изменения из бокового ключа; None — ключа нет, нужен документ."""
+    creds = credentials()
+    if creds:
+        status, text = _redis(creds, "/get/" + urlparse.quote(rev_key(code), safe=""))
+        if status != 200:
+            raise storage_error(status, "read", snippet(text))
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            payload = {}
+        return positive_int(payload.get("result"))
+    payload = _side_read(code, "rev")
+    return positive_int(payload.get("rev")) if payload else None
+
+
+def write_rev(code, rev):
+    """Копия номера изменения рядом с документом: голова без чтения комнаты."""
+    value = int(rev)
+    creds = credentials()
+    if creds:
+        path = "/set/%s?EX=%d" % (urlparse.quote(rev_key(code), safe=""), ROOM_TTL_SECONDS)
+        status, text = _redis(creds, path, body=str(value), method="POST")
+        if status != 200:
+            raise storage_error(status, "write", snippet(text))
+        return
+    _side_write(code, "rev", {"rev": value})
+
+
+def read_seen(code):
+    """Отметки присутствия; любая ошибка — пустой словарь, проверка изменений важнее."""
+    creds = credentials()
+    if creds:
+        try:
+            status, text = _redis(creds, "/get/" + urlparse.quote(seen_key(code), safe=""))
+            if status != 200:
+                return {}
+            payload = json.loads(text) if text else {}
+            result = payload.get("result")
+            seen = json.loads(result) if result else {}
+        except (OSError, ValueError, urlerror.URLError):
+            return {}
+        return seen if isinstance(seen, dict) else {}
+    payload = _side_read(code, "seen")
+    return payload if payload else {}
+
+
+def write_seen(code, seen):
+    """Присутствие best-effort: без него голова работать обязана."""
+    body = json.dumps(seen, ensure_ascii=False, separators=(",", ":"))
+    creds = credentials()
+    if creds:
+        try:
+            path = "/set/%s?EX=%d" % (urlparse.quote(seen_key(code), safe=""), SEEN_KEY_SECONDS)
+            _redis(creds, path, body=body, method="POST")
+        except (OSError, urlerror.URLError):
+            pass
+        return
+    try:
+        _side_write(code, "seen", seen)
+    except OSError:
+        pass
 
 
 def probe(deep=False):

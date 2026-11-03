@@ -85,6 +85,7 @@ async function startServer() {
       if (response.ok) {
         return {
           baseUrl,
+          dataDir,
           log: () => log,
           stop: () => {
             child.kill();
@@ -727,6 +728,73 @@ test("Python-сервер: комната, чат с броском, лист, �
   const finalState = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
   assert.equal(finalState.payload.characters.length, 0);
   assert.equal(finalState.payload.messages.at(-1).kind, "system", "уход игрока — системное сообщение");
+});
+
+test("Python-сервер: голова комнаты растёт на запись, а не на чтение", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl, dataDir } = server;
+
+  const missing = await call(baseUrl, "GET", "/api/rooms/ZZZZZZ/rev");
+  assert.equal(missing.status, 404, "у несуществующей комнаты головы быть не должно");
+
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  assert.equal(created.status, 200);
+  const code = created.payload.code;
+
+  // --- голова новой комнаты и присутствие ---
+  const first = await call(
+    baseUrl,
+    "GET",
+    `/api/rooms/${code}/rev?name=${encodeURIComponent("Игрок")}`,
+  );
+  assert.equal(first.status, 200, server.log());
+  assert.deepEqual(
+    Object.keys(first.payload).sort(),
+    ["rev", "seen", "serverNow"],
+    "голова — только номер, присутствие и время, без частей комнаты",
+  );
+  assert.ok(Number.isInteger(first.payload.rev) && first.payload.rev > 0, "в голове нет rev");
+  assert.ok(first.payload.serverNow > 0, "в голове нет времени сервера");
+  assert.ok(first.payload.seen["Игрок"] > 0, "имя не попало в seen");
+
+  const state = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
+  assert.equal(state.payload.rev, first.payload.rev, "у головы и снимка разный номер изменения");
+
+  // --- чтение не двигает номер, присутствие не пишется чаще раза в 20 с ---
+  const second = await call(
+    baseUrl,
+    "GET",
+    `/api/rooms/${code}/rev?name=${encodeURIComponent("Игрок")}`,
+  );
+  assert.equal(second.payload.rev, first.payload.rev, "голова выросла на чтении");
+  assert.equal(
+    second.payload.seen["Игрок"],
+    first.payload.seen["Игрок"],
+    "присутствие пишется чаще раза в 20 секунд",
+  );
+
+  // --- запись двигает голову, а имя остаётся в ней без параметра name ---
+  const posted = await call(baseUrl, "POST", `/api/rooms/${code}/messages`, {
+    author: "Игрок",
+    text: "привет",
+  });
+  assert.equal(posted.status, 200);
+
+  const third = await call(baseUrl, "GET", `/api/rooms/${code}/rev`);
+  assert.ok(third.payload.rev > first.payload.rev, "после сообщения rev не вырос");
+  assert.ok(third.payload.seen["Игрок"] > 0, "имя пропало из головы, хотя его не убирали");
+
+  // --- боковой ключ головы и восстановление из документа ---
+  const headPath = path.join(dataDir, `${code}.rev.json`);
+  assert.ok(fs.existsSync(headPath), "боковой ключ головы не появился рядом с комнатой");
+  const saved = JSON.parse(fs.readFileSync(headPath, "utf8"));
+  assert.equal(saved.rev, third.payload.rev, "в боковом ключе другой номер");
+
+  fs.rmSync(headPath);
+  const restored = await call(baseUrl, "GET", `/api/rooms/${code}/rev`);
+  assert.equal(restored.status, 200, "без бокового ключа голова не восстановилась из документа");
+  assert.equal(restored.payload.rev, third.payload.rev, "восстановленный номер не совпал с документом");
+  assert.ok(fs.existsSync(headPath), "голова не записалась обратно");
 });
 
 test("Python-сервер: понятные ошибки вместо 500", async (t) => {

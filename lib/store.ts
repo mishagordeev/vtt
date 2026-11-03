@@ -33,6 +33,7 @@ import type {
   MusicState,
   MusicTrack,
   Player,
+  RoomHead,
   RoomSnapshot,
   RoomState,
   StorageHealth,
@@ -46,6 +47,14 @@ const ROOM_TTL_SECONDS = 60 * 60 * 24 * 30;
 /** Сколько сообщений храним в комнате. */
 const MAX_MESSAGES = 600;
 const KEY_PREFIX = "poison-press:room:";
+/** Боковой ключ головы: номер изменения комнаты без чтения документа. */
+const REV_KEY_PREFIX = "poison-press:rev:";
+/** Боковой ключ присутствия: кто когда проверял голову. */
+const SEEN_KEY_PREFIX = "poison-press:seen:";
+/** Присутствие пишем не чаще раза в 20 секунд — иначе голова станет второй записью комнаты. */
+const SEEN_WINDOW_MS = 20_000;
+/** Сколько держим имя в голове после последней проверки. */
+const SEEN_TTL_MS = 5 * 60_000;
 const MAX_TEXT = 2000;
 const MAX_STROKES = 200;
 const MAX_PING_AGE = 3_500;
@@ -197,11 +206,19 @@ function dedupeCharacters(doc: RoomState): boolean {
 }
 
 type MemoryEntry = { doc: RoomState; expiresAt: number };
+/** Голова комнаты в памяти процесса (когда Redis не настроен). */
+type MemoryHead = { rev: number; expiresAt: number };
+/** Присутствие в памяти процесса. */
+type MemorySeen = { seen: Record<string, number>; expiresAt: number };
 
 const globalStore = globalThis as typeof globalThis & {
   __poisonPressRooms?: Map<string, MemoryEntry>;
+  __poisonPressHeads?: Map<string, MemoryHead>;
+  __poisonPressSeen?: Map<string, MemorySeen>;
 };
 const memoryRooms: Map<string, MemoryEntry> = (globalStore.__poisonPressRooms ??= new Map());
+const memoryHeads: Map<string, MemoryHead> = (globalStore.__poisonPressHeads ??= new Map());
+const memorySeen: Map<string, MemorySeen> = (globalStore.__poisonPressSeen ??= new Map());
 
 interface RedisCredentials {
   url: string;
@@ -428,6 +445,150 @@ function storageError(
   );
 }
 
+const revKey = (code: string) => `${REV_KEY_PREFIX}${code}`;
+const seenKey = (code: string) => `${SEEN_KEY_PREFIX}${code}`;
+
+/** Номер изменения документа; у комнат до 0.4.75 поля нет — считаем 0. */
+function docRev(doc: RoomState): number {
+  const value = Number(doc.rev);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
+}
+
+/**
+ * Копия номера изменения рядом с документом (Redis-ключ или память процесса).
+ *
+ * Ошибку записи не пробрасываем: документ уже сохранён, а голова восстановится
+ * из него при следующей проверке — терять из-за неё ответ мутации нельзя.
+ */
+async function writeHead(code: string, rev: number): Promise<void> {
+  const kv = kvCredentials();
+  if (!kv) {
+    memoryHeads.set(code, { rev, expiresAt: Date.now() + ROOM_TTL_SECONDS * 1000 });
+    return;
+  }
+  try {
+    const res = await fetch(`${kv.url}/set/${encodeURIComponent(revKey(code))}?EX=${ROOM_TTL_SECONDS}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${kv.token}`, "Content-Type": "text/plain" },
+      body: String(rev),
+      cache: "no-store",
+    });
+    if (!res.ok) throw storageError(res.status, "write", await responseSnippet(res));
+  } catch {
+    // Голова отстала: номер подтянется из документа при следующем /rev.
+  }
+}
+
+/** Номер изменения из бокового ключа; null — ключа нет, нужен документ. */
+async function readHeadRev(code: string): Promise<number | null> {
+  const kv = kvCredentials();
+  if (kv) {
+    const res = await fetch(`${kv.url}/get/${encodeURIComponent(revKey(code))}`, {
+      headers: { Authorization: `Bearer ${kv.token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) throw storageError(res.status, "read", await responseSnippet(res));
+    const payload = (await res.json()) as { result?: string | null };
+    const rev = Number(payload.result);
+    return Number.isFinite(rev) && rev > 0 ? Math.floor(rev) : null;
+  }
+
+  const entry = memoryHeads.get(code);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    memoryHeads.delete(code);
+    return null;
+  }
+  return entry.rev;
+}
+
+/** Отметки присутствия из бокового ключа. Присутствие не должно ломать проверку изменений. */
+async function readSeen(code: string): Promise<Record<string, number>> {
+  const kv = kvCredentials();
+  if (!kv) {
+    const entry = memorySeen.get(code);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      memorySeen.delete(code);
+      return {};
+    }
+    return { ...entry.seen };
+  }
+  try {
+    const res = await fetch(`${kv.url}/get/${encodeURIComponent(seenKey(code))}`, {
+      headers: { Authorization: `Bearer ${kv.token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return {};
+    const payload = (await res.json()) as { result?: string | null };
+    if (!payload.result) return {};
+    const parsed: unknown = JSON.parse(payload.result);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeSeen(code: string, seen: Record<string, number>): Promise<void> {
+  const body = JSON.stringify(seen);
+  const kv = kvCredentials();
+  if (!kv) {
+    memorySeen.set(code, { seen: { ...seen }, expiresAt: Date.now() + SEEN_TTL_MS });
+    return;
+  }
+  try {
+    await fetch(
+      `${kv.url}/set/${encodeURIComponent(seenKey(code))}?EX=${Math.ceil(SEEN_TTL_MS / 1000)}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${kv.token}`, "Content-Type": "text/plain" },
+        body,
+        cache: "no-store",
+      },
+    );
+  } catch {
+    // Имя появится в голове при следующей проверке.
+  }
+}
+
+/** Убирает имена, которых давно не было, и приводит их к тем же 24 символам, что и вход. */
+function freshSeen(raw: Record<string, number>, now: number): Record<string, number> {
+  const seen: Record<string, number> = {};
+  for (const [rawName, rawStamp] of Object.entries(raw)) {
+    const name = normalizeName(rawName);
+    const stamp = Number(rawStamp);
+    if (!name || !Number.isFinite(stamp) || now - stamp > SEEN_TTL_MS) continue;
+    seen[name] = Math.floor(stamp);
+  }
+  return seen;
+}
+
+/**
+ * Голова комнаты для проверки изменений: `rev`, `seen` и время сервера.
+ *
+ * Документ читается только если бокового ключа нет (старая комната или сбой
+ * записи) — обычный ответ стоит одной команды GET и нескольких сотен байт.
+ * `name` отмечает присутствие, но не чаще раза в 20 секунд и без записи комнаты.
+ */
+export async function getRoomHead(code: string, rawName: unknown = ""): Promise<RoomHead> {
+  const name = normalizeName(rawName);
+  let rev = await readHeadRev(code);
+  if (rev === null) {
+    const doc = await readDoc(code);
+    if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
+    rev = docRev(doc);
+    await writeHead(code, rev);
+  }
+
+  const now = Date.now();
+  const seen = freshSeen(await readSeen(code), now);
+  if (name && now - (seen[name] ?? 0) >= SEEN_WINDOW_MS) {
+    seen[name] = now;
+    await writeSeen(code, seen);
+  }
+  return { rev, seen, serverNow: now };
+}
+
 async function readDoc(code: string): Promise<RoomState | null> {
   const kv = kvCredentials();
   if (kv) {
@@ -471,16 +632,18 @@ async function writeDoc(doc: RoomState): Promise<void> {
       },
     );
     if (!res.ok) throw storageError(res.status, "write", await responseSnippet(res));
-    return;
-  }
-
-  memoryRooms.set(doc.code, { doc, expiresAt: Date.now() + ROOM_TTL_SECONDS * 1000 });
-  if (memoryRooms.size > 200) {
-    const now = Date.now();
-    for (const [code, entry] of memoryRooms) {
-      if (entry.expiresAt <= now) memoryRooms.delete(code);
+  } else {
+    memoryRooms.set(doc.code, { doc, expiresAt: Date.now() + ROOM_TTL_SECONDS * 1000 });
+    if (memoryRooms.size > 200) {
+      const now = Date.now();
+      for (const [code, entry] of memoryRooms) {
+        if (entry.expiresAt <= now) memoryRooms.delete(code);
+      }
     }
   }
+
+  // Голова идёт следом за документом: клиент узнаёт об изменении, не читая комнату.
+  await writeHead(doc.code, docRev(doc));
 }
 
 // Простая очередь на комнату: сериализует «прочитал → изменил → записал» внутри процесса.
@@ -501,6 +664,9 @@ async function withRoom<T>(code: string, handler: (doc: RoomState) => T | Promis
     const doc = await readDoc(code);
     if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
     const result = await handler(doc);
+    // Номер изменения растёт на каждую запись — по нему клиент узнаёт,
+    // что комнату надо перечитать, не читая сам документ.
+    doc.rev = docRev(doc) + 1;
     await writeDoc(doc);
     return result;
   } finally {
@@ -559,6 +725,7 @@ export async function createRoom(): Promise<RoomState> {
       world: emptyWorld(),
       deletedMessages: [],
       seq: 1,
+      rev: 1,
     };
     appendMessage(doc, {
       kind: "system",
@@ -612,6 +779,7 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
     deletedMessages: doc.deletedMessages ?? [],
     serverNow: Date.now(),
     seq: doc.seq,
+    rev: docRev(doc),
   };
 }
 

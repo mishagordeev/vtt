@@ -43,6 +43,9 @@ MAX_DELETED_MESSAGES = 400
 MAX_WORLD_DAY = 365 * 20
 MAX_WEATHER_SEED = 100_000
 MAX_CHARACTERS = 60
+# Голова комнаты: присутствие пишем не чаще раза в 20 секунд и держим имя 5 минут.
+SEEN_WINDOW_MS = 20 * 1000
+SEEN_TTL_MS = 5 * 60 * 1000
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 PLAYER_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$", re.IGNORECASE)
 
@@ -428,6 +431,60 @@ def read_doc(code):
     return ensure_players(ensure_music(ensure_map(ensure_world(doc))))
 
 
+def doc_rev(doc):
+    """Номер изменения документа; у комнат до 0.4.75 поля нет — считаем 0."""
+    return storage.positive_int(doc.get("rev")) or 0
+
+
+def write_head(code, rev):
+    """Боковой ключ головы: сбой записи не должен ломать сохранение комнаты."""
+    try:
+        storage.write_rev(code, rev)
+    except (AppError, OSError):
+        pass
+
+
+def _fresh_seen(raw, now):
+    """Убирает имена, которых давно не было, и приводит их к тем же 24 символам."""
+    seen = {}
+    if not isinstance(raw, dict):
+        return seen
+    for raw_name, raw_stamp in raw.items():
+        name = normalize_name(raw_name)
+        try:
+            stamp = int(float(raw_stamp))
+        except (TypeError, ValueError):
+            continue
+        if not name or now - stamp > SEEN_TTL_MS:
+            continue
+        seen[name] = stamp
+    return seen
+
+
+def get_room_head(code, raw_name=""):
+    """Голова комнаты: номер изменения и присутствие, без чтения документа.
+
+    Документ читается только если бокового ключа нет (старая комната или сбой
+    записи). `name` отмечает присутствие, но не чаще раза в 20 секунд и без
+    записи комнаты — иначе голова сама стала бы тяжёлой записью.
+    """
+    name = normalize_name(raw_name)
+    rev = storage.read_rev(code)
+    if rev is None:
+        doc = read_doc(code)
+        if doc is None:
+            raise AppError(404, ROOM_NOT_FOUND)
+        rev = doc_rev(doc)
+        write_head(code, rev)
+
+    now = _now()
+    seen = _fresh_seen(storage.read_seen(code), now)
+    if name and now - seen.get(name, 0) >= SEEN_WINDOW_MS:
+        seen[name] = now
+        storage.write_seen(code, seen)
+    return {"rev": rev, "seen": seen, "serverNow": now}
+
+
 def with_room(code, handler):
     """Прочитал → изменил → записал, под блокировкой комнаты."""
     with storage.room_lock(code):
@@ -435,7 +492,12 @@ def with_room(code, handler):
         if doc is None:
             raise AppError(404, ROOM_NOT_FOUND)
         result = handler(doc)
+        # Номер изменения растёт на каждую запись — по нему клиент узнаёт,
+        # что комнату надо перечитать, не читая сам документ.
+        rev = doc_rev(doc) + 1
+        doc["rev"] = rev
         storage.write_doc(doc)
+        write_head(code, rev)
         return result
 
 
@@ -459,6 +521,7 @@ def create_room():
             "world": empty_world(),
             "deletedMessages": [],
             "seq": 1,
+            "rev": 1,
         }
         append_message(
             doc,
@@ -515,6 +578,7 @@ def get_room_snapshot(code, since=0):
         "deletedMessages": doc.get("deletedMessages") or [],
         "serverNow": _now(),
         "seq": doc.get("seq"),
+        "rev": doc_rev(doc),
     }
 
 

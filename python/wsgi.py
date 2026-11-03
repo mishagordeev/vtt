@@ -126,6 +126,12 @@ def apply(environ, start_response, method):
     entry_id = parts[3] if len(parts) > 3 else ""
     extra = parts[4] if len(parts) > 4 else ""
 
+    if resource == "rev" and not entry_id:
+        if method != "GET":
+            return respond(start_response, 405, {"error": "Метод не поддерживается"})
+        head = store.get_room_head(code, params.get("name", ""))
+        return respond(start_response, 200, head)
+
     if resource == "state" and not entry_id:
         if method != "GET":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})

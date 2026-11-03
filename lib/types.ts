@@ -189,6 +189,8 @@ export interface RoomState {
   /** id удалённых сообщений: клиент вычищает их из своей ленты. */
   deletedMessages: string[];
   seq: number;
+  /** Номер изменения: растёт на каждую запись комнаты. В комнатах до 0.4.75 поля нет. */
+  rev?: number;
 }
 
 export interface MapPoint {
@@ -284,6 +286,21 @@ export interface MapState {
   updatedAt: number;
 }
 
+/**
+ * Голова комнаты — ответ /api/rooms/[code]/rev.
+ *
+ * Документ комнаты весит до 1,5 МБ, поэтому «есть ли что-то новое» спрашивают
+ * не снимком, а этой маленькой записью: номер изменения, присутствие и время.
+ */
+export interface RoomHead {
+  /** Номер изменения комнаты: растёт на каждую запись. */
+  rev: number;
+  /** Кто когда проверял голову: имя → время сервера (мс). Живёт в боковом ключе. */
+  seen: Record<string, number>;
+  /** Время сервера на момент ответа. */
+  serverNow: number;
+}
+
 /** Ответ /api/rooms/[code]/state */
 export interface RoomSnapshot {
   code: string;
@@ -301,6 +318,8 @@ export interface RoomSnapshot {
   /** Время сервера на момент ответа — для синхронизации музыки и часов кампании. */
   serverNow: number;
   seq: number;
+  /** Номер изменения на момент ответа — чтобы не проверять голову сразу после чтения. */
+  rev?: number;
 }
 
 /** Где живут комнаты: Redis (Upstash / Vercel KV) или память процесса. */
