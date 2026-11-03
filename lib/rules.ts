@@ -216,6 +216,20 @@ export function sheetOrigins(name: string | undefined, open: boolean): OriginDef
   return [chosen];
 }
 
+/**
+ * Особенности и изъяны на основном экране листа: у героя видны только выбранные
+ * пункты, остальные прячутся за кнопкой «Показать все». Пока ничего не выбрано
+ * (новый лист), отдаём весь каталог — иначе выбирать будет не из чего; `open` —
+ * игрок сам раскрыл каталог. Порядок — как в каталоге, а не как нажимали.
+ * Незнакомое имя из старой комнаты не теряется: оно остаётся на листе в конце.
+ */
+export function sheetFeatures(catalog: string[], selected: string[], open: boolean): string[] {
+  if (open || selected.length === 0) return catalog;
+  const chosen = catalog.filter((name) => selected.includes(name));
+  const unknown = selected.filter((name) => !catalog.includes(name));
+  return [...chosen, ...unknown];
+}
+
 export interface LanguageDef {
   name: string;
   description: string;

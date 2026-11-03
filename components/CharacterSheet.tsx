@@ -39,6 +39,7 @@ import {
   rollAbilityScores,
   rollAge,
   rollStartingCoins,
+  sheetFeatures,
   sheetOrigins,
   shiftStats,
   skillAvailable,
@@ -125,29 +126,64 @@ interface FeatureListProps {
   title: string;
   hint: string;
   items: string[];
+  /** Что рисовать сейчас: только выбранное или весь каталог. */
+  visible: string[];
   notes: Record<string, string>;
   selected: string[];
+  /** Каталог раскрыт кнопкой — тогда видны и невыбранные пункты. */
+  open: boolean;
   editing: boolean;
   accent: "emerald" | "rose";
   onToggle: (name: string) => void;
+  onToggleOpen: () => void;
 }
 
-function FeatureList({ title, hint, items, notes, selected, editing, accent, onToggle }: FeatureListProps) {
+function FeatureList({
+  title,
+  hint,
+  items,
+  visible,
+  notes,
+  selected,
+  open,
+  editing,
+  accent,
+  onToggle,
+  onToggleOpen,
+}: FeatureListProps) {
   const activeClass =
     accent === "emerald"
       ? "border-emerald-400/50 bg-emerald-500/10"
       : "border-rose-400/50 bg-rose-500/10";
+  const hiddenCount = items.length - visible.length;
   return (
     <section className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
       <div>
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">{title}</h3>
-          <span className="font-mono text-[10px] text-zinc-600">{selected.length}/2</span>
+          <div className="flex items-center gap-2">
+            {selected.length > 0 ? (
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={onToggleOpen}
+                className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200"
+              >
+                {open ? "Скрыть невыбранные" : `Показать все (${hiddenCount})`}
+              </button>
+            ) : null}
+            <span className="font-mono text-[10px] text-zinc-600">{selected.length}/2</span>
+          </div>
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">{hint}</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+          {hint}
+          {selected.length > 0 && !open
+            ? " На листе только ваш выбор: остальное — за кнопкой «Показать все»."
+            : ""}
+        </p>
       </div>
       <div className="scroll-thin max-h-[440px] space-y-1 overflow-y-auto pr-1">
-        {items.map((name) => {
+        {visible.map((name) => {
           const active = selected.includes(name);
           return (
             <label
@@ -332,6 +368,9 @@ export function CharacterSheet({
   const [viewerOpen, setViewerOpen] = useState(false);
   /** Чужие народы на листе: по умолчанию спрятаны, раскрываются кнопкой. */
   const [originsOpen, setOriginsOpen] = useState(false);
+  /** Невыбранные особенности и изъяны на листе: каталоги раскрываются кнопкой. */
+  const [traitsOpen, setTraitsOpen] = useState(false);
+  const [flawsOpen, setFlawsOpen] = useState(false);
   const [skillQuery, setSkillQuery] = useState("");
   const [knowledgeQuery, setKnowledgeQuery] = useState("");
   const [skillKind, setSkillKind] = useState<SkillKind | "all">("all");
@@ -391,6 +430,13 @@ export function CharacterSheet({
    */
   const visibleOrigins = sheetOrigins(draft.origin, originsOpen);
   const hiddenOriginCount = ORIGINS.length - visibleOrigins.length;
+  /**
+   * Особенности и изъяны тоже показываем по выбору: двадцать пять карточек
+   * каталога занимали лист целиком. Невыбранные пункты раскрываются кнопкой,
+   * а пока ничего не выбрано — видны все, иначе выбирать не из чего.
+   */
+  const visibleTraits = sheetFeatures(TRAITS, draft.traits, traitsOpen);
+  const visibleFlaws = sheetFeatures(FLAWS, draft.flaws, flawsOpen);
   const languageBudget = languageSlots(draft.stats);
   const slotBudget = skillSlotBudget(draft.level, draft.stats);
   const slotUsage = skillsSlotUsage(draft.skills);
@@ -424,6 +470,9 @@ export function CharacterSheet({
       setNotice("Вторая особенность требует изъяна: первая — бесплатно.");
     }
     patch({ [kind]: next } as Partial<CharacterDraft>);
+    // Выбор сделан — каталог снова показывает только выбранные пункты.
+    if (kind === "traits") setTraitsOpen(false);
+    else setFlawsOpen(false);
   }
 
   function setExtraLanguage(index: number, value: string) {
@@ -2191,22 +2240,28 @@ export function CharacterSheet({
                 <FeatureList
                   title="Особенности"
                   hint="Можно выбрать до двух. Первая особенность бесплатна, вторая требует изъяна."
-                  items={RULES.traits}
+                  items={TRAITS}
+                  visible={visibleTraits}
                   notes={TRAIT_NOTES}
                   selected={draft.traits}
+                  open={traitsOpen}
                   editing={editing}
                   accent="emerald"
                   onToggle={(name) => toggleFeature("traits", name)}
+                  onToggleOpen={() => setTraitsOpen((open) => !open)}
                 />
                 <FeatureList
                   title="Изъяны"
                   hint="Можно выбрать до двух. Изъян без особенности разрешён; вторая особенность без изъяна — нет."
-                  items={RULES.flaws}
+                  items={FLAWS}
+                  visible={visibleFlaws}
                   notes={FLAW_NOTES}
                   selected={draft.flaws}
+                  open={flawsOpen}
                   editing={editing}
                   accent="rose"
                   onToggle={(name) => toggleFeature("flaws", name)}
+                  onToggleOpen={() => setFlawsOpen((open) => !open)}
                 />
               </div>
               {draft.flaws.length < requiredFlaws(draft.traits.length) ? (

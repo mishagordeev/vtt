@@ -112,6 +112,45 @@ test("народ на листе: виден только выбранный, о
   );
 });
 
+test("особенности и изъяны на листе: видны только выбранные, остальные — за кнопкой", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  assert.match(
+    sheet,
+    /const \[traitsOpen, setTraitsOpen\] = useState\(false\)/,
+    "каталог особенностей спрятан по умолчанию",
+  );
+  assert.match(
+    sheet,
+    /const \[flawsOpen, setFlawsOpen\] = useState\(false\)/,
+    "каталог изъянов спрятан по умолчанию",
+  );
+  assert.match(
+    sheet,
+    /const visibleTraits = sheetFeatures\(TRAITS, draft\.traits, traitsOpen\)/,
+    "особенности считаются по выбору героя",
+  );
+  assert.match(
+    sheet,
+    /const visibleFlaws = sheetFeatures\(FLAWS, draft\.flaws, flawsOpen\)/,
+    "изъяны считаются по выбору героя",
+  );
+  assert.match(sheet, /items=\{TRAITS\}/, "каталог особенностей передаётся в блок");
+  assert.match(sheet, /visible=\{visibleTraits\}/, "в блок идут только видимые особенности");
+  assert.match(sheet, /visible=\{visibleFlaws\}/, "в блок идут только видимые изъяны");
+  assert.match(sheet, /\{visible\.map\(/, "список рисуется по видимым пунктам");
+  const featureAt = sheet.indexOf("function FeatureList");
+  const featureSource = sheet.slice(featureAt, sheet.indexOf("interface NatalCardProps", featureAt));
+  assert.ok(featureAt > 0 && featureSource.length > 0, "блок особенностей и изъянов на месте");
+  assert.ok(!/\{items\.map/.test(featureSource), "полный каталог больше не рисуется целиком");
+  assert.match(sheet, /Показать все \(\$\{hiddenCount\}\)/, "невыбранные пункты раскрываются кнопкой");
+  assert.match(sheet, /Скрыть невыбранные/, "раскрытый каталог можно свернуть обратно");
+  assert.match(
+    sheet,
+    /setTraitsOpen\(false\);[\s\S]{0,40}else setFlawsOpen\(false\);/,
+    "после выбора каталог снова прячет невыбранные пункты",
+  );
+});
+
 test("стол виден всегда, а правая панель идёт: музыка → персонажи → чат → ввод", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.ok(!/const TABS|setTab\(|tab === /.test(room), "вкладок стола больше нет");

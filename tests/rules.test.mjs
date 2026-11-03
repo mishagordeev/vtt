@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   AGE_BANDS,
+  FLAWS,
   ITEMS,
   LANGUAGES,
   ORIGINS,
   RULES,
   SKILLS,
   STARTER_KITS,
+  TRAITS,
   abilityMod,
   ageBand,
   ageModTotals,
@@ -32,6 +34,7 @@ import {
   rollAbilityScores,
   rollAge,
   rollStartingCoins,
+  sheetFeatures,
   sheetOrigins,
   shiftStats,
   skillSlotBudget,
@@ -275,6 +278,29 @@ test("на листе виден только выбранный народ, о�
     ORIGINS,
     "незнакомое имя происхождения не должно оставлять лист без карточек",
   );
+});
+
+test("на листе видны только выбранные особенности и изъяны", () => {
+  assert.deepEqual(sheetFeatures(TRAITS, [], false), TRAITS, "без выбора каталог виден целиком");
+  const chosen = [TRAITS[4], TRAITS[1]];
+  assert.deepEqual(
+    sheetFeatures(TRAITS, chosen, false),
+    [TRAITS[1], TRAITS[4]],
+    "порядок — как в каталоге, а не как нажимали",
+  );
+  assert.deepEqual(sheetFeatures(TRAITS, chosen, true), TRAITS, "кнопка «Показать все» раскрывает каталог");
+  assert.deepEqual(sheetFeatures(FLAWS, [FLAWS[3]], false), [FLAWS[3]]);
+  assert.deepEqual(
+    sheetFeatures(FLAWS, ["Изъян из старой комнаты"], false),
+    ["Изъян из старой комнаты"],
+    "незнакомое имя из старой комнаты остаётся на листе",
+  );
+  assert.deepEqual(
+    sheetFeatures(FLAWS, ["Изъян из старой комнаты", FLAWS[14]], false),
+    [FLAWS[14], "Изъян из старой комнаты"],
+    "знакомый пункт идёт первым, незнакомый не теряется",
+  );
+  assert.deepEqual(sheetFeatures(FLAWS, [], true), FLAWS);
 });
 
 test("у каждого навыка и знания есть стартовый набор из каталога", () => {
