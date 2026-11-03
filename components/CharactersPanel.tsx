@@ -92,6 +92,10 @@ export function CharactersPanel({
   const lastSaved = useRef<string>("");
   /** Очередь сохранений: автосохранение и «Готово» не обгоняют друг друга. */
   const saving = useRef<Promise<void>>(Promise.resolve());
+  /** Снимок, который уже в очереди: двойной вызов не плодит два одинаковых запроса. */
+  const inFlight = useRef<string>("");
+  /** Досохранить хвост правки перед сменой листа и при закрытии панели. */
+  const flushRef = useRef<(close?: boolean) => void>(() => {});
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const draftRef = useRef<CharacterDraft | null>(draft);
@@ -108,8 +112,11 @@ export function CharactersPanel({
 
   const open = useCallback(
     (character: Character) => {
-      // Лист открывается как обычный лист. Кнопка «Править» включает правку,
-      // дальше всё сохраняется само: кнопки «Сохранить» нет.
+      // Хвост незаписанной правки — в том числе быстрой, из режима чтения —
+      // уходит на сервер до того, как лист сменится.
+      flushRef.current();
+      // Лист открывается как обычный лист. Кнопка «Править» включает полную
+      // правку, а ОЗ, монеты, заметки и снаряжение пишутся сами и без неё.
       const next = draftFromCharacter(character);
       lastSaved.current = JSON.stringify(next);
       setSavedAt("");
@@ -124,8 +131,19 @@ export function CharactersPanel({
     if (mode.kind === "empty" && characters.length > 0) open(characters[0]);
   }, [characters, mode.kind, open]);
 
+  /**
+   * Чужую правку листа подхватываем, но набранное в этом окне не затираем:
+   * несохранённый хвост уйдёт на сервер таймером автосохранения. Снимок
+   * сохранённого двигаем здесь же — иначе живая правка из режима чтения
+   * приняла бы свежепрочитанный лист за свой ввод и записала его обратно.
+   */
   useEffect(() => {
-    if (mode.kind === "view" && selected) setDraft(draftFromCharacter(selected));
+    if (mode.kind !== "view" || !selected) return;
+    const latest = draftRef.current ? JSON.stringify(draftRef.current) : "";
+    if (latest && latest !== lastSaved.current) return;
+    const next = draftFromCharacter(selected);
+    lastSaved.current = JSON.stringify(next);
+    setDraft(next);
   }, [mode.kind, selected]);
 
   useEffect(() => {
@@ -150,7 +168,7 @@ export function CharactersPanel({
     ) {
       return;
     }
-    if (mode.kind === "edit") void enqueueSave();
+    // Хвост правки допишет open() — он зовёт flush до смены листа.
     open(character);
     // open() и enqueueSave() читают актуальные mode и draft сами.
   }, [openRequest, characters]);
@@ -165,7 +183,7 @@ export function CharactersPanel({
       if (!window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
     }
     // Правленый лист сохраняем перед уходом к новому.
-    if (mode.kind === "edit") void enqueueSave();
+    flushRef.current();
     const next = emptyDraft();
     lastSaved.current = JSON.stringify(next);
     setSavedAt("");
@@ -176,6 +194,8 @@ export function CharactersPanel({
 
   function startEdit() {
     if (!selected) return;
+    // Живую правку, набранную до нажатия «Править», не теряем.
+    flushRef.current();
     const next = draftFromCharacter(selected);
     lastSaved.current = JSON.stringify(next);
     setSavedAt("");
@@ -201,23 +221,37 @@ export function CharactersPanel({
   /**
    * Сохранение через очередь. Вызывается автосохранением после ввода, кнопкой
    * «Готово» и переходом к другому листу; повторный вызов не плодит запросы.
+   *
+   * Пишем и в режиме чтения: ОЗ, монеты, заметки и снаряжение владелец листа и
+   * мастер правят без кнопки «Править». Но только тот лист, который этому
+   * игроку править разрешено (`canEdit`), — чужой лист остаётся только для чтения.
    */
   function enqueueSave(options: { close?: boolean } = {}): Promise<void> {
     const current = draft;
     const currentMode = mode;
-    if (!current || currentMode.kind !== "edit") return saving.current;
-    const id = currentMode.id;
+    const targetId =
+      currentMode.kind === "view" || currentMode.kind === "edit" ? currentMode.id : null;
+    if (!current || !targetId) return saving.current;
+    const target = characters.find((entry) => entry.id === targetId);
+    if (!target || !canEditCharacter(target)) return saving.current;
+    const id = target.id;
     const snapshot = JSON.stringify(current);
     if (snapshot === lastSaved.current) {
       if (options.close) setMode({ kind: "view", id });
       return saving.current;
     }
-    const problem = draftProblem(current);
+    // Такой же снимок уже в очереди: «Готово» и переход к другому листу могут
+    // попросить одно и то же сохранение одновременно.
+    if (snapshot === inFlight.current) return saving.current;
+    // Строгие правила листа проверяем только при полной правке: живая правка ОЗ
+    // и вещей не должна упираться в старую особенность без изъяна.
+    const problem = currentMode.kind === "edit" ? draftProblem(current) : null;
     if (problem) {
       setError(problem);
       return saving.current;
     }
     if (!current.name.trim()) return saving.current;
+    inFlight.current = snapshot;
     const task = saving.current.then(async () => {
       setBusy(true);
       setError(null);
@@ -232,13 +266,13 @@ export function CharactersPanel({
           // Если за время запроса игрок успел напечатать ещё, его ввод не затираем.
           const active = modeRef.current;
           const latest = draftRef.current ? JSON.stringify(draftRef.current) : "";
-          if (active.kind === "edit" && active.id === saved.id && latest === snapshot) {
-            setDraft(next);
-          }
+          const sameSheet = (active.kind === "view" || active.kind === "edit") && active.id === saved.id;
+          if (sameSheet && latest === snapshot) setDraft(next);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Не удалось сохранить персонажа");
       } finally {
+        if (inFlight.current === snapshot) inFlight.current = "";
         setBusy(false);
       }
     });
@@ -246,16 +280,35 @@ export function CharactersPanel({
     return saving.current;
   }
 
-  // Автосохранение: как только поля изменены и пауза в вводе — пишем на сервер.
+  // Актуальный enqueueSave для open() и закрытия панели: там замыкание на
+  // сегодняшние draft и mode уже устарело бы.
+  flushRef.current = (close = false) => {
+    void enqueueSave({ close });
+  };
+
+  // Панель закрывают «✕ Закрыть»: последняя живая правка не должна пропасть
+  // вместе с таймером автосохранения.
+  useEffect(() => () => flushRef.current(), []);
+
+  /**
+   * Живая правка: владелец листа, назначенный игрок и мастер правят ОЗ, монеты,
+   * заметки и снаряжение прямо в режиме чтения — изменения пишутся сами, после
+   * паузы в вводе. Полная правка (характеристики, народ, навыки) сохраняется
+   * тем же путём, поэтому таймер один.
+   */
+  const liveEdit =
+    (mode.kind === "view" || mode.kind === "edit") && selected
+      ? canEditCharacter(selected)
+      : false;
   useEffect(() => {
-    if (mode.kind !== "edit" || !draft) return;
+    if (!liveEdit || !draft) return;
     if (JSON.stringify(draft) === lastSaved.current) return;
     const timer = window.setTimeout(() => {
       void enqueueSave();
     }, 900);
     return () => window.clearTimeout(timer);
     // enqueueSave завязан на актуальные draft и mode, поэтому список зависимостей короткий.
-  }, [draft, mode]);
+  }, [draft, mode, liveEdit]);
 
   async function createSheet() {
     if (!draft || busy) return;

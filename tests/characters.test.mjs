@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { draftFromCharacter, emptyDraft, normalizeDraft, requiredFlaws } from "../lib/characters.ts";
+import { canEdit, draftFromCharacter, emptyDraft, normalizeDraft, requiredFlaws } from "../lib/characters.ts";
 import { FIELDS } from "../lib/rules.ts";
 
 /** Минимальный лист в том виде, в каком его отдаёт хранилище. */
@@ -137,4 +137,18 @@ test("тайник переживает сохранение: draftFromCharacter
     "stash",
     "при автосохранении вещь не превращается в рюкзачную",
   );
+});
+
+test("править лист может владелец, назначенный игрок и мастер", () => {
+  const sheet = { owner: "Миша", players: ["Женя"], name: "Тархун" };
+  assert.equal(canEdit(sheet, "Миша", "Мастер"), true, "владелец правит свой лист");
+  assert.equal(canEdit(sheet, "  женя ", "Мастер"), true, "назначенный игрок — тоже, без оглядки на регистр");
+  assert.equal(canEdit(sheet, "Мастер", "Мастер"), true, "мастер правит любой лист");
+  assert.equal(
+    canEdit({ owner: "Миша", name: "Тархун" }, "Мастер", "Мастер"),
+    true,
+    "мастер правит и лист без назначенных игроков",
+  );
+  assert.equal(canEdit(sheet, "DioxiT", "Мастер"), false, "чужой игрок только читает лист");
+  assert.equal(canEdit(sheet, "   ", "Мастер"), false, "без имени прав нет");
 });

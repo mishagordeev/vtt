@@ -83,6 +83,10 @@ export type SheetMode = "create" | "view" | "edit";
 interface CharacterSheetProps {
   draft: CharacterDraft;
   mode: SheetMode;
+  /**
+   * Лист можно править: владелец, назначенный игрок, мастер. В режиме чтения
+   * это включает живую правку за столом — ОЗ, монеты, заметки и снаряжение.
+   */
   canEdit: boolean;
   busy: boolean;
   error: string | null;
@@ -534,6 +538,13 @@ export function CharacterSheet({
   // Постоянной кнопки «Сохранить» нет: в режим правки входим кнопкой «Править»,
   // а все поля внутри сохраняются сами — по вводу, с паузой.
   const editing = mode === "create" || (canEdit && mode === "edit");
+  /**
+   * Живая правка за столом — то, что меняется по ходу игры: ОЗ, монеты, заметки,
+   * снаряжение и тайники. Доступна владельцу и назначенным игрокам сразу, без
+   * кнопки «Править»; мастер так правит любой лист (`canEdit`). Остальное —
+   * характеристики, народ, навыки, портрет, уровень — по-прежнему в режиме правки.
+   */
+  const live = mode === "create" || canEdit;
   const skillEditing = editing && (mode === "create" || levelUpOpen);
   /** К блоку навыков прокручиваем после «Повысить уровень» — там же выбор навыка. */
   const skillsRef = useRef<HTMLDivElement | null>(null);
@@ -858,7 +869,7 @@ export function CharacterSheet({
    * иначе ей негде жить, и предмет молча оказался бы в рюкзаке.
    */
   function addItem(def: ItemDef, location: ItemLocation, stashId?: string) {
-    if (!editing) return;
+    if (!live) return;
     if (location === "stash" && !stashId) {
       setNotice("Сначала заведите тайник: кнопка «+ тайник» в разделе «Тайник».");
       return;
@@ -878,7 +889,7 @@ export function CharacterSheet({
   }
 
   function moveItem(id: string, location: ItemLocation, stashId?: string) {
-    if (!editing) return;
+    if (!live) return;
     const item = draft.inventory.find((entry) => entry.id === id);
     const def = item ? findItem(item.name) : undefined;
     if (!item || !def) return;
@@ -913,7 +924,7 @@ export function CharacterSheet({
   }
 
   function removeItem(id: string) {
-    if (!editing) return;
+    if (!live) return;
     const item = draft.inventory.find((entry) => entry.id === id);
     if (item && findItem(item.name)?.kind === "coins") {
       setNotice("Монеты не удаляются: измените их количество в рюкзаке.");
@@ -924,7 +935,7 @@ export function CharacterSheet({
 
   /** Новая вкладка тайника: имя по порядку, описание заполняет владелец. */
   function addStash() {
-    if (!editing) return;
+    if (!live) return;
     if (stashes.length >= MAX_STASHES) {
       setNotice(`Тайников не больше ${MAX_STASHES}.`);
       return;
@@ -937,13 +948,13 @@ export function CharacterSheet({
 
   /** Название и описание вкладки: длину держат maxLength на полях. */
   function updateStash(id: string, values: Partial<Pick<Stash, "name" | "note">>) {
-    if (!editing) return;
+    if (!live) return;
     patch({ stashes: stashes.map((entry) => (entry.id === id ? { ...entry, ...values } : entry)) });
   }
 
   /** Вкладку убираем только с подтверждением: её вещи возвращаются в рюкзак. */
   function removeStash(id: string) {
-    if (!editing) return;
+    if (!live) return;
     const stash = stashes.find((entry) => entry.id === id);
     if (!stash) return;
     const title = stash.name || "Без названия";
@@ -972,7 +983,7 @@ export function CharacterSheet({
   }
 
   function setCoin(name: string, value: number) {
-    if (!editing) return;
+    if (!live) return;
     const type = COIN_TYPES.find((coin) => coin.name === name);
     if (!type) return;
     const qty = Math.max(0, Math.min(999999, Math.round(value) || 0));
@@ -1055,7 +1066,7 @@ export function CharacterSheet({
   }
 
   function setHp(current: number, max: number) {
-    if (!editing) return;
+    if (!live) return;
     const nextMax = Math.max(1, Math.min(999, Math.round(max) || 1));
     const nextCurrent = Math.max(0, Math.min(nextMax, Math.round(current) || 0));
     patch({
@@ -1075,10 +1086,10 @@ export function CharacterSheet({
       <section
         className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2"
         onDragOver={(event) => {
-          if (editing) event.preventDefault();
+          if (live) event.preventDefault();
         }}
         onDrop={(event) => {
-          if (!editing) return;
+          if (!live) return;
           event.preventDefault();
           const id = event.dataTransfer.getData("text/plain");
           if (id) moveItem(id, location);
@@ -1111,7 +1122,7 @@ export function CharacterSheet({
           inventory={draft.inventory}
           stats={draft.stats}
           overloaded={overloaded}
-          editing={editing}
+          editing={live}
           onMove={(id, target) => moveItem(id, target)}
           onRemove={removeItem}
         />
@@ -1135,10 +1146,10 @@ export function CharacterSheet({
       <section
         className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2"
         onDragOver={(event) => {
-          if (editing && activeStash) event.preventDefault();
+          if (live && activeStash) event.preventDefault();
         }}
         onDrop={(event) => {
-          if (!editing || !activeStash) return;
+          if (!live || !activeStash) return;
           event.preventDefault();
           const id = event.dataTransfer.getData("text/plain");
           if (id) moveItem(id, "stash", activeStash.id);
@@ -1173,7 +1184,7 @@ export function CharacterSheet({
               {stash.name || "Без названия"}
             </button>
           ))}
-          {editing ? (
+          {live ? (
             <button
               type="button"
               onClick={addStash}
@@ -1191,7 +1202,7 @@ export function CharacterSheet({
         </div>
         {activeStash ? (
           <div className="space-y-1">
-            {editing ? (
+            {live ? (
               <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-1.5">
                 <input
                   value={activeStash.name}
@@ -1239,7 +1250,7 @@ export function CharacterSheet({
               inventory={draft.inventory}
               stats={draft.stats}
               overloaded={overloaded}
-              editing={editing}
+              editing={live}
               onMove={(id, target) => moveItem(id, target)}
               onRemove={removeItem}
             />
@@ -1247,7 +1258,7 @@ export function CharacterSheet({
         ) : (
           <p className="py-2 text-[11px] text-zinc-600">
             Тайников пока нет.{" "}
-            {editing ? "Нажмите «+ тайник», чтобы завести первый." : "Их заводит владелец листа."}
+            {live ? "Нажмите «+ тайник», чтобы завести первый." : "Их заводит владелец листа."}
           </p>
         )}
       </section>
@@ -1281,7 +1292,7 @@ export function CharacterSheet({
                   min={0}
                   max={999999}
                   value={entry?.qty ?? 0}
-                  disabled={!editing}
+                  disabled={!live}
                   onChange={(event) => setCoin(coin.name, Number(event.target.value))}
                   className="w-20 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-amber-200 disabled:opacity-60"
                 />
@@ -1385,7 +1396,7 @@ export function CharacterSheet({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" data-sheet-live={live ? "on" : "off"}>
       <header className="shrink-0 border-b border-zinc-800 bg-zinc-950/60 p-3">
         <div className="flex flex-wrap items-start gap-3">
           <button
@@ -1550,11 +1561,22 @@ export function CharacterSheet({
                 <option value="pdf">PDF (печать)</option>
               </select>
             ) : null}
+            {live && mode === "view" ? (
+              // Владелец, назначенные игроки и мастер правят ОЗ, монеты, заметки
+              // и снаряжение сразу: «Править» осталась только для характеристик,
+              // народа, навыков, уровня и портрета.
+              <span
+                title="Очки здоровья, монеты, заметки, снаряжение и тайники сохраняются сами. «Править» — характеристики, народ, навыки, уровень и портрет."
+                className="hidden text-[11px] text-zinc-500 sm:inline"
+              >
+                {busy ? "Сохраняю…" : savedAt ? `Сохранено в ${savedAt}` : "Правка сразу"}
+              </span>
+            ) : null}
             {canEdit && mode === "view" ? (
               <button
                 type="button"
                 onClick={onEdit}
-                title="Открыть лист на правку"
+                title="Характеристики, народ, навыки, уровень и портрет: ОЗ, монеты, заметки и снаряжение правятся и без этой кнопки"
                 className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
               >
                 Править
@@ -1859,7 +1881,7 @@ export function CharacterSheet({
                       type="number"
                       min={0}
                       max={hp.max}
-                      disabled={!editing}
+                      disabled={!live}
                       value={hp.current}
                       onChange={(event) => setHp(Number(event.target.value), hp.max)}
                       className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-emerald-200 outline-none focus:border-emerald-400/70 disabled:opacity-70"
@@ -1869,7 +1891,7 @@ export function CharacterSheet({
                       type="number"
                       min={1}
                       max={999}
-                      disabled={!editing}
+                      disabled={!live}
                       value={hp.max}
                       onChange={(event) => setHp(hp.current, Number(event.target.value))}
                       className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-lg text-zinc-300 outline-none focus:border-emerald-400/70 disabled:opacity-70"
@@ -2596,7 +2618,7 @@ export function CharacterSheet({
                 value={draft.fields.notes ?? ""}
                 maxLength={2000}
                 rows={6}
-                disabled={!editing}
+                disabled={!live}
                 placeholder="Шрамы, обеты, репутация, важные мелочи"
                 onChange={(event) => patch({ fields: { ...draft.fields, notes: event.target.value } })}
                 className="scroll-thin w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm leading-relaxed text-zinc-100 outline-none focus:border-emerald-400/70 disabled:opacity-70"
@@ -2672,7 +2694,7 @@ export function CharacterSheet({
                           </div>
                           <p className="text-[11px] leading-snug text-zinc-500">{item.description}</p>
                         </div>
-                        {editing ? (
+                        {live ? (
                           <div className="flex shrink-0 flex-col gap-1">
                             <button
                               type="button"
