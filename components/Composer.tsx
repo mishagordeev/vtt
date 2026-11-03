@@ -267,8 +267,7 @@ export function Composer({ disabled, checks, characterName, onSend }: ComposerPr
       </div>
 
       {/* Характеристики листа: клик подставляет «1d20» с её модификатором.
-          «Очистить» стоит в конце ряда, чтобы кости и характеристики шли двумя
-          ровными строками без переносов. */}
+          Кнопки растянуты по ширине колонки — ряд не переносится. */}
       <div className="mt-1 flex flex-nowrap items-center justify-between gap-0.5">
         {rows.stats.map((stat) => (
           <button
