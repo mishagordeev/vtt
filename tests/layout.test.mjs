@@ -150,6 +150,26 @@ test("особенности и изъяны на листе: видны тол�
     "после выбора каталог снова прячет невыбранные пункты",
   );
 });
+test("параметры снаряжения в руках: урон, КБ и бонус щита под названием", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  // Числа берутся из правил и только для блока рук: в рюкзаке вторая строка не нужна.
+  assert.match(
+    sheet,
+    /const params = location === "hands" \? itemParams\(def\) : \[\]/,
+    "параметры считаются для вещей в руках",
+  );
+  assert.match(sheet, /\{params\.length > 0 \? \(/, "строка параметров появляется только при числах");
+  assert.match(sheet, /\{params\.join\(" · "\)\}/, "параметры идут одной строкой через разделитель");
+  assert.match(sheet, /title=\{params\.join\(" · "\)\}/, "полный текст виден в подсказке при обрезке");
+  const paramsAt = sheet.indexOf("{params.length > 0");
+  const sourcesAt = sheet.indexOf("набор: {sources.join", paramsAt);
+  assert.ok(
+    paramsAt > 0 && sourcesAt > paramsAt,
+    "параметры стоят под названием, перед подписью стартового набора",
+  );
+});
+
+
 
 test("стол виден всегда, а правая панель идёт: музыка → персонажи → чат → ввод", () => {
   const room = read("components", "RoomScreen.tsx");

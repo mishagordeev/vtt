@@ -983,6 +983,37 @@ export function itemSlots(entry: InventoryItem): number {
   return def?.slots ?? 1;
 }
 
+/** Предел бонуса Ловкости к КБ — словами, как в описании доспеха в книге. */
+function maxDexLabel(maxDex: number | null | undefined): string | null {
+  if (maxDex === null) return "Лов без предела";
+  if (maxDex === undefined) return null;
+  if (maxDex === 0) return "Лов не добавляется";
+  return `Лов не выше +${maxDex}`;
+}
+
+/**
+ * Параметры предмета короткой строкой для листа: урон и тип урона оружия,
+ * КБ доспеха с пределом Ловкости, бонус щита к КБ.
+ *
+ * В каталоге эти числа видны, а в «В руках» их не было, хотя за столом нужны
+ * именно там: чтобы узнать урон меча или КБ доспеха, приходилось открывать
+ * каталог. Двуручность сюда не входит — она уже стоит рядом со слотами
+ * в первой строке. Пустой список — у предмета нет чисел (фонарь, верёвка, пайки).
+ */
+export function itemParams(def: ItemDef | undefined): string[] {
+  if (!def) return [];
+  const params: string[] = [];
+  if (def.damage) params.push(`урон ${def.damage}`);
+  if (def.damageType) params.push(def.damageType.toLowerCase());
+  if (def.ac !== undefined) params.push(`КБ ${def.ac}`);
+  if (def.kind === "armor") {
+    const dex = maxDexLabel(def.maxDex);
+    if (dex) params.push(dex);
+  }
+  if (def.shieldBonus) params.push(`+${def.shieldBonus} КБ`);
+  return params;
+}
+
 export function coinCount(inventory: InventoryItem[] | undefined): number {
   return (inventory ?? [])
     .filter((item) => findItem(item.name)?.kind === "coins")

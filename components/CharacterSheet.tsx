@@ -32,6 +32,7 @@ import {
   inventoryBlockReason,
   inventorySlots,
   isCoinItem,
+  itemParams,
   itemSlots,
   languageSlots,
   overloadedIds,
@@ -879,7 +880,7 @@ export function CharacterSheet({
         {location === "hands" ? (
           <p className="text-[10px] leading-snug text-zinc-600">
             1 оружие + щит, 2 одноручных или 1 двуручное. Доспех — один и не занимает руки.
-            Перетащите предмет сюда или в рюкзак.
+            Под названием видны урон, КБ и бонус щита. Перетащите предмет сюда или в рюкзак.
           </p>
         ) : (
           <p className="text-[10px] leading-snug text-zinc-600">
@@ -894,6 +895,8 @@ export function CharacterSheet({
               const def = findItem(item.name);
               const over = overloaded.has(item.id);
               const slots = itemSlots(item);
+              /** Урон меча, КБ доспеха и бонус щита — прямо в руках, без похода в каталог. */
+              const params = location === "hands" ? itemParams(def) : [];
               const target: ItemLocation = location === "hands" ? "backpack" : "hands";
               const reason = def
                 ? inventoryBlockReason(
@@ -934,6 +937,14 @@ export function CharacterSheet({
                         </span>
                       ) : null}
                     </span>
+                    {params.length > 0 ? (
+                      <span
+                        title={params.join(" · ")}
+                        className="block truncate font-mono text-[10px] text-emerald-200/80"
+                      >
+                        {params.join(" · ")}
+                      </span>
+                    ) : null}
                     {sources.length > 0 ? (
                       <span className="block truncate text-[9px] text-zinc-600">
                         набор: {sources.join(", ")}

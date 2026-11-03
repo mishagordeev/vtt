@@ -19,6 +19,7 @@ import {
   decodeMods,
   encodeMods,
   itemSlots,
+  itemParams,
   coinsAmount,
   derive,
   findItem,
@@ -512,5 +513,23 @@ test("стартовые монеты: максимальный модифика
   assert.equal(weak.die, 4);
   assert.equal(weak.coins, 40);
   assert.match(weak.formula, /считается за \+1/);
+});
+
+
+test("параметры снаряжения для листа: урон, КБ, предел Ловкости, щит", () => {
+  // Оружие: урон и тип урона — главные числа в руках.
+  assert.deepEqual(itemParams(findItem("Булава лёгкая")), ["урон 1d6", "дробящий"]);
+  // Двуручность не дублируется: она уже стоит рядом со слотами в первой строке.
+  assert.deepEqual(itemParams(findItem("Боевой посох")), ["урон 1d6", "дробящий"]);
+  // Доспех: КБ и предел бонуса Ловкости словами, как в описании в книге.
+  assert.deepEqual(itemParams(findItem("Кожаный доспех")), ["КБ 12", "Лов без предела"]);
+  assert.deepEqual(itemParams(findItem("Клепаная кожа")), ["КБ 13", "Лов не выше +3"]);
+  assert.deepEqual(itemParams(findItem("Полный рыцарский латный")), ["КБ 18", "Лов не добавляется"]);
+  // Щит: бонус к КБ.
+  assert.deepEqual(itemParams(findItem("Круглый пехотный щит")), ["+2 КБ"]);
+  // Снаряжение без чисел и неизвестный предмет — пусто, лишней строки на листе не будет.
+  assert.deepEqual(itemParams(findItem("Фонарь маячный")), []);
+  assert.deepEqual(itemParams(findItem("Сухие пайки (7 дней)")), []);
+  assert.deepEqual(itemParams(undefined), []);
 });
 
