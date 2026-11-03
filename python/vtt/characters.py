@@ -16,7 +16,11 @@ MAX_PORTRAIT = 280_000
 MAX_PORTRAIT_FULL = 560_000
 MAX_NAMES = 2
 KINDS = ("combat", "noncombat", "knowledge")
-LOCATIONS = ("hands", "backpack")
+LOCATIONS = ("hands", "backpack", "stash")
+# Тайники: не больше двенадцати вкладок, название короткое, описание — абзац.
+MAX_STASHES = 12
+MAX_STASH_NAME = 24
+MAX_STASH_NOTE = 400
 
 
 def _js_round(value):
@@ -88,6 +92,46 @@ def clean_list(value, allowed, limit):
         if len(result) >= limit:
             break
     return result
+
+
+def clean_stashes(value):
+    """Тайники листа: вкладки со своим названием и описанием (как cleanStashes).
+
+    Пустое название заменяется на «Тайник N», иначе вкладку не найти в строке.
+    """
+    if not isinstance(value, list):
+        return []
+    stashes = []
+    seen = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        stash_id = clean_text(raw.get("id"), 40)
+        if not stash_id or stash_id in seen:
+            continue
+        seen.add(stash_id)
+        stashes.append(
+            {
+                "id": stash_id,
+                "name": clean_text(raw.get("name"), MAX_STASH_NAME)
+                or "Тайник %d" % (len(stashes) + 1),
+                "note": clean_text(raw.get("note"), MAX_STASH_NOTE),
+            }
+        )
+        if len(stashes) >= MAX_STASHES:
+            break
+    return stashes
+
+
+def stash_id_for(stashes, wanted, location):
+    """Предмет идёт в тайник, только если такая вкладка есть; иначе — в рюкзак."""
+    if location != "stash":
+        return None
+    stash_id = wanted.strip() if isinstance(wanted, str) else ""
+    for stash in stashes:
+        if stash["id"] == stash_id:
+            return stash_id
+    return stashes[0]["id"] if stashes else None
 
 
 def coin_inventory(amounts=None):
@@ -210,6 +254,7 @@ def empty_draft():
         "flaws": [],
         "languages": [],
         "inventory": coin_inventory({"zm": DEFAULT_COINS}),
+        "stashes": [],
         "fields": fields,
     }
 
@@ -269,6 +314,7 @@ def draft_from_character(character):
 
     inventory = []
     coin_amounts = {}
+    stashes = clean_stashes(character.get("stashes"))
     origin = None
     for candidate in data.ORIGINS:
         if candidate["name"] == character.get("origin"):
@@ -285,11 +331,14 @@ def draft_from_character(character):
             continue
         sources = entry_sources(entry)
         location = entry.get("location") if entry.get("location") in LOCATIONS else "backpack"
+        stash_id = stash_id_for(stashes, entry.get("stash"), location)
         record = {
             "id": entry.get("id") or "itm-%d-%s" % (len(inventory), item["name"]),
             "name": item["name"],
-            "location": location,
+            "location": "stash" if stash_id else ("backpack" if location == "stash" else location),
         }
+        if stash_id:
+            record["stash"] = stash_id
         if sources:
             record["sources"] = sources
             record["source"] = sources[0]
@@ -317,7 +366,7 @@ def draft_from_character(character):
     merged = []
     for item in inventory:
         found = data.find_item(as_dict(item).get("name"))
-        if found and found.get("kind") == "coins":
+        if (found and found.get("kind") == "coins") or item.get("location") == "stash":
             merged.append(item)
             continue
         existing = None
@@ -379,6 +428,7 @@ def draft_from_character(character):
         "flaws": flaws,
         "languages": languages,
         "inventory": inventory,
+        "stashes": stashes,
         "fields": fields,
     }
 
@@ -406,7 +456,7 @@ def _merge_inventory(items):
     merged = []
     for item in items:
         found = data.find_item(as_dict(item).get("name"))
-        if found and found.get("kind") == "coins":
+        if (found and found.get("kind") == "coins") or item.get("location") == "stash":
             merged.append(item)
             continue
         existing = None
@@ -524,6 +574,7 @@ def normalize_draft(raw):
             break
 
     raw_inventory = as_list(raw.get("inventory"))
+    draft["stashes"] = clean_stashes(raw.get("stashes"))
     draft["inventory"] = []
     coin_amounts = {}
     has_coin_entry = False
@@ -540,12 +591,19 @@ def normalize_draft(raw):
             coin_amounts[coin["key"]] = coin_amounts.get(coin["key"], 0) + amount
             continue
         location = raw_entry.get("location") if raw_entry.get("location") in LOCATIONS else "backpack"
+        stash_id = stash_id_for(draft["stashes"], raw_entry.get("stash"), location)
         item_id = clean_text(raw_entry.get("id"), 60) or "itm-%d-%s" % (
             len(draft["inventory"]),
             item["name"],
         )
         sources = entry_sources(raw_entry)
-        record = {"id": item_id, "name": item["name"], "location": location}
+        record = {
+            "id": item_id,
+            "name": item["name"],
+            "location": "stash" if stash_id else ("backpack" if location == "stash" else location),
+        }
+        if stash_id:
+            record["stash"] = stash_id
         if sources:
             record["sources"] = sources
             record["source"] = sources[0]

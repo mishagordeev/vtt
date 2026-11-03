@@ -730,6 +730,7 @@ export async function createCharacter(
       flaws: draft.flaws,
       languages: draft.languages,
       inventory: draft.inventory,
+      stashes: draft.stashes,
       fields: draft.fields,
       createdAt: now,
       updatedAt: now,
@@ -792,6 +793,7 @@ export async function updateCharacter(
       resources,
       skills: Array.isArray(patch.skills) ? patch.skills : current.skills,
       inventory: Array.isArray(patch.inventory) ? patch.inventory : current.inventory,
+      stashes: Array.isArray(patch.stashes) ? patch.stashes : current.stashes,
       fields: { ...current.fields, ...asRecord(patch.fields) },
     });
     if (!normalized.name) throw new AppError(400, "Укажите имя персонажа");
@@ -821,6 +823,7 @@ export async function updateCharacter(
     character.resources = normalized.resources;
     character.skills = normalized.skills;
     character.inventory = normalized.inventory;
+    character.stashes = normalized.stashes;
     character.fields = normalized.fields;
     character.updatedAt = Date.now();
     touchPlayer(doc, actor);

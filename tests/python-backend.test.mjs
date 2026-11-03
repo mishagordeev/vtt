@@ -833,6 +833,12 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
       traits: [rules.traits[0], rules.traits[1], rules.traits[2]],
       flaws: [rules.flaws[0], rules.flaws[1]],
       languages: [rules.languages[0], "Выдуманный язык"],
+      stashes: [
+        { id: "s1", name: "  Сарай  ", note: "  Под сеном  " },
+        { id: "s1", name: "Дубль" },
+        { id: "s2", name: "" },
+        { id: "", name: "Без id" },
+      ],
       inventory: [
         { name: weapon.name, location: "hands", source: "Стражник" },
         { name: weapon.name, location: "backpack", source: "Наёмник" },
@@ -840,6 +846,8 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
         { name: shield.name, location: "hands" },
         { name: "Монеты", location: "backpack", qty: 7 },
         { name: "Такого предмета нет" },
+        { name: weapon.name, location: "stash", stash: "s1" },
+        { name: shield.name, location: "stash", stash: "нет такой" },
       ],
       fields: { notes: "  заметка  ", birth: "14.04", age: "33", ageMods: "dex+1", лишнее: "поле" },
       portrait: "data:image/png;base64,AAA",
@@ -867,6 +875,7 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
     "flaws",
     "languages",
     "inventory",
+    "stashes",
     "fields",
   ];
 

@@ -51,8 +51,17 @@ export interface Skill {
   source?: string;
 }
 
-/** Где лежит предмет: в руках (надет/взят) или в рюкзаке. */
-export type ItemLocation = "hands" | "backpack";
+/** Где лежит предмет: в руках (надет/взят), в рюкзаке или в тайнике. */
+export type ItemLocation = "hands" | "backpack" | "stash";
+
+/** Тайник: схрон вне рюкзака, его вещи не входят в переносимый груз. */
+export interface Stash {
+  id: string;
+  /** Короткое название вкладки. */
+  name: string;
+  /** Описание: где тайник и как до него добраться. */
+  note: string;
+}
 
 export interface InventoryItem {
   id: string;
@@ -64,6 +73,8 @@ export interface InventoryItem {
   source?: string;
   /** Все дары, которые дали предмет; используется для снятия навыка без дублей. */
   sources?: string[];
+  /** Вкладка тайника (id из `stashes`); только у предметов с location = "stash". */
+  stash?: string;
 }
 
 export interface Character {
@@ -87,6 +98,8 @@ export interface Character {
   flaws: string[];
   languages: string[];
   inventory: InventoryItem[];
+  /** Тайники листа: несколько вкладок. В старых комнатах поля нет. */
+  stashes?: Stash[];
   fields: Record<string, string>;
   createdAt: number;
   updatedAt: number;
@@ -105,6 +118,8 @@ export interface CharacterDraft {
   flaws: string[];
   languages: string[];
   inventory: InventoryItem[];
+  /** Тайники листа: вкладки со своим названием, описанием и вещами. */
+  stashes: Stash[];
   fields: Record<string, string>;
 }
 

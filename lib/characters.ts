@@ -14,17 +14,21 @@ import {
   findSkill,
   skillKind,
 } from "./rules.ts";
-import type { Character, CharacterDraft, InventoryItem, ItemLocation, ResourceState, Skill, SkillKind } from "./types";
+import type { Character, CharacterDraft, InventoryItem, ItemLocation, ResourceState, Skill, SkillKind, Stash } from "./types";
 
 const DEFAULT_COINS = 100;
 const KINDS: SkillKind[] = ["combat", "noncombat", "knowledge"];
-const LOCATIONS: ItemLocation[] = ["hands", "backpack"];
+const LOCATIONS: ItemLocation[] = ["hands", "backpack", "stash"];
 const MAX_PORTRAIT = 280_000;
 const MAX_PORTRAIT_FULL = 560_000;
 const MAX_NAMES = 2;
 /** Пределы листа по 1.3.1: не больше двух особенностей и двух изъянов. */
 export const MAX_TRAITS = 2;
 export const MAX_FLAWS = 2;
+/** Тайники: не больше двенадцати вкладок, название короткое, описание — абзац. */
+export const MAX_STASHES = 12;
+export const MAX_STASH_NAME = 24;
+export const MAX_STASH_NOTE = 400;
 const LANGUAGE_NAMES = new Set(LANGUAGES.map((language) => language.name));
 const KIT_ITEM_NAMES = new Set(Object.values(STARTER_KITS).flat());
 
@@ -78,6 +82,37 @@ function cleanList(value: unknown, allowed: string[], max: number): string[] {
   return list;
 }
 
+/**
+ * Тайники листа: вкладки со своим названием и описанием. Пустое название
+ * заменяется на «Тайник N», иначе вкладку не найти в строке.
+ */
+function cleanStashes(value: unknown): Stash[] {
+  if (!Array.isArray(value)) return [];
+  const stashes: Stash[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const raw = entry as Partial<Stash>;
+    const id = cleanText(raw.id, 40);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    stashes.push({
+      id,
+      name: cleanText(raw.name, MAX_STASH_NAME) || `Тайник ${stashes.length + 1}`,
+      note: cleanText(raw.note, MAX_STASH_NOTE),
+    });
+    if (stashes.length >= MAX_STASHES) break;
+  }
+  return stashes;
+}
+
+/** Предмет идёт в тайник, только если такая вкладка есть; иначе остаётся в рюкзаке. */
+function stashIdFor(stashes: Stash[], wanted: unknown, location: ItemLocation): string | null {
+  if (location !== "stash") return null;
+  const id = typeof wanted === "string" ? wanted.trim() : "";
+  return stashes.find((stash) => stash.id === id)?.id ?? stashes[0]?.id ?? null;
+}
+
 function coinInventory(amounts: Record<string, number> = {}): InventoryItem[] {
   return COIN_TYPES.map((coin) => ({
     id: `itm-coin-${coin.key}`,
@@ -125,6 +160,7 @@ export function emptyDraft(): CharacterDraft {
     flaws: [],
     languages: [],
     inventory: coinInventory({ zm: DEFAULT_COINS }),
+    stashes: [],
     fields,
   };
 }
@@ -152,6 +188,7 @@ export function draftFromCharacter(character: Character): CharacterDraft {
   }));
 
   const inventory: InventoryItem[] = [];
+  const stashes = cleanStashes(character.stashes);
   const coinAmounts: Record<string, number> = {};
   const origin = ORIGINS.find((entry) => entry.name === character.origin);
   for (const entry of character.inventory ?? []) {
@@ -163,10 +200,13 @@ export function draftFromCharacter(character: Character): CharacterDraft {
       continue;
     }
     const sources = entrySources(entry);
+    const location = LOCATIONS.includes(entry.location) ? entry.location : "backpack";
+    const stashId = stashIdFor(stashes, entry.stash, location);
     inventory.push({
       id: entry.id || `itm-${inventory.length}-${item.name}`,
       name: item.name,
-      location: LOCATIONS.includes(entry.location) ? entry.location : "backpack",
+      location: stashId ? "stash" : location === "stash" ? "backpack" : location,
+      ...(stashId ? { stash: stashId } : {}),
       ...(sources.length > 0 ? { sources, source: sources[0] } : {}),
     });
   }
@@ -193,7 +233,7 @@ export function draftFromCharacter(character: Character): CharacterDraft {
 
   const mergedInventory: InventoryItem[] = [];
   for (const item of inventory) {
-    if (findItem(item.name)?.kind === "coins") {
+    if (findItem(item.name)?.kind === "coins" || item.location === "stash") {
       mergedInventory.push(item);
       continue;
     }
@@ -245,6 +285,7 @@ export function draftFromCharacter(character: Character): CharacterDraft {
     flaws,
     languages,
     inventory,
+    stashes,
     fields,
   };
 }
@@ -333,6 +374,7 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   }
 
   const rawInventory = Array.isArray(raw.inventory) ? raw.inventory : [];
+  draft.stashes = cleanStashes(raw.stashes);
   draft.inventory = [];
   const coinAmounts: Record<string, number> = {};
   let hasCoinEntry = false;
@@ -350,12 +392,14 @@ export function normalizeDraft(input: unknown): CharacterDraft {
     const location = LOCATIONS.includes((entry as { location?: ItemLocation }).location as ItemLocation)
       ? (entry as { location: ItemLocation }).location
       : "backpack";
+    const stashId = stashIdFor(draft.stashes, (entry as { stash?: unknown }).stash, location);
     const id = cleanText((entry as { id?: unknown }).id, 60) || `itm-${draft.inventory.length}-${item.name}`;
     const sources = entrySources(entry as Partial<InventoryItem>);
     draft.inventory.push({
       id,
       name: item.name,
-      location,
+      location: stashId ? "stash" : location === "stash" ? "backpack" : location,
+      ...(stashId ? { stash: stashId } : {}),
       ...(sources.length > 0 ? { sources, source: sources[0] } : {}),
     });
     if (draft.inventory.length >= 60) break;
@@ -370,7 +414,7 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   // только записи с источниками, ручные дубликаты не трогаем.
   const merged: InventoryItem[] = [];
   for (const item of draft.inventory) {
-    if (findItem(item.name)?.kind === "coins") {
+    if (findItem(item.name)?.kind === "coins" || item.location === "stash") {
       merged.push(item);
       continue;
     }

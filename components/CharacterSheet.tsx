@@ -48,6 +48,7 @@ import {
   skillSlotBudget,
   skillsSlotUsage,
   starterKit,
+  stashSlots,
   zeroSlotCount,
   type AbilityMethod,
   type AgeRoll,
@@ -57,8 +58,22 @@ import {
   type OriginDef,
   type SkillDef,
 } from "@/lib/rules";
-import { MAX_FLAWS, MAX_TRAITS, requiredFlaws } from "@/lib/characters";
-import type { CharacterDraft, InventoryItem, ItemLocation, Skill, SkillKind } from "@/lib/types";
+import {
+  MAX_FLAWS,
+  MAX_STASHES,
+  MAX_STASH_NAME,
+  MAX_STASH_NOTE,
+  MAX_TRAITS,
+  requiredFlaws,
+} from "@/lib/characters";
+import type {
+  CharacterDraft,
+  InventoryItem,
+  ItemLocation,
+  Skill,
+  SkillKind,
+  Stash,
+} from "@/lib/types";
 import type { ExportFormat } from "@/lib/characterExport";
 import { PortraitCrop } from "./PortraitCrop";
 import { PortraitViewer } from "./PortraitViewer";
@@ -348,6 +363,130 @@ function NatalCard({ birth, editing, onChange }: NatalCardProps) {
 
 
 
+interface InventoryListProps {
+  items: InventoryItem[];
+  /** Где лежат вещи: в руках — вторая строка с числами, в тайнике — без. */
+  location: ItemLocation;
+  /** Куда можно переложить: у тайника обе цели, у рук и рюкзака — одна. */
+  targets: { location: ItemLocation; label: string }[];
+  /** Весь инвентарь: по нему считаются причины отказа при переносе. */
+  inventory: InventoryItem[];
+  stats: Record<string, number>;
+  overloaded: Set<string>;
+  editing: boolean;
+  onMove: (id: string, location: ItemLocation) => void;
+  onRemove: (id: string) => void;
+}
+
+/** Список вещей одного места: руки, рюкзак или вкладка тайника. */
+function InventoryList({
+  items,
+  location,
+  targets,
+  inventory,
+  stats,
+  overloaded,
+  editing,
+  onMove,
+  onRemove,
+}: InventoryListProps) {
+  if (items.length === 0) {
+    return <p className="py-2 text-[11px] text-zinc-600">Пусто.</p>;
+  }
+  return (
+    <ul className="space-y-1">
+      {items.map((item) => {
+        const def = findItem(item.name);
+        const over = overloaded.has(item.id);
+        const slots = itemSlots(item);
+        /** Урон меча, КБ доспеха и бонус щита — прямо в руках, без похода в каталог. */
+        const params = location === "hands" ? itemParams(def) : [];
+        const rest = inventory.filter((entry) => entry.id !== item.id);
+        const reasons = targets.map((target) =>
+          def ? inventoryBlockReason(rest, stats, def, target.location) : "Неизвестный предмет",
+        );
+        const available = reasons.some((reason) => !reason);
+        const sources = item.sources?.length ? item.sources : item.source ? [item.source] : [];
+        return (
+          <li
+            key={item.id}
+            draggable={editing}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("text/plain", item.id);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            title={
+              over
+                ? "Перегруз: не хватает слотов Силы"
+                : available
+                  ? "Перетащите в другую колонку"
+                  : reasons[0] ?? ""
+            }
+            className={`flex items-center gap-1.5 rounded border px-2 py-1 ${
+              editing ? "cursor-grab active:cursor-grabbing" : ""
+            } ${
+              over
+                ? "border-rose-500/60 bg-rose-500/10"
+                : "border-zinc-800 bg-zinc-950/50"
+            }`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className={`block truncate text-xs ${over ? "text-rose-200" : "text-zinc-200"}`}>
+                {item.name}
+                <span className="ml-1 font-mono text-[10px] text-zinc-500">
+                  {slots} сл.
+                  {def?.twoHanded ? " · двуруч." : ""}
+                </span>
+                {over ? (
+                  <span className="ml-1 rounded bg-rose-500/20 px-1 text-[9px] uppercase tracking-wide text-rose-300">
+                    перегруз
+                  </span>
+                ) : null}
+              </span>
+              {params.length > 0 ? (
+                <span
+                  title={params.join(" · ")}
+                  className="block truncate font-mono text-[10px] text-emerald-200/80"
+                >
+                  {params.join(" · ")}
+                </span>
+              ) : null}
+              {sources.length > 0 ? (
+                <span className="block truncate text-[9px] text-zinc-600">
+                  набор: {sources.join(", ")}
+                </span>
+              ) : null}
+            </span>
+            {editing ? (
+              <>
+                {targets.map((target, index) => (
+                  <button
+                    key={target.location}
+                    type="button"
+                    onClick={() => onMove(item.id, target.location)}
+                    disabled={Boolean(reasons[index])}
+                    title={reasons[index] ?? target.label}
+                    className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-emerald-200 disabled:opacity-30"
+                  >
+                    {target.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => onRemove(item.id)}
+                  className="text-zinc-500 hover:text-rose-400"
+                >
+                  ×
+                </button>
+              </>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function CharacterSheet({
   draft,
   mode,
@@ -378,6 +517,8 @@ export function CharacterSheet({
   const [customSkill, setCustomSkill] = useState("");
   const [itemQuery, setItemQuery] = useState("");
   const [itemKind, setItemKind] = useState<ItemKind | "all">("all");
+  /** Открытая вкладка тайника: id схрона, не индекс — при удалении не съезжает. */
+  const [stashTab, setStashTab] = useState("");
   const [notice, setNotice] = useState("");
   const [method, setMethod] = useState<AbilityMethod>("grim");
   const [pool, setPool] = useState<number[] | null>(null);
@@ -423,6 +564,9 @@ export function CharacterSheet({
   /** Возраст из поля листа: 0 — не указан. */
   const ageValue = Math.max(0, Math.min(AGE_MAX, Number(draft.fields.age) || 0));
   const overloaded = overloadedIds(draft.inventory, draft.stats);
+  /** Вкладки тайников: активная берётся по id, а после удаления — первая из оставшихся. */
+  const stashes = draft.stashes ?? [];
+  const activeStash = stashes.find((entry) => entry.id === stashTab) ?? stashes[0] ?? null;
   const origin = findOrigin(draft.origin);
   /**
    * На основном экране у героя видна только его карточка народа: шесть карточек
@@ -709,8 +853,16 @@ export function CharacterSheet({
     patch({ origin: nextName, stats, skills, inventory, languages });
   }
 
-  function addItem(def: ItemDef, location: ItemLocation) {
+  /**
+   * Добавление из каталога. Вещь в тайник кладём только когда есть вкладка:
+   * иначе ей негде жить, и предмет молча оказался бы в рюкзаке.
+   */
+  function addItem(def: ItemDef, location: ItemLocation, stashId?: string) {
     if (!editing) return;
+    if (location === "stash" && !stashId) {
+      setNotice("Сначала заведите тайник: кнопка «+ тайник» в разделе «Тайник».");
+      return;
+    }
     const reason = inventoryBlockReason(draft.inventory, draft.stats, def, location);
     if (reason) {
       setNotice(reason);
@@ -720,15 +872,20 @@ export function CharacterSheet({
       id: `itm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: def.name,
       location,
+      ...(location === "stash" && stashId ? { stash: stashId } : {}),
     };
     patch({ inventory: [...draft.inventory, item] });
   }
 
-  function moveItem(id: string, location: ItemLocation) {
+  function moveItem(id: string, location: ItemLocation, stashId?: string) {
     if (!editing) return;
     const item = draft.inventory.find((entry) => entry.id === id);
     const def = item ? findItem(item.name) : undefined;
     if (!item || !def) return;
+    if (location === "stash" && !stashId) {
+      setNotice("Сначала заведите тайник: кнопка «+ тайник» в разделе «Тайник».");
+      return;
+    }
     if (def.kind === "coins" && location !== "backpack") {
       setNotice("Монеты лежат только в рюкзаке.");
       return;
@@ -744,7 +901,14 @@ export function CharacterSheet({
       return;
     }
     patch({
-      inventory: draft.inventory.map((entry) => (entry.id === id ? { ...entry, location } : entry)),
+      inventory: draft.inventory.map((entry) => {
+        if (entry.id !== id) return entry;
+        const next: InventoryItem = { ...entry, location };
+        // Вкладка тайника живёт только у вещей в тайнике: из рюкзака или рук ключ убираем.
+        if (location === "stash" && stashId) next.stash = stashId;
+        else delete next.stash;
+        return next;
+      }),
     });
   }
 
@@ -756,6 +920,55 @@ export function CharacterSheet({
       return;
     }
     patch({ inventory: draft.inventory.filter((entry) => entry.id !== id) });
+  }
+
+  /** Новая вкладка тайника: имя по порядку, описание заполняет владелец. */
+  function addStash() {
+    if (!editing) return;
+    if (stashes.length >= MAX_STASHES) {
+      setNotice(`Тайников не больше ${MAX_STASHES}.`);
+      return;
+    }
+    const id = `stash-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const stash: Stash = { id, name: `Тайник ${stashes.length + 1}`, note: "" };
+    setStashTab(id);
+    patch({ stashes: [...stashes, stash] });
+  }
+
+  /** Название и описание вкладки: длину держат maxLength на полях. */
+  function updateStash(id: string, values: Partial<Pick<Stash, "name" | "note">>) {
+    if (!editing) return;
+    patch({ stashes: stashes.map((entry) => (entry.id === id ? { ...entry, ...values } : entry)) });
+  }
+
+  /** Вкладку убираем только с подтверждением: её вещи возвращаются в рюкзак. */
+  function removeStash(id: string) {
+    if (!editing) return;
+    const stash = stashes.find((entry) => entry.id === id);
+    if (!stash) return;
+    const title = stash.name || "Без названия";
+    const items = draft.inventory.filter((item) => item.location === "stash" && item.stash === id);
+    const question = items.length
+      ? `Убрать тайник «${title}»? ${items.length} вещ. вернутся в рюкзак.`
+      : `Убрать тайник «${title}»?`;
+    if (!window.confirm(question)) return;
+    const inventory = draft.inventory.map((item) => {
+      if (item.location !== "stash" || item.stash !== id) return item;
+      const next: InventoryItem = { ...item, location: "backpack" };
+      delete next.stash;
+      return next;
+    });
+    // Перенос не запрещаем: вещи уже были у героя, а перегруз лист покажет сам.
+    const over = Math.round((inventorySlots(inventory) - carryCapacity(draft.stats)) * 100) / 100;
+    setStashTab("");
+    patch({ stashes: stashes.filter((entry) => entry.id !== id), inventory });
+    setNotice(
+      items.length === 0
+        ? "Тайник убран."
+        : over > 0
+          ? `Тайник убран, вещи в рюкзаке: груз больше нормы на ${over} сл.`
+          : "Тайник убран, вещи вернулись в рюкзак.",
+    );
   }
 
   function setCoin(name: string, value: number) {
@@ -884,101 +1097,162 @@ export function CharacterSheet({
           </p>
         ) : (
           <p className="text-[10px] leading-snug text-zinc-600">
-            Перетащите предмет в «В руках» или обратно.
+            Перетащите предмет в «В руках», в тайник или обратно.
           </p>
         )}
-        {items.length === 0 ? (
-          <p className="py-2 text-[11px] text-zinc-600">Пусто.</p>
-        ) : (
-          <ul className="space-y-1">
-            {items.map((item) => {
-              const def = findItem(item.name);
-              const over = overloaded.has(item.id);
-              const slots = itemSlots(item);
-              /** Урон меча, КБ доспеха и бонус щита — прямо в руках, без похода в каталог. */
-              const params = location === "hands" ? itemParams(def) : [];
-              const target: ItemLocation = location === "hands" ? "backpack" : "hands";
-              const reason = def
-                ? inventoryBlockReason(
-                    draft.inventory.filter((entry) => entry.id !== item.id),
-                    draft.stats,
-                    def,
-                    target,
-                  )
-                : "Неизвестный предмет";
-              const sources = item.sources?.length ? item.sources : item.source ? [item.source] : [];
-              return (
-                <li
-                  key={item.id}
-                  draggable={editing}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("text/plain", item.id);
-                    event.dataTransfer.effectAllowed = "move";
-                  }}
-                  title={over ? "Перегруз: не хватает слотов Силы" : reason ?? "Перетащите в другую колонку"}
-                  className={`flex items-center gap-1.5 rounded border px-2 py-1 ${
-                    editing ? "cursor-grab active:cursor-grabbing" : ""
-                  } ${
-                    over
-                      ? "border-rose-500/60 bg-rose-500/10"
-                      : "border-zinc-800 bg-zinc-950/50"
-                  }`}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-xs ${over ? "text-rose-200" : "text-zinc-200"}`}>
-                      {item.name}
-                      <span className="ml-1 font-mono text-[10px] text-zinc-500">
-                        {slots} сл.
-                        {def?.twoHanded ? " · двуруч." : ""}
-                      </span>
-                      {over ? (
-                        <span className="ml-1 rounded bg-rose-500/20 px-1 text-[9px] uppercase tracking-wide text-rose-300">
-                          перегруз
-                        </span>
-                      ) : null}
-                    </span>
-                    {params.length > 0 ? (
-                      <span
-                        title={params.join(" · ")}
-                        className="block truncate font-mono text-[10px] text-emerald-200/80"
-                      >
-                        {params.join(" · ")}
-                      </span>
-                    ) : null}
-                    {sources.length > 0 ? (
-                      <span className="block truncate text-[9px] text-zinc-600">
-                        набор: {sources.join(", ")}
-                      </span>
-                    ) : null}
-                  </span>
-                  {editing ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => moveItem(item.id, target)}
-                        disabled={Boolean(reason)}
-                        className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-emerald-200 disabled:opacity-30"
-                      >
-                        {location === "hands" ? "В рюкзак" : "В руки"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.id)}
-                        className="text-zinc-500 hover:text-rose-400"
-                      >
-                        ×
-                      </button>
-                    </>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <InventoryList
+          items={items}
+          location={location}
+          targets={
+            location === "hands"
+              ? [{ location: "backpack", label: "В рюкзак" }]
+              : [{ location: "hands", label: "В руки" }]
+          }
+          inventory={draft.inventory}
+          stats={draft.stats}
+          overloaded={overloaded}
+          editing={editing}
+          onMove={(id, target) => moveItem(id, target)}
+          onRemove={removeItem}
+        />
       </section>
     );
   }
 
+
+  /**
+   * Тайник — склад вне рюкзака. Вещи в нём не входят в переносимый груз
+   * (`inventorySlots` их не видит), поэтому у каждого схрона своя вкладка,
+   * короткое название и описание, а слоты показываем только для справки.
+   */
+  function renderStashes() {
+    const items = activeStash
+      ? draft.inventory.filter(
+          (item) => item.location === "stash" && item.stash === activeStash.id && !isCoinItem(item),
+        )
+      : [];
+    return (
+      <section
+        className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2"
+        onDragOver={(event) => {
+          if (editing && activeStash) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!editing || !activeStash) return;
+          event.preventDefault();
+          const id = event.dataTransfer.getData("text/plain");
+          if (id) moveItem(id, "stash", activeStash.id);
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] uppercase tracking-wide text-zinc-500">Тайник</h3>
+          <span className="font-mono text-[10px] text-zinc-600">
+            {activeStash
+              ? `${stashSlots(draft.inventory, activeStash.id)} сл. · вне груза`
+              : "нет тайников"}
+          </span>
+        </div>
+        <p className="text-[10px] leading-snug text-zinc-600">
+          Схрон вне рюкзака: вещи здесь не входят в переносимый вес и не занимают руки.
+          Вкладок может быть несколько, у каждой своё название и описание.
+        </p>
+        <div role="tablist" aria-label="Тайники" className="flex flex-wrap items-center gap-1">
+          {stashes.map((stash) => (
+            <button
+              key={stash.id}
+              type="button"
+              role="tab"
+              aria-selected={activeStash?.id === stash.id}
+              onClick={() => setStashTab(stash.id)}
+              className={`rounded border px-2 py-0.5 text-[10px] ${
+                activeStash?.id === stash.id
+                  ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200"
+                  : "border-zinc-700 text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              {stash.name || "Без названия"}
+            </button>
+          ))}
+          {editing ? (
+            <button
+              type="button"
+              onClick={addStash}
+              disabled={stashes.length >= MAX_STASHES}
+              title={
+                stashes.length >= MAX_STASHES
+                  ? `Тайников не больше ${MAX_STASHES}`
+                  : "Завести ещё один тайник"
+              }
+              className="rounded border border-dashed border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400/60 hover:text-emerald-200 disabled:opacity-30"
+            >
+              + тайник
+            </button>
+          ) : null}
+        </div>
+        {activeStash ? (
+          <div className="space-y-1">
+            {editing ? (
+              <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-1.5">
+                <input
+                  value={activeStash.name}
+                  maxLength={MAX_STASH_NAME}
+                  placeholder="Короткое название"
+                  onChange={(event) => updateStash(activeStash.id, { name: event.target.value })}
+                  className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px] text-zinc-100 outline-none focus:border-emerald-400/60"
+                />
+                <textarea
+                  value={activeStash.note}
+                  maxLength={MAX_STASH_NOTE}
+                  rows={2}
+                  placeholder="Где он и как до него добраться"
+                  onChange={(event) => updateStash(activeStash.id, { note: event.target.value })}
+                  className="scroll-thin w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px] leading-snug text-zinc-100 outline-none focus:border-emerald-400/60"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[9px] text-zinc-600">
+                    {activeStash.note.length}/{MAX_STASH_NOTE}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeStash(activeStash.id)}
+                    className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:border-rose-400/60 hover:text-rose-300"
+                  >
+                    Убрать тайник
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-2 py-1">
+                <p className="text-xs text-zinc-200">{activeStash.name || "Без названия"}</p>
+                <p className="text-[10px] leading-snug text-zinc-500">
+                  {activeStash.note || "Описания нет."}
+                </p>
+              </div>
+            )}
+            <InventoryList
+              items={items}
+              location="stash"
+              targets={[
+                { location: "hands", label: "В руки" },
+                { location: "backpack", label: "В рюкзак" },
+              ]}
+              inventory={draft.inventory}
+              stats={draft.stats}
+              overloaded={overloaded}
+              editing={editing}
+              onMove={(id, target) => moveItem(id, target)}
+              onRemove={removeItem}
+            />
+          </div>
+        ) : (
+          <p className="py-2 text-[11px] text-zinc-600">
+            Тайников пока нет.{" "}
+            {editing ? "Нажмите «+ тайник», чтобы завести первый." : "Их заводит владелец листа."}
+          </p>
+        )}
+      </section>
+    );
+  }
 
   function renderCoins() {
     const coinSlotUsage = coinsInventorySlots(draft.inventory);
@@ -1664,6 +1938,11 @@ export function CharacterSheet({
                     в руках: {hands}/2 · 0 слотов: {zeroSlotCount(draft.inventory)}/4
                     {used > capacity ? " · перегруз" : ""}
                   </p>
+                  {stashes.length > 0 ? (
+                    <p className="text-[10px] leading-tight text-zinc-600">
+                      в тайниках: {stashSlots(draft.inventory)} сл. — в груз не входят
+                    </p>
+                  ) : null}
                 </div>
                 <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-600">
@@ -2333,6 +2612,7 @@ export function CharacterSheet({
               <div className="space-y-3">
                 {renderInventory("hands", "В руках")}
                 {renderInventory("backpack", "Рюкзак")}
+                {renderStashes()}
               </div>
               <section className="space-y-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -2412,6 +2692,16 @@ export function CharacterSheet({
                             >
                               В рюкзак
                             </button>
+                            {activeStash ? (
+                              <button
+                                type="button"
+                                onClick={() => addItem(item, "stash", activeStash.id)}
+                                title={`Добавить в тайник «${activeStash.name || "Без названия"}»`}
+                                className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:text-emerald-200"
+                              >
+                                В тайник
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

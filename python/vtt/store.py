@@ -644,6 +644,7 @@ def create_character(code, raw_owner, raw_draft):
             "flaws": draft["flaws"],
             "languages": draft["languages"],
             "inventory": draft["inventory"],
+            "stashes": draft["stashes"],
             "fields": draft["fields"],
             "createdAt": now,
             "updatedAt": now,
@@ -719,6 +720,7 @@ def update_character(code, character_id, raw_actor, raw_patch):
                 "resources": resources,
                 "skills": list_or("skills", current["skills"]),
                 "inventory": list_or("inventory", current["inventory"]),
+                "stashes": list_or("stashes", current["stashes"]),
                 "fields": _merged(current["fields"], patch.get("fields")),
             }
         )
@@ -749,6 +751,7 @@ def update_character(code, character_id, raw_actor, raw_patch):
             "resources",
             "skills",
             "inventory",
+            "stashes",
             "fields",
         ):
             character[key] = normalized[key]

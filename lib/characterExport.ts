@@ -7,9 +7,10 @@ import {
   findSkill,
   inventorySlots,
   languageLabel,
+  stashSlots,
 } from "./rules";
 import { SKILL_NOTES } from "./notes";
-import type { Character } from "./types";
+import type { Character, InventoryItem } from "./types";
 
 const KIND_LABEL: Record<string, string> = {
   combat: "боевой",
@@ -130,19 +131,48 @@ export function characterToHtml(character: Character): string {
       ? `<p class="chips">${items.map((item) => `<span>${esc(item)}</span>`).join("")}</p>`
       : `<p class="muted">${esc(empty)}</p>`;
 
+  /**
+   * Где лежит вещь. У тайника в подписи стоит его название: в печатной версии
+   * иначе не понять, в каком из схронов искать.
+   */
+  const stashes = character.stashes ?? [];
+  const stashName = (id?: string) => stashes.find((stash) => stash.id === id)?.name ?? "";
+  const placeLabel = (item: InventoryItem): string => {
+    if (item.location === "stash") {
+      const name = stashName(item.stash);
+      return name ? `в тайнике «${name}»` : "в тайнике";
+    }
+    return item.location === "hands" ? "в руках" : "в рюкзаке";
+  };
+
   const inventoryHtml = (character.inventory ?? []).length
     ? `<table><thead><tr><th>Предмет</th><th>Где</th><th>Кол-во</th></tr></thead><tbody>
         ${(character.inventory ?? [])
           .map(
             (item) => `<tr><td>${esc(item.name)}</td>
-              <td>${item.location === "hands" ? "в руках" : "в рюкзаке"}</td>
+              <td>${esc(placeLabel(item))}</td>
               <td>${esc(item.qty ?? 1)}</td></tr>`,
           )
           .join("")}
       </tbody></table>
       <p class="muted">Слоты: ${inventorySlots(character.inventory)} из ${carryCapacity(stats)} ·
-        монеты: ${coinsGoldValue(character.inventory)} зм</p>`
+        монеты: ${coinsGoldValue(character.inventory)} зм${
+          stashes.length
+            ? ` · в тайниках: ${stashSlots(character.inventory)} сл. (в груз не входят)`
+            : ""
+        }</p>`
     : `<p class="muted">Рюкзак пуст.</p>`;
+
+  const stashesHtml = stashes.length
+    ? `<h2>Тайники</h2>
+      ${stashes
+        .map(
+          (stash) => `<div class="field"><span class="cell-label">${esc(stash.name || "Без названия")}</span>
+            <p>${esc(stash.note || "Описания нет.").replace(/\n/g, "<br>")}</p></div>`,
+        )
+        .join("")}
+      <p class="muted">Схроны вне рюкзака: их вещи не входят в переносимый груз и не занимают руки.</p>`
+    : "";
 
   const fieldsHtml = FIELDS.filter((field) => (character.fields?.[field.key] ?? "").trim())
     .map(
@@ -227,6 +257,8 @@ export function characterToHtml(character: Character): string {
 
   <h2>Снаряжение</h2>
   ${inventoryHtml}
+
+  ${stashesHtml}
 
   <h2>Заметки</h2>
   ${fieldsHtml || `<p class="muted">Пусто.</p>`}

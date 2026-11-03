@@ -205,6 +205,52 @@ test("параметры снаряжения в руках: урон, КБ и �
 
 
 
+test("тайник: вкладки с названием и описанием, вещи вне переносимого груза", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  // Вкладки: открытая хранится по id, поэтому удаление соседней не съезжает.
+  assert.match(
+    sheet,
+    /const \[stashTab, setStashTab\] = useState\(""\)/,
+    "открытая вкладка тайника живёт в состоянии",
+  );
+  assert.match(
+    sheet,
+    /const activeStash = stashes\.find\(\(entry\) => entry\.id === stashTab\) \?\? stashes\[0\] \?\? null/,
+    "активная вкладка ищется по id",
+  );
+  assert.match(sheet, /role="tablist" aria-label="Тайники"/, "вкладки тайников — настоящий tablist");
+  assert.match(sheet, /role="tab"/, "каждый тайник — отдельная вкладка");
+  assert.match(sheet, /\+\s*тайник/, "новый тайник заводится кнопкой");
+  // У каждого тайника короткое название и описание с пределами из lib/characters.ts.
+  assert.match(sheet, /maxLength=\{MAX_STASH_NAME\}/, "название ограничено по длине");
+  assert.match(sheet, /maxLength=\{MAX_STASH_NOTE\}/, "описание ограничено по длине");
+  assert.match(
+    sheet,
+    /placeholder="Где он и как до него добраться"/,
+    "подсказка объясняет, что писать в описании",
+  );
+  // Вещи ходят в тайник и обратно: перетаскиванием, кнопками и из каталога.
+  assert.match(sheet, /moveItem\(id, "stash", activeStash\.id\)/, "перетаскивание кладёт вещь в тайник");
+  assert.match(sheet, /addItem\(item, "stash", activeStash\.id\)/, "из каталога вещь идёт в открытый тайник");
+  assert.match(
+    sheet,
+    /\{ location: "hands", label: "В руки" \},\s*\n\s*\{ location: "backpack", label: "В рюкзак" \}/,
+    "из тайника вещь забирают и в руки, и в рюкзак",
+  );
+  // Слоты тайника считаются отдельно от переносимого груза.
+  assert.match(sheet, /stashSlots\(draft\.inventory, activeStash\.id\)/, "слоты вкладки видны в её шапке");
+  assert.match(
+    sheet,
+    /в тайниках: \{stashSlots\(draft\.inventory\)\} сл\. — в груз не входят/,
+    "блок груза напоминает, что тайники не считаются",
+  );
+  // Печатная версия листа знает про тайники.
+  const exportSource = read("lib", "characterExport.ts");
+  assert.match(exportSource, /<h2>Тайники<\/h2>/, "в печатном листе есть раздел тайников");
+  assert.match(exportSource, /в тайнике «\$\{name\}»/, "в колонке «Где» видно название тайника");
+});
+
+
 test("стол виден всегда, а правая панель идёт: музыка → персонажи → чат → ввод", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.ok(!/const TABS|setTab\(|tab === /.test(room), "вкладок стола больше нет");

@@ -40,6 +40,7 @@ import {
   shiftStats,
   skillSlotBudget,
   skillsSlotUsage,
+  stashSlots,
   zeroSlotCount,
 } from "../lib/rules.ts";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "../lib/notes.ts";
@@ -419,6 +420,38 @@ test("вес без слотов: мелочь занимает дробные �
   const over = overloadedIds(heavy, stats);
   assert.ok(over.has("b"));
   assert.ok(!over.has("a"));
+});
+
+
+test("тайник: его вещи не входят в переносимый груз", () => {
+  const stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  const chain = findItem("Кольчужная рубаха");
+  const sword = findItem("Короткий меч");
+  const chalk = findItem("Мел (коробок)");
+  const coins = findItem("Золотые денарии");
+  assert.ok(chain && sword && chalk && coins);
+
+  const inventory = [
+    { id: "a", name: chain.name, location: "stash", stash: "s1" },
+    { id: "b", name: sword.name, location: "stash", stash: "s1" },
+    { id: "c", name: chalk.name, location: "stash", stash: "s2" },
+    { id: "d", name: chalk.name, location: "backpack" },
+  ];
+  const round = (value) => Math.round(value * 100) / 100;
+  // Схрон — склад вне рюкзака: в груз идёт только рюкзак.
+  assert.equal(inventorySlots(inventory), chalk.slots, "вещи тайника в переносимый вес не попадают");
+  assert.equal(round(stashSlots(inventory)), round(chain.slots + sword.slots + chalk.slots));
+  assert.equal(round(stashSlots(inventory, "s1")), round(chain.slots + sword.slots), "слоты считаются по вкладке");
+  assert.equal(stashSlots(inventory, "s2"), chalk.slots);
+  assert.equal(stashSlots(inventory, "нет такого"), 0);
+  assert.equal(overloadedIds(inventory, stats).size, 0, "тайник не создаёт перегруз");
+
+  // Слоты, руки и правило четырёх предметов на схрон не действуют.
+  assert.equal(inventoryBlockReason(inventory, stats, sword, "stash"), null);
+  const heavy = [...inventory, { id: "e", name: chain.name, location: "stash", stash: "s1" }];
+  assert.equal(inventoryBlockReason(heavy, stats, chain, "stash"), null);
+  // Монеты по-прежнему живут только в рюкзаке.
+  assert.match(inventoryBlockReason(inventory, stats, coins, "stash") ?? "", /только в рюкзаке/);
 });
 
 

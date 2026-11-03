@@ -1023,7 +1023,7 @@ export function coinCount(inventory: InventoryItem[] | undefined): number {
 /** Сколько слотов занимают все монеты инвентаря с учётом металла. */
 export function coinsInventorySlots(inventory: InventoryItem[] | undefined): number {
   const slots = (inventory ?? [])
-    .filter((item) => findItem(item.name)?.kind === "coins")
+    .filter((item) => item.location !== "stash" && findItem(item.name)?.kind === "coins")
     .reduce((sum, item) => sum + coinSlotsFor(item.name, Number(item.qty) || 0), 0);
   return Math.round(slots * 100) / 100;
 }
@@ -1045,14 +1045,31 @@ export function coinsAmount(inventory: InventoryItem[] | undefined): number {
 export function inventorySlots(inventory: InventoryItem[] | undefined): number {
   const list = inventory ?? [];
   const nonCoins = list
-    .filter((item) => findItem(item.name)?.kind !== "coins")
+    .filter((item) => item.location !== "stash" && findItem(item.name)?.kind !== "coins")
     .reduce((sum, item) => sum + itemSlots(item), 0);
   return Math.round((nonCoins + coinsInventorySlots(list)) * 100) / 100;
+}
+
+/**
+ * Слоты одного тайника. Считаются только для справки: в переносимый груз
+ * вещи из тайника не входят, поэтому `inventorySlots` их не видит.
+ */
+export function stashSlots(inventory: InventoryItem[] | undefined, stashId?: string): number {
+  const slots = (inventory ?? [])
+    .filter(
+      (item) =>
+        item.location === "stash" &&
+        findItem(item.name)?.kind !== "coins" &&
+        (!stashId || item.stash === stashId),
+    )
+    .reduce((sum, item) => sum + itemSlots(item), 0);
+  return Math.round(slots * 100) / 100;
 }
 
 /** Мелочь без слотов: дробный вес не считается «нулевым», поэтому таких предметов теперь нет. */
 export function zeroSlotCount(inventory: InventoryItem[] | undefined): number {
   return (inventory ?? []).filter((entry) => {
+    if (entry.location === "stash") return false;
     const def = findItem(entry.name);
     return def && def.kind === "coins" && def.slots === 0 ? false : def?.slots === 0;
   }).length;
@@ -1082,6 +1099,9 @@ export function inventoryBlockReason(
   if (item.kind === "coins") {
     return location === "backpack" ? null : "Монеты лежат только в рюкзаке";
   }
+
+  // Тайник — склад вне рюкзака: слоты, руки и правило четырёх предметов на него не действуют.
+  if (location === "stash") return null;
 
   if (!options?.ignoreCapacity) {
     const used = inventorySlots(list);
