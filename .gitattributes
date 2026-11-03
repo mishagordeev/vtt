@@ -11,3 +11,6 @@
 *.cgi text eol=lf
 # .htaccess уезжает на Apache как есть: CRLF там ломает правила mod_rewrite.
 .htaccess text eol=lf
+# Батники запускает cmd.exe на Windows: ему нужны CRLF, иначе метки и скобки
+# разбираются как часть команды.
+*.bat text eol=crlf

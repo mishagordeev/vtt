@@ -173,6 +173,41 @@ test("файлы деплоя без CRLF: bash на сервере не при�
   }
 });
 
+// Живой сайт отставал не из-за сети, а из-за комплекта: `out/` был собран из
+// 0.4.70 при package.json 0.4.77, и проверка останавливала выкладку. Батник
+// появился, чтобы сборка не забывалась, а запускать его можно двойным щелчком.
+test("redeploy.bat: свежая статика, сверка python и выкладка через deploy.py", () => {
+  const script = read("redeploy.bat");
+
+  assert.match(script, /chcp 65001/, "без chcp 65001 русский текст в консоли ломается");
+  assert.match(script, /py -3\.13 deploy\\apache\\deploy\.py/, "батник не зовёт deploy/apache/deploy.py");
+  assert.match(script, /--build/, "по умолчанию out/ должен пересобираться");
+  assert.match(script, /export-python-data\.mjs --check/, "нет сверки зеркала правил для Python");
+  assert.match(script, /--archive/, "нет режима архива для файлового менеджера панели");
+  assert.match(script, /--fast/, "нет режима без сборки");
+  assert.match(script, /--no-pause/, "из панели процесс должен завершаться без ожидания клавиши");
+  assert.match(script, /\.ssh\\sweb_deploy/, "батник не проверяет ключ выкладки");
+  assert.match(
+    read(".gitattributes"),
+    /^\*\.bat text eol=crlf$/m,
+    "cmd.exe ждёт CRLF: без правила в .gitattributes батник приедет с LF",
+  );
+});
+
+test("redeploy.bat в UTF-8 без BOM и с CRLF", () => {
+  const raw = fs.readFileSync(path.join(projectDir, "redeploy.bat"));
+  assert.notDeepEqual(
+    [...raw.subarray(0, 3)],
+    [0xef, 0xbb, 0xbf],
+    "BOM ломает первую строку: cmd увидит «@echo» с мусором",
+  );
+  const text = raw.toString("utf8");
+  assert.ok(
+    !text.replace(/\r\n/g, "").includes("\n"),
+    "в redeploy.bat есть LF без CR — cmd.exe разберёт метки неправильно",
+  );
+});
+
 // `deploy.py --reload` падал, потому что путь по умолчанию вёл в каталог
 // `mishagordeev.com/public_html`, которого на аккаунте нет: сайт лежит
 // в `~/vtt_poison_press/public_html`. Тесты держат оба конца — дефолт в

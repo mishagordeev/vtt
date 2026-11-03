@@ -422,10 +422,13 @@ npm run build:static                                   # → out/
 py -3.13 python/devserver.py --static out --port 8788  # весь сайт локально, без Apache
 ```
 
-Выкладка в `public_html` — `py -3.13 deploy/apache/deploy.py --check` (только проверка
-комплекта), затем та же команда без флага: скрипт сверяет версию `out/`, раскладывает
-`out/`, `python/`, `api.wsgi`, `keys.env` и `.htaccess` через `scp` и проверяет живой сайт —
-`/`, `/r/<КОД>`, `/api/health?deep=1` и закрытые ключи.
+Выкладка в `public_html` — `redeploy.bat` в корне проекта (двойной щелчок): он пересобирает
+статику, сверяет зеркало `python/data/rules.json` и зовёт `py -3.13 deploy/apache/deploy.py`,
+который раскладывает `out/`, `python/`, `api.wsgi`, `keys.env` и `.htaccess` через `scp`,
+а затем проверяет живой сайт — `/`, `/r/<КОД>`, `/api/health?deep=1` и закрытые ключи.
+Без обёртки те же шаги вручную: `py -3.13 deploy/apache/deploy.py --check` (только проверка
+комплекта), затем та же команда без флага. У батника есть `--fast` (без сборки), `--check`,
+`--archive` (zip для файлового менеджера панели) и `--no-pause` (для панели и скриптов).
 
 Что куда кладётся в `public_html`, какие правила Apache нужны (`/api/**` → `api.wsgi`,
 `/r/<КОД>` → `r/index.html`, закрытые `python/` и `keys.env`) — в `deploy/apache/README.md`
@@ -602,6 +605,7 @@ play/pause и громкость трека.
 ## Структура
 
 ```
+redeploy.bat                   редеплой на shared-хостинг: сборка статики, сверка python/ и deploy.py
 app/
   page.tsx                     создание комнаты / вход по коду
   r/page.tsx                   стол комнаты: код берётся из адреса (работает и на статике)
