@@ -19,6 +19,7 @@ import {
   nextMapTabName,
 } from "./mapTabs.ts";
 import { RULES } from "./rules";
+import { portraitKey } from "./snapshot";
 import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
 import type {
@@ -36,6 +37,8 @@ import type {
   RoomHead,
   RoomSnapshot,
   RoomState,
+  SnapshotMarks,
+  SnapshotRequest,
   StorageHealth,
   StorageMode,
   WorldState,
@@ -748,7 +751,75 @@ export async function getRoomPlayers(
   return { gm: doc.gm, players: doc.players };
 }
 
-export async function getRoomSnapshot(code: string, since: number): Promise<RoomSnapshot> {
+/** Метка листов: время последнего изменения. Удаление видно по `characterIds`. */
+function charactersMark(doc: RoomState): number {
+  let mark = 0;
+  for (const character of doc.characters) {
+    const stamp = Number(character.updatedAt) || 0;
+    if (stamp > mark) mark = stamp;
+  }
+  return mark;
+}
+
+/**
+ * Метка игроков: последнее присутствие и число имён.
+ *
+ * Имена приходят целиком, когда метка меняется, поэтому число в младших
+ * разрядах нужно, чтобы уход игрока тоже был виден: максимум времени при этом
+ * остаётся у другого. Имён за столом меньше сотни, так что метка точная,
+ * и сравнение идёт на равенство — она может и уменьшиться.
+ */
+function playersMark(doc: RoomState): number {
+  let mark = 0;
+  for (const player of doc.players) {
+    const stamp = Math.max(Number(player.joinedAt) || 0, Number(player.lastSeen) || 0);
+    if (stamp > mark) mark = stamp;
+  }
+  return mark * 100 + doc.players.length;
+}
+
+/** Часть снимка нужна клиенту, если он её ещё не видел или она изменилась. */
+function partChanged(mark: number, since: number): boolean {
+  return since <= 0 || mark !== since;
+}
+
+/**
+ * Листы, которые клиенту нужно обновить: изменённые после его метки.
+ *
+ * Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
+ * подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Полный портрет нужен
+ * лишь для просмотра — в снимок он не входит.
+ */
+function changedCharacters(characters: Character[], request: SnapshotRequest): Character[] {
+  const since = request.chars;
+  const portraits = request.portraits ?? null;
+  const changed =
+    since > 0
+      ? characters.filter((character) => (Number(character.updatedAt) || 0) >= since)
+      : characters;
+  return changed.map((character) => {
+    const key = portraitKey(character.portrait ?? "");
+    const known = portraits ? portraits[character.id] : undefined;
+    return {
+      ...character,
+      portrait: known === key ? "" : character.portrait,
+      portraitFull: "",
+      portraitKey: key,
+    };
+  });
+}
+
+/**
+ * Снимок комнаты: полный — без меток в запросе, частичный — по меткам.
+ *
+ * Части, которые не менялись, в ответ не попадают: клиент берёт их из своего
+ * состояния (см. `lib/snapshot.ts`). Лента, номера и id листов приходят всегда,
+ * иначе клиент не узнает об удалённом листе.
+ */
+export async function getRoomSnapshot(
+  code: string,
+  request: SnapshotRequest = { since: 0, chars: 0, map: 0, music: 0, world: 0, players: 0 },
+): Promise<RoomSnapshot> {
   const doc = await readDoc(code);
   if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
   if (dedupeCharacters(doc)) {
@@ -758,29 +829,37 @@ export async function getRoomSnapshot(code: string, since: number): Promise<Room
       // Если запись не удалась, состояние всё равно отдаём без дублей.
     }
   }
-  const messages = since > 0 ? doc.messages.filter((message) => message.seq >= since) : doc.messages;
-  // Полный портрет — самая тяжёлая часть снимка. Он нужен только для просмотра
-  // поверх листа, поэтому не гоняем его в каждом опросе /state.
-  const characters = doc.characters.map((character) => ({
-    ...character,
-    portraitFull: "",
-  }));
-  return {
+  const marks: SnapshotMarks = {
+    chars: charactersMark(doc),
+    map: Number(doc.map.updatedAt) || 0,
+    music: Number(doc.music.updatedAt) || 0,
+    world: Number(doc.world.updatedAt) || 0,
+    players: playersMark(doc),
+  };
+  const snapshot: RoomSnapshot = {
     code: doc.code,
     title: doc.title,
     createdAt: doc.createdAt,
     gm: doc.gm,
-    players: doc.players,
-    characters,
-    messages,
-    map: doc.map,
-    music: doc.music,
-    world: doc.world,
+    messages:
+      request.since > 0
+        ? doc.messages.filter((message) => message.seq >= request.since)
+        : doc.messages,
     deletedMessages: doc.deletedMessages ?? [],
+    characterIds: doc.characters.map((character) => character.id),
     serverNow: Date.now(),
     seq: doc.seq,
     rev: docRev(doc),
+    marks,
   };
+  if (partChanged(marks.players, request.players)) snapshot.players = doc.players;
+  if (partChanged(marks.chars, request.chars)) {
+    snapshot.characters = changedCharacters(doc.characters, request);
+  }
+  if (partChanged(marks.map, request.map)) snapshot.map = doc.map;
+  if (partChanged(marks.music, request.music)) snapshot.music = doc.music;
+  if (partChanged(marks.world, request.world)) snapshot.world = doc.world;
+  return snapshot;
 }
 
 export async function joinRoom(
@@ -1542,7 +1621,13 @@ function isGm(doc: RoomState, name: string): boolean {
 function renameReferences(doc: RoomState, from: string, to: string): void {
   const target = from.trim().toLowerCase();
   const same = (value: string | undefined): boolean => (value ?? "").trim().toLowerCase() === target;
-  for (const character of doc.characters) if (same(character.owner)) character.owner = to;
+  const now = Date.now();
+  for (const character of doc.characters) {
+    if (!same(character.owner)) continue;
+    character.owner = to;
+    // Лист поменялся: без новой метки клиент с частичным чтением его не перечитает.
+    character.updatedAt = now;
+  }
   for (const message of doc.messages) if (same(message.author)) message.author = to;
   for (const track of doc.music?.tracks ?? []) if (same(track.addedBy)) track.addedBy = to;
   for (const stroke of doc.map?.strokes ?? []) if (same(stroke.author)) stroke.author = to;

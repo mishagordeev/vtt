@@ -18,7 +18,7 @@ Node-версии, поэтому обе реализации видят одн�
 | `GET/PATCH/DELETE /api/rooms/<КОД>/players` | имена за столом, цвет и листы игрока, удаление игрока мастером |
 | `POST /api/rooms/<КОД>/join` | вход по имени, первый вошедший — мастер |
 | `POST /api/rooms/<КОД>/heartbeat` | «пульс» присутствия не чаще раза в 20 секунд |
-| `GET /api/rooms/<КОД>/state?since=N` | снимок комнаты и сообщения после seq N |
+| `GET /api/rooms/<КОД>/state?since=&charsSince=&mapSince=&musicSince=&worldSince=&playersSince=&portraits=` | снимок комнаты; с метками — только изменившиеся части |
 | `GET /api/rooms/<КОД>/rev?name=<игрок>` | голова комнаты: `rev`, `seen`, время сервера — без чтения документа |
 | `POST /api/rooms/<КОД>/messages` | сообщение; сервер сам находит в тексте бросок и бросает кубики |
 | `DELETE /api/rooms/<КОД>/messages/<id>` | удаление сообщения (автор или мастер) |

@@ -390,6 +390,8 @@ def rename_references(doc, source, target):
     for character in as_list(doc.get("characters")):
         if same(character.get("owner")):
             character["owner"] = target
+            # Лист поменялся: без новой метки клиент с частичным чтением его не перечитает.
+            character["updatedAt"] = _now()
     for message in as_list(doc.get("messages")):
         if same(message.get("author")):
             message["author"] = target
@@ -545,8 +547,103 @@ def get_room_players(code):
     return {"gm": doc.get("gm") or "", "players": doc.get("players") or []}
 
 
-def get_room_snapshot(code, since=0):
-    """Снимок комнаты; `since` — отдавать только сообщения с этим seq и дальше."""
+def _base36(value):
+    """`Number.prototype.toString(36)` — те же цифры и регистр, что в JS."""
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    value = int(value)
+    if value <= 0:
+        return "0"
+    out = []
+    while value:
+        value, rest = divmod(value, 36)
+        out.append(digits[rest])
+    return "".join(reversed(out))
+
+
+def portrait_key(portrait):
+    """Подпись портрета: длина и 32-битная свёртка — как `portraitKey` в lib/snapshot.ts.
+
+    Портрет — до 260 КБ, поэтому в частичном снимке он приходит только когда
+    менялся: клиент присылает подписи, которые у него есть, а сервер сравнивает.
+    Data URL — ASCII, поэтому свёртка совпадает с JS-версией.
+    """
+    if not isinstance(portrait, str):
+        portrait = ""
+    value = 0x811C9DC5
+    for char in portrait:
+        value ^= ord(char) & 0xFF
+        value = (value * 0x01000193) & 0xFFFFFFFF
+    return "%s-%s" % (_base36(len(portrait)), _base36(value))
+
+
+def characters_mark(doc):
+    """Метка листов: время последнего изменения. Удаление видно по `characterIds`."""
+    mark = 0
+    for character in as_list(doc.get("characters")):
+        stamp = int(number_or(as_dict(character).get("updatedAt"), 0))
+        if stamp > mark:
+            mark = stamp
+    return mark
+
+
+def players_mark(doc):
+    """Метка игроков: последнее присутствие и число имён.
+
+    Имена приходят целиком, когда метка меняется, поэтому число в младших
+    разрядах нужно, чтобы уход игрока тоже был виден: максимум времени при этом
+    остаётся у другого. Имён за столом меньше сотни, так что метка точная,
+    и сравнение идёт на равенство — она может и уменьшиться.
+    """
+    mark = 0
+    players = as_list(doc.get("players"))
+    for player in players:
+        entry = as_dict(player)
+        stamp = int(
+            max(number_or(entry.get("joinedAt"), 0), number_or(entry.get("lastSeen"), 0))
+        )
+        if stamp > mark:
+            mark = stamp
+    return mark * 100 + len(players)
+
+
+def _part_changed(mark, since):
+    """Часть снимка нужна клиенту, если он её ещё не видел или она изменилась."""
+    since = int(number_or(since, 0))
+    return since <= 0 or mark != since
+
+
+def changed_characters(characters, marks):
+    """Листы, которые клиенту нужно обновить: изменённые после его метки.
+
+    Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
+    подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Полный портрет нужен
+    лишь для просмотра — в снимок он не входит.
+    """
+    since = int(number_or(marks.get("chars"), 0))
+    portraits = marks.get("portraits")
+    known_all = portraits if isinstance(portraits, dict) else None
+    changed = []
+    for character in characters:
+        if since > 0 and int(number_or(character.get("updatedAt"), 0)) < since:
+            continue
+        key = portrait_key(character.get("portrait") or "")
+        known = known_all.get(character.get("id")) if known_all is not None else None
+        copy = dict(character)
+        copy["portrait"] = "" if known == key else (character.get("portrait") or "")
+        copy["portraitFull"] = ""
+        copy["portraitKey"] = key
+        changed.append(copy)
+    return changed
+
+
+def get_room_snapshot(code, marks=None):
+    """Снимок комнаты: полный — без меток, частичный — по меткам.
+
+    Части, которые не менялись, в ответ не попадают: клиент берёт их из своего
+    состояния (см. `lib/snapshot.ts`). Лента, номера и id листов приходят всегда,
+    иначе клиент не узнает об удалённом листе.
+    """
+    request = dict(marks) if isinstance(marks, dict) else {}
     doc = read_doc(code)
     if doc is None:
         raise AppError(404, ROOM_NOT_FOUND)
@@ -556,30 +653,41 @@ def get_room_snapshot(code, since=0):
         except (AppError, OSError):
             pass  # если запись не удалась, состояние всё равно отдаём без дублей
 
+    counters = {
+        "chars": characters_mark(doc),
+        "map": int(number_or(as_dict(doc.get("map")).get("updatedAt"), 0)),
+        "music": int(number_or(as_dict(doc.get("music")).get("updatedAt"), 0)),
+        "world": int(number_or(as_dict(doc.get("world")).get("updatedAt"), 0)),
+        "players": players_mark(doc),
+    }
     messages = doc.get("messages") or []
+    since = int(number_or(request.get("since"), 0))
     if since > 0:
         messages = [message for message in messages if number_or(message.get("seq"), 0) >= since]
-    characters = []
-    for character in doc.get("characters") or []:
-        copy = dict(character)
-        copy["portraitFull"] = ""
-        characters.append(copy)
-    return {
+    snapshot = {
         "code": doc.get("code"),
         "title": doc.get("title"),
         "createdAt": doc.get("createdAt"),
         "gm": doc.get("gm") or "",
-        "players": doc.get("players") or [],
-        "characters": characters,
         "messages": messages,
-        "map": doc.get("map"),
-        "music": doc.get("music"),
-        "world": doc.get("world"),
         "deletedMessages": doc.get("deletedMessages") or [],
+        "characterIds": [entry.get("id") for entry in as_list(doc.get("characters"))],
         "serverNow": _now(),
         "seq": doc.get("seq"),
         "rev": doc_rev(doc),
+        "marks": counters,
     }
+    if _part_changed(counters["players"], request.get("players")):
+        snapshot["players"] = doc.get("players") or []
+    if _part_changed(counters["chars"], request.get("chars")):
+        snapshot["characters"] = changed_characters(as_list(doc.get("characters")), request)
+    if _part_changed(counters["map"], request.get("map")):
+        snapshot["map"] = doc.get("map")
+    if _part_changed(counters["music"], request.get("music")):
+        snapshot["music"] = doc.get("music")
+    if _part_changed(counters["world"], request.get("world")):
+        snapshot["world"] = doc.get("world")
+    return snapshot
 
 
 def join_room(code, raw_name):

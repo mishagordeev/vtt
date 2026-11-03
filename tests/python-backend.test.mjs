@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { normalizeDraft } from "../lib/characters.ts";
 import { extractFormula } from "../lib/dice.ts";
+import { portraitKey } from "../lib/snapshot.ts";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rulesPath = path.join(projectDir, "python", "data", "rules.json");
@@ -795,6 +796,164 @@ test("Python-сервер: голова комнаты растёт на зап�
   assert.equal(restored.status, 200, "без бокового ключа голова не восстановилась из документа");
   assert.equal(restored.payload.rev, third.payload.rev, "восстановленный номер не совпал с документом");
   assert.ok(fs.existsSync(headPath), "голова не записалась обратно");
+});
+
+test("Python-сервер: частичное чтение отдаёт только изменившиеся части", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl } = server;
+
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  assert.equal(created.status, 200);
+  const code = created.payload.code;
+  await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name: "Мастер" });
+  await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name: "Игрок" });
+
+  // Портреты по 8 КБ: на них видно разницу между полным снимком и правкой листа.
+  const portrait = (letter) => `data:image/png;base64,${letter.repeat(8000)}`;
+  const draft = (name, image) => ({
+    name,
+    level: 1,
+    origin: rules.origins[0].name,
+    portrait: image,
+    portraitFull: image,
+    stats: { str: 12, dex: 14, con: 13, int: 10, wis: 11, cha: 9 },
+    skills: [],
+    traits: [],
+    flaws: [],
+    inventory: [],
+    fields: { notes: "частичное чтение" },
+  });
+
+  const first = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Игрок",
+    character: draft("Первый", portrait("A")),
+  });
+  assert.equal(first.status, 200, server.log());
+  await sleep(10);
+  const second = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Игрок",
+    character: draft("Второй", portrait("B")),
+  });
+  assert.equal(second.status, 200, server.log());
+  const sheetId = second.payload.character.id;
+
+  // --- полный снимок: все части, портреты и метки ---
+  const full = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
+  assert.equal(full.status, 200, server.log());
+  assert.equal(full.payload.characters.length, 2, "без меток приходят все листы");
+  for (const character of full.payload.characters) {
+    assert.ok(character.portrait.length > 7000, "в полном снимке должен быть портрет");
+    assert.equal(
+      character.portraitKey,
+      portraitKey(character.portrait),
+      "подпись портрета в Python не совпала с lib/snapshot.ts",
+    );
+  }
+  assert.deepEqual(
+    Object.keys(full.payload.marks).sort(),
+    ["chars", "map", "music", "players", "world"],
+    "снимок отдаёт метки частей",
+  );
+  const ids = full.payload.characters.map((character) => character.id).sort();
+  assert.deepEqual(full.payload.characterIds.slice().sort(), ids, "id листов приходят всегда");
+
+  /** Запрос «у меня это уже есть»: метки из ответа и подписи портретов. */
+  const partial = (snapshot, extra = {}) => {
+    const params = new URLSearchParams({
+      since: String(snapshot.seq),
+      charsSince: String(snapshot.marks.chars),
+      mapSince: String(snapshot.marks.map),
+      musicSince: String(snapshot.marks.music),
+      worldSince: String(snapshot.marks.world),
+      playersSince: String(snapshot.marks.players),
+    });
+    const keys = (snapshot.characters ?? []).map(
+      (character) => `${character.id}.${character.portraitKey}`,
+    );
+    if (keys.length > 0) params.set("portraits", keys.join(","));
+    for (const [key, value] of Object.entries(extra)) params.set(key, String(value));
+    return `/api/rooms/${code}/state?${params.toString()}`;
+  };
+
+  // --- ничего не менялось: части не едут ---
+  const quiet = await call(baseUrl, "GET", partial(full.payload));
+  assert.equal(quiet.status, 200, server.log());
+  for (const part of ["players", "characters", "map", "music", "world"]) {
+    assert.equal(part in quiet.payload, false, `часть ${part} приехала без изменений`);
+  }
+  assert.deepEqual(quiet.payload.characterIds.slice().sort(), ids, "id листов приходят всегда");
+  assert.deepEqual(quiet.payload.marks, full.payload.marks, "метки не должны меняться от чтения");
+  assert.equal(quiet.payload.messages.length, 0, "лента с since=seq должна быть пустой");
+  const quietSize = JSON.stringify(quiet.payload).length;
+  assert.ok(quietSize < 1500, `чтение без изменений весит ${quietSize} Б`);
+  assert.ok(
+    JSON.stringify(full.payload).length > quietSize * 10,
+    "полный снимок должен быть заметно тяжелее",
+  );
+
+  // --- чужая правка листа: один лист, без портрета ---
+  await sleep(10);
+  const edited = await call(baseUrl, "PATCH", `/api/rooms/${code}/characters/${sheetId}`, {
+    actor: "Игрок",
+    patch: { fields: { notes: "поправил навык" } },
+  });
+  assert.equal(edited.status, 200, server.log());
+  const afterEdit = await call(baseUrl, "GET", partial(full.payload));
+  assert.equal(afterEdit.status, 200, server.log());
+  assert.ok(Array.isArray(afterEdit.payload.characters), "изменённый лист должен приехать");
+  assert.equal(afterEdit.payload.characters.length, 1, "в частичном ответе только изменённый лист");
+  assert.equal(afterEdit.payload.characters[0].id, sheetId);
+  assert.equal(afterEdit.payload.characters[0].portrait, "", "портрет приехал в правке листа");
+  assert.ok(afterEdit.payload.characters[0].portraitKey, "лист пришёл без подписи портрета");
+  for (const part of ["map", "music", "world"]) {
+    assert.equal(part in afterEdit.payload, false, `часть ${part} не менялась, а приехала`);
+  }
+  assert.ok("players" in afterEdit.payload, "действие игрока меняет присутствие — имена приходят");
+  const editSize = JSON.stringify(afterEdit.payload).length;
+  assert.ok(editSize < 4000, `правка листа весит ${editSize} Б`);
+
+  // --- сменили портрет: приезжает и картинка, подпись новая ---
+  await sleep(10);
+  const fresh = portrait("C");
+  const recropped = await call(baseUrl, "PATCH", `/api/rooms/${code}/characters/${sheetId}`, {
+    actor: "Игрок",
+    patch: { portrait: fresh, portraitFull: fresh },
+  });
+  assert.equal(recropped.status, 200, server.log());
+  const withPortrait = await call(baseUrl, "GET", partial(afterEdit.payload));
+  const portraitSheet = (withPortrait.payload.characters ?? []).find(
+    (character) => character.id === sheetId,
+  );
+  assert.ok(portraitSheet, "лист со сменой портрета не приехал");
+  assert.equal(portraitSheet.portrait, fresh, "новый портрет не приехал");
+  assert.notEqual(
+    portraitSheet.portraitKey,
+    afterEdit.payload.characters[0].portraitKey,
+    "подпись портрета не изменилась",
+  );
+  assert.equal(portraitSheet.portraitKey, portraitKey(fresh), "подпись нового портрета не совпала");
+
+  // --- удаление листа: его нет в списке id ---
+  await sleep(10);
+  const dropped = await call(
+    baseUrl,
+    "DELETE",
+    `/api/rooms/${code}/characters/${first.payload.character.id}?actor=${encodeURIComponent("Игрок")}`,
+  );
+  assert.equal(dropped.status, 200, server.log());
+  const afterRemove = await call(baseUrl, "GET", partial(withPortrait.payload));
+  assert.deepEqual(
+    afterRemove.payload.characterIds,
+    [sheetId],
+    "удалённый лист остался в списке id",
+  );
+  assert.equal("characters" in afterRemove.payload, false, "листы не менялись, а приехали");
+
+  // --- без подписей портреты приходят как раньше (старый клиент) ---
+  const legacy = await call(baseUrl, "GET", `/api/rooms/${code}/state?charsSince=0`);
+  assert.equal(legacy.status, 200, server.log());
+  assert.equal(legacy.payload.characters.length, 1);
+  assert.ok(legacy.payload.characters[0].portrait.length > 7000, "портрет пропал без подписей");
 });
 
 test("Python-сервер: понятные ошибки вместо 500", async (t) => {

@@ -87,6 +87,35 @@ def _since(raw):
     return value if value > 0 else 0
 
 
+def _portraits(raw):
+    """`chr_ab12.1kf,chr_cd34.9xq` → {id: подпись}; пусто — прислать все портреты."""
+    if not raw:
+        return None
+    portraits = {}
+    for pair in str(raw).split(","):
+        ident, sep, key = pair.rpartition(".")
+        if not sep:
+            continue
+        ident = ident.strip()
+        key = key.strip()
+        if ident and key:
+            portraits[ident] = key
+    return portraits
+
+
+def _state_marks(params):
+    """Метки частей снимка: с ними `/state` отдаёт только изменившееся."""
+    return {
+        "since": _since(params.get("since")),
+        "chars": _since(params.get("charsSince")),
+        "map": _since(params.get("mapSince")),
+        "music": _since(params.get("musicSince")),
+        "world": _since(params.get("worldSince")),
+        "players": _since(params.get("playersSince")),
+        "portraits": _portraits(params.get("portraits")),
+    }
+
+
 def apply(environ, start_response, method):
     parts = _path(environ)
     params = query(environ)
@@ -135,7 +164,7 @@ def apply(environ, start_response, method):
     if resource == "state" and not entry_id:
         if method != "GET":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})
-        snapshot = store.get_room_snapshot(code, _since(params.get("since")))
+        snapshot = store.get_room_snapshot(code, _state_marks(params))
         return respond(start_response, 200, snapshot)
 
     if resource == "players" and not entry_id:

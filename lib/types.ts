@@ -91,6 +91,11 @@ export interface Character {
   portrait: string;
   /** Полная картинка для просмотра (data URL). */
   portraitFull: string;
+  /**
+   * Подпись портрета — считается в ответе `/state`, в документе комнаты её нет.
+   * По ней клиент получает портрет только когда тот изменился.
+   */
+  portraitKey?: string;
   stats: Record<string, number>;
   resources: Record<string, ResourceState>;
   skills: Skill[];
@@ -301,25 +306,64 @@ export interface RoomHead {
   serverNow: number;
 }
 
-/** Ответ /api/rooms/[code]/state */
+/**
+ * Метки частей комнаты: их клиент присылает назад в `charsSince`, `mapSince`,
+ * `musicSince`, `worldSince`, `playersSince`. Сравнение — только на равенство:
+ * метка игроков может уменьшиться (убрали игрока, чьё присутствие было последним).
+ */
+export interface SnapshotMarks {
+  /** Время последнего изменения листов; удаление видно по `characterIds`. */
+  chars: number;
+  map: number;
+  music: number;
+  world: number;
+  players: number;
+}
+
+/**
+ * Что клиент просит у `/api/rooms/[code]/state`.
+ *
+ * Нулевая метка значит «этого у меня нет» — часть придёт целиком. Подписи
+ * портретов (`portraits`) — то, что клиент уже видел: лист с той же подписью
+ * приходит без картинки.
+ */
+export interface SnapshotRequest extends SnapshotMarks {
+  /** Лента: сообщения с этим seq и дальше; 0 — вся история. */
+  since: number;
+  portraits?: Record<string, string>;
+}
+
+/**
+ * Ответ /api/rooms/[code]/state.
+ *
+ * Без меток в запросе это полный снимок; с метками — только изменившиеся части,
+ * а части, которых нет в ответе, клиент берёт из своего состояния. Лента и
+ * номера приходят всегда.
+ */
 export interface RoomSnapshot {
   code: string;
   title: string;
   createdAt: number;
   gm: string;
-  players: Player[];
-  characters: Character[];
+  /** Присутствие за столом; приходит, только когда менялось. */
+  players?: Player[];
+  /** Изменившиеся листы; без портрета, если подпись у клиента та же. */
+  characters?: Character[];
   messages: ChatMessage[];
-  map: MapState;
-  music: MusicState;
-  world: WorldState;
+  map?: MapState;
+  music?: MusicState;
+  world?: WorldState;
   /** id удалённых сообщений — чтобы убрать их из уже загруженной ленты. */
   deletedMessages: string[];
+  /** id всех листов комнаты: по ним клиент убирает удалённые. */
+  characterIds?: string[];
   /** Время сервера на момент ответа — для синхронизации музыки и часов кампании. */
   serverNow: number;
   seq: number;
   /** Номер изменения на момент ответа — чтобы не проверять голову сразу после чтения. */
   rev?: number;
+  /** Метки частей на момент ответа — их клиент присылает в следующем чтении. */
+  marks?: SnapshotMarks;
 }
 
 /** Где живут комнаты: Redis (Upstash / Vercel KV) или память процесса. */

@@ -6,7 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
-import type { ChatMessage, Character, CharacterDraft, MapState, MusicState, Player, RoomSnapshot, WorldState } from "@/lib/types";
+import { emptySnapshotRequest, mergeCharacters, nextMarks, snapshotQuery } from "@/lib/snapshot";
+import type { ChatMessage, Character, CharacterDraft, MapState, MusicState, Player, RoomSnapshot, SnapshotRequest, WorldState } from "@/lib/types";
 import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
 import { ChatFeed } from "./ChatFeed";
@@ -125,7 +126,12 @@ export default function RoomScreen({ code }: { code: string }) {
     return () => window.clearTimeout(timer);
   }, [phase]);
 
-  const sinceRef = useRef(0);
+  /**
+   * Что клиент уже знает о комнате: метки частей, `since` ленты и подписи
+   * портретов. С ними `/state` отдаёт только изменившееся — правка чужого листа
+   * стоит 2 КБ вместо 1,5 МБ.
+   */
+  const syncRef = useRef<SnapshotRequest>(emptySnapshotRequest());
   const meRef = useRef("");
   /** id уже показанных бросков: старые не анимируем, даже после полной перечитки ленты. */
   const animatedRollsRef = useRef<Set<string>>(new Set());
@@ -163,23 +169,29 @@ export default function RoomScreen({ code }: { code: string }) {
   const load = useCallback(async () => {
     try {
       // Полная перечитка (since=0) приносит всю историю: её броски не показываем заново.
-      const fullReload = sinceRef.current === 0;
+      const request = syncRef.current;
+      const fullReload = request.since === 0;
       const snapshot = await api<RoomSnapshot>(
-        `/api/rooms/${code}/state?since=${sinceRef.current}`,
+        `/api/rooms/${code}/state?${snapshotQuery(request)}`,
       );
-      sinceRef.current = snapshot.seq;
+      // Метки берём из ответа: сервер знает настоящий момент изменения,
+      // а клиент видит только пришедшие ему части.
+      syncRef.current = nextMarks(request, snapshot);
       if (fullReload) {
         const seen = animatedRollsRef.current;
         for (const message of snapshot.messages) {
           if (message.roll) seen.add(message.id);
         }
       }
-      setPlayers(snapshot.players);
+      // Части, которых нет в ответе, не менялись — берём их из своего состояния.
+      if (snapshot.players) setPlayers(snapshot.players);
       setGm(snapshot.gm);
-      setCharacters(snapshot.characters);
-      setMap(snapshot.map ?? EMPTY_MAP);
-      setMusic(snapshot.music ?? EMPTY_MUSIC);
-      setWorld(snapshot.world ?? EMPTY_WORLD);
+      if (snapshot.characters) {
+        setCharacters((prev) => mergeCharacters(prev, snapshot));
+      }
+      if (snapshot.map) setMap(snapshot.map);
+      if (snapshot.music) setMusic(snapshot.music);
+      if (snapshot.world) setWorld(snapshot.world);
       if (Number.isFinite(snapshot.serverNow)) {
         setClockOffset(snapshot.serverNow - Date.now());
       }
@@ -466,6 +478,8 @@ export default function RoomScreen({ code }: { code: string }) {
           body: JSON.stringify({ actor: meRef.current, ...payload }),
         });
         setMap(result.map);
+        // Свою карту только что применили сами: следующий `/state` не должен её повторять.
+        syncRef.current.map = Number(result.map.updatedAt) || 0;
         return result.map;
       } catch {
         return null;
@@ -485,6 +499,7 @@ export default function RoomScreen({ code }: { code: string }) {
           },
         );
         setMusic(result.music);
+        syncRef.current.music = Number(result.music.updatedAt) || 0;
         if (Number.isFinite(result.serverNow)) {
           setClockOffset(result.serverNow - Date.now());
         }
@@ -508,6 +523,7 @@ export default function RoomScreen({ code }: { code: string }) {
           },
         );
         setWorld(result.world);
+        syncRef.current.world = Number(result.world.updatedAt) || 0;
         if (Number.isFinite(result.serverNow)) {
           setClockOffset(result.serverNow - Date.now());
         }
@@ -567,7 +583,7 @@ export default function RoomScreen({ code }: { code: string }) {
 
   /** Полная перечитка ленты — нужна после переименования игрока. */
   const reloadMessages = useCallback(async () => {
-    sinceRef.current = 0;
+    syncRef.current = emptySnapshotRequest();
     setMessages([]);
     await load();
   }, [load]);
@@ -637,7 +653,7 @@ export default function RoomScreen({ code }: { code: string }) {
     window.localStorage.removeItem(nameKey(code));
     window.localStorage.removeItem("pp:name");
     meRef.current = "";
-    sinceRef.current = 0;
+    syncRef.current = emptySnapshotRequest();
     animatedRollsRef.current = new Set();
     setLastSyncAt(0);
     setDiceQueue([]);
