@@ -18,13 +18,22 @@ function initials(name: string): string {
 }
 
 /**
- * Карточка листа в списках: портрет, имя, игроки и короткая строка
- * «ур. · ОЗ · навыков». Одна и та же карточка стоит в правой панели комнаты
- * и в полном списке персонажей — так они не расходятся.
+ * Карточка листа в списках: портрет, имя и одна моно-строка чисел
+ * «игрок · ур. · ОЗ · навыков» — как в макете панели. Одна и та же карточка
+ * стоит в правой панели комнаты и в полном списке персонажей — так они не
+ * расходятся.
  */
 export function CharacterCard({ character, active, onOpen }: CharacterCardProps) {
   const hp = character.resources?.hp ?? character.resources?.health;
   const assigned = character.players ?? [];
+  const meta = [
+    assigned.length > 0 ? assigned.join(" · ") : character.owner,
+    `ур. ${character.level ?? 1}`,
+    hp ? `ОЗ ${hp.current}/${hp.max}` : "",
+    (character.skills?.length ?? 0) > 0 ? `навыков ${character.skills.length}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <button
       type="button"
@@ -36,7 +45,7 @@ export function CharacterCard({ character, active, onOpen }: CharacterCardProps)
           : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
       }`}
     >
-      <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-zinc-700 bg-zinc-900">
+      <span className="h-11 w-11 shrink-0 overflow-hidden rounded-full border border-zinc-700 bg-zinc-900">
         {character.portrait ? (
           <img src={character.portrait} alt="" className="h-full w-full object-cover" />
         ) : (
@@ -47,19 +56,11 @@ export function CharacterCard({ character, active, onOpen }: CharacterCardProps)
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-zinc-100">{character.name}</span>
-        <span className="block truncate text-[10px] text-zinc-500">
-          {assigned.length > 0 ? assigned.join(" · ") : character.owner}
-        </span>
-        <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 font-mono text-[9px] text-zinc-500">
-          <span>ур. {character.level ?? 1}</span>
-          {hp ? (
-            <span className={hp.current <= 0 ? "text-rose-300" : ""}>
-              ОЗ {hp.current}/{hp.max}
-            </span>
-          ) : null}
-          {(character.skills?.length ?? 0) > 0 ? (
-            <span>навыков {character.skills.length}</span>
-          ) : null}
+        <span
+          className={`block truncate font-mono text-[10px] ${hp && hp.current <= 0 ? "text-rose-300" : "text-zinc-500"}`}
+          title={meta}
+        >
+          {meta}
         </span>
       </span>
     </button>

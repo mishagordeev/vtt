@@ -27,7 +27,7 @@ import { forgetRoom, readRooms, rememberRoom, type RememberedRoom } from "@/lib/
 import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
 import { ChatFeed } from "./ChatFeed";
-import { Composer } from "./Composer";
+import { Composer, type ComposerChecks } from "./Composer";
 import { DebugPanel } from "./DebugPanel";
 import { DeskPanel } from "./DeskPanel";
 import { DiceOverlay, type DiceRollShow } from "./DiceOverlay";
@@ -58,6 +58,10 @@ const BOOT_SLOW_MS = 8000;
 type Phase = "boot" | "join" | "room" | "missing";
 
 const nameKey = (code: string) => `pp:room:${code}:name`;
+
+/** Сравнение имён стола без регистра и пробелов по краям. */
+const sameName = (a?: string | null, b?: string | null) =>
+  (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 
 /**
  * Лист персонажа — половина веса комнаты: каталоги снаряжения и знаний,
@@ -497,6 +501,64 @@ export default function RoomScreen({ code }: { code: string }) {
       })),
     ]);
   }, [messages, lastSyncAt, players]);
+
+  /**
+   * Проверки для нижних рядов поля ввода: характеристики и навыки листа.
+   * Справочник правил (143 КБ каталогов) тянется отдельным чанком — он же
+   * нужен листу персонажа, а `/r` должен открываться без каталогов.
+   */
+  const [rules, setRules] = useState<{
+    stats: typeof import("@/lib/rules").STATS;
+    abilityMod: typeof import("@/lib/rules").abilityMod;
+    statValue: typeof import("@/lib/rules").statValue;
+    skillBonus: typeof import("@/lib/rules").skillBonus;
+  } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void import("@/lib/rules")
+      .then((mod) => {
+        if (!alive) return;
+        setRules({
+          stats: mod.STATS,
+          abilityMod: mod.abilityMod,
+          statValue: mod.statValue,
+          skillBonus: mod.skillBonus,
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** Лист для проверок: открытый сейчас, иначе первый свой. */
+  const checkCharacter = useMemo(() => {
+    const opened = characters.find((character) => character.id === focusCharacter);
+    if (opened) return opened;
+    const mine = characters.filter(
+      (character) =>
+        (character.players ?? []).some((name) => sameName(name, me)) || sameName(character.owner, me),
+    );
+    return mine[0] ?? null;
+  }, [characters, focusCharacter, me]);
+
+  const checks = useMemo<ComposerChecks>(() => {
+    const stats = checkCharacter?.stats;
+    if (!rules || !stats) return { stats: [], skills: [] };
+    return {
+      stats: rules.stats.map((def) => ({
+        key: def.key,
+        short: def.short.toUpperCase(),
+        label: def.label,
+        mod: rules.abilityMod(rules.statValue(stats, def.key)),
+      })),
+      skills: (checkCharacter?.skills ?? []).map((skill) => ({
+        name: skill.name,
+        bonus: rules.skillBonus(skill, stats),
+      })),
+    };
+  }, [rules, checkCharacter]);
 
   const send = useCallback(
     async (text: string) => {
@@ -939,86 +1001,7 @@ export default function RoomScreen({ code }: { code: string }) {
   }
 
   return (
-    <div className="flex h-dvh flex-col">
-      {/* pr-11: место под переключатель темы — он живёт в общем layout и стоит в правом верхнем углу. */}
-      <header className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 px-3 py-2 pr-11 backdrop-blur">
-        <div className="flex items-center gap-2">
-          <Link href="/" className="text-sm font-semibold tracking-tight text-zinc-50">
-            Poison Press
-          </Link>
-          <span
-            className="rounded border border-zinc-800 px-1 py-0.5 font-mono text-[9px] text-zinc-500"
-            title="Версия сборки VTT"
-          >
-            v{APP_VERSION}
-          </span>
-          <button
-            type="button"
-            onClick={() => void copyInvite()}
-            title="Скопировать ссылку на комнату"
-            className="rounded border border-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-emerald-300 transition hover:border-emerald-400/50"
-          >
-            {copied ? "скопировано" : code}
-          </button>
-
-          <div className="ml-auto flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setCharactersOpen(true)}
-              title="Полный список персонажей комнаты"
-              className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
-            >
-              Персонажи
-              {characters.length > 0 ? (
-                <span className="ml-1 font-mono text-[10px] text-zinc-500">{characters.length}</span>
-              ) : null}
-            </button>
-            {/* Мастеру — добавление и настройка музыки: панель откроется слева поверх карты. */}
-            {isGM ? (
-              <button
-                type="button"
-                onClick={() => setMusicOpen(true)}
-                title="Добавить трек и настроить музыку стола"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
-              >
-                Музыка
-                {music.tracks.length > 0 ? (
-                  <span className="ml-1 font-mono text-[10px] text-zinc-500">{music.tracks.length}</span>
-                ) : null}
-              </button>
-            ) : null}
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-emerald-400/50 hover:text-emerald-200"
-              title="Прочитать комнату из базы (обновление по действиям, без таймера)"
-            >
-              ⟳
-            </button>
-            <span
-              className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500"
-              title={connected ? "Ответы сервера приходят" : "Нет связи с сервером"}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
-                aria-hidden
-              />
-              <span className="hidden sm:inline">{connected ? "на связи" : "нет связи"}</span>
-            </span>
-            <span className="hidden max-w-24 truncate text-xs text-zinc-400 sm:inline">{me}</span>
-            <button
-              type="button"
-              onClick={changeName}
-              className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
-            >
-              сменить
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-dvh flex-col lg:h-dvh">
 
       {/* Ошибка чтения комнаты: текст и «Повторить» рядом — у стола после таймаута
           иначе остаются только текст и «нет связи», а перечитать нечем. */}
@@ -1037,11 +1020,15 @@ export default function RoomScreen({ code }: { code: string }) {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      {/* Раскладка как на макете: стол занимает всю высоту, панель — колонкой
+          справа со своей шапкой. На узком экране колонки идут в обратном
+          порядке (сначала панель с чатом и вводом, ниже — карта), и прокрутка
+          одна, по документу: двум независимым областям на телефоне тесно. */}
+      <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
         {/* Стол виден всегда: карта, часы и игроки не исчезают при правках, а лист
             и музыка открываются левой панелью до правой панели — чат, персонажи
             и кубики остаются под рукой. */}
-        <section className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+        <section className="scroll-thin min-h-[60vh] lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
           <DeskPanel
             code={code}
             me={me}
@@ -1058,10 +1045,72 @@ export default function RoomScreen({ code }: { code: string }) {
           />
         </section>
 
-        {/* Правая панель: музыка → персонажи → чат → ввод с кубиками.
-            Ширина ровно по ряду d4…d100 и «+1»/«−1» с небольшим запасом:
-            ряд не переносится, а лишнего места справа не остаётся. */}
-        <section className="flex min-h-[46vh] flex-1 flex-col border-zinc-800/80 lg:min-h-0 lg:w-[352px] lg:flex-none lg:border-l">
+        {/* Правая панель как на макете: своя шапка → музыка → персонажи → чат →
+            ввод с кубиками, характеристиками и навыком. Ширина ровно по ряду
+            d4…d100 и «+1»/«−1» с небольшим запасом: ряд не переносится, а
+            лишнего места справа не остаётся. */}
+        <aside className="flex flex-none flex-col border-t border-zinc-800/80 lg:min-h-0 lg:w-[352px] lg:border-l lg:border-t-0">
+          {/* pr-11: место под переключатель темы — он живёт в общем layout и стоит в правом верхнем углу. */}
+          <header className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 px-3 py-2 pr-11 backdrop-blur">
+            {/* Строка первая — кто за столом и выход из него: как «Мастер · Выйти» на макете. */}
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
+                title={connected ? "Ответы сервера приходят" : "Нет связи с сервером"}
+                aria-hidden
+              />
+              <span className="truncate text-sm font-semibold text-zinc-50">{me}</span>
+              {isGM ? (
+                <span
+                  className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] uppercase text-amber-300"
+                  title="Вы мастер этого стола"
+                >
+                  мастер
+                </span>
+              ) : null}
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-emerald-400/50 hover:text-emerald-200"
+                  title="Прочитать комнату из базы (обновление по действиям, без таймера)"
+                >
+                  ⟳
+                </button>
+                <button
+                  type="button"
+                  onClick={changeName}
+                  className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
+                  title="Выйти из стола под этим именем и войти заново"
+                >
+                  сменить
+                </button>
+              </div>
+            </div>
+            {/* Строка вторая — подпись панели: сборка, код комнаты и путь на главную. */}
+            <div className="mt-1 flex items-center gap-1.5">
+              <Link
+                href="/"
+                className="shrink-0 text-[10px] font-semibold tracking-tight text-zinc-400 transition hover:text-zinc-200"
+              >
+                Poison Press
+              </Link>
+              <span
+                className="shrink-0 rounded border border-zinc-800 px-1 py-0.5 font-mono text-[9px] text-zinc-500"
+                title="Версия сборки VTT"
+              >
+                v{APP_VERSION}
+              </span>
+              <button
+                type="button"
+                onClick={() => void copyInvite()}
+                title="Скопировать ссылку на комнату"
+                className="ml-auto shrink-0 rounded border border-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-emerald-300 transition hover:border-emerald-400/50"
+              >
+                {copied ? "скопировано" : code}
+              </button>
+            </div>
+          </header>
           <MusicPlaylist
             me={me}
             gm={gm}
@@ -1085,11 +1134,12 @@ export default function RoomScreen({ code }: { code: string }) {
             messages={messages}
             me={me}
             gm={gm}
+            players={players}
             connected={connected}
             onDelete={deleteMessage}
           />
-          <Composer onSend={send} />
-        </section>
+          <Composer checks={checks} characterName={checkCharacter?.name} onSend={send} />
+        </aside>
       </div>
 
       {charactersOpen ? (

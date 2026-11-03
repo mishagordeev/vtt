@@ -76,7 +76,7 @@ export function CharactersRail({
         </div>
       </div>
 
-      <div className="scroll-thin max-h-[30vh] min-h-0 space-y-1 overflow-y-auto px-2 pb-2">
+      <div className="scroll-thin max-h-[22vh] min-h-0 space-y-1 overflow-y-auto px-2 pb-2 lg:max-h-[30vh]">
         {list.map((character) => (
           <CharacterCard
             key={character.id}

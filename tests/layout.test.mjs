@@ -259,7 +259,7 @@ test("стол виден всегда, а правая панель идёт: �
   const musicAt = room.indexOf("<MusicPlaylist");
   const railAt = room.indexOf("<CharactersRail");
   const feedAt = room.indexOf("<ChatFeed");
-  const composerAt = room.indexOf("<Composer onSend={send} />");
+  const composerAt = room.indexOf("<Composer checks={checks}");
   assert.ok(deskAt > 0, "стол должен быть в комнате");
   assert.ok(musicAt > deskAt, "музыка — в правой панели после стола");
   assert.ok(railAt > musicAt, "под музыкой идёт список персонажей");
@@ -271,12 +271,34 @@ test("стол виден всегда, а правая панель идёт: �
   );
   assert.match(
     room,
-    /lg:w-\[352px\][^"]*lg:flex-none/,
+    /lg:w-\[352px\][^"]*lg:border-l/,
     "правая панель ровно по ряду костей и модификаторов, без лишней ширины",
+  );
+  assert.match(
+    room,
+    /<aside className="flex flex-none flex-col[^"]*lg:w-\[352px\]/,
+    "на телефоне панель не сжимается, на широком экране упирается в 352 px",
   );
   assert.ok(
     !/xl:w-\[480px\]|lg:w-\[440px\]/.test(room),
     "широкие 440/480 px убраны: панель шире ряда кубиков не нужна",
+  );
+  // Макет: шапка комнаты живёт в правой панели, стол занимает всю высоту,
+  // а на узком экране колонка с чатом идёт первой.
+  assert.match(
+    room,
+    /flex min-h-0 flex-1 flex-col-reverse lg:flex-row/,
+    "на телефоне панель стола идёт первой, на широком экране — справа",
+  );
+  assert.match(
+    room,
+    /<aside className="[^"]*lg:w-\[352px\][^"]*">\s*\{\/\* pr-11[^\n]*\*\/\}\s*<header className="[^"]*pr-11[^"]*">/,
+    "шапка комнаты — первая строка правой панели, а не полоса над столом",
+  );
+  const asideAt = room.indexOf("<aside");
+  assert.ok(
+    deskAt > 0 && asideAt > deskAt,
+    "стол идёт первым в разметке: на широком экране он слева от панели",
   );
   assert.match(
     room,
@@ -286,8 +308,8 @@ test("стол виден всегда, а правая панель идёт: �
   assert.match(room, /onOpenPanel=\{\(\) => setMusicOpen\(true\)\}/, "музыка открывает свою панель");
   assert.match(
     room,
-    /\{isGM \? \(\s*<button[\s\S]{0,400}setMusicOpen\(true\)/,
-    "кнопка «Музыка» в шапке есть только у мастера",
+    /<Composer checks=\{checks\} characterName=\{checkCharacter\?\.name\} onSend=\{send\} \/>/,
+    "ввод получает характеристики и навыки листа",
   );
 
   const rail = read("components", "CharactersRail.tsx");
@@ -310,9 +332,13 @@ test("стол виден всегда, а правая панель идёт: �
   assert.match(feed, /onDelete/, "своё сообщение можно удалить");
 });
 
-test("кнопка «Персонажи» в шапке открывает полный список листов комнаты", () => {
+test("кнопка «Все» в блоке персонажей открывает полный список листов комнаты", () => {
   const room = read("components", "RoomScreen.tsx");
-  assert.match(room, /onClick=\{\(\) => setCharactersOpen\(true\)\}/, "кнопка стоит в шапке стола");
+  assert.match(
+    room,
+    /onOpenAll=\{\(\) => setCharactersOpen\(true\)\}/,
+    "полный список открывается из блока персонажей — шапка панели осталась короткой, как на макете",
+  );
   assert.match(room, /<CharactersDialog[\s\S]{0,300}onClose=/, "список открывается левой панелью поверх карты");
 
   const dialog = read("components", "CharactersDialog.tsx");
@@ -391,15 +417,79 @@ test("кубики и модификаторы встают в одну стро
   const composer = read("components", "Composer.tsx");
   assert.match(
     composer,
-    /className="mt-2 flex flex-nowrap items-center gap-1"/,
+    /className="mt-2 flex flex-nowrap items-center gap-0\.5"/,
     "ряд кубиков не переносится",
   );
   assert.match(composer, /shrink-0 rounded-md border border-zinc-700/, "кнопки не сжимаются и не рвут строку");
-  const diceRow = composer.slice(composer.indexOf("flex flex-nowrap items-center gap-1"));
+  const diceRow = composer.slice(composer.indexOf("flex flex-nowrap items-center gap-0.5"));
   assert.ok(
     !/Очистить/.test(diceRow.slice(0, diceRow.indexOf("</div>"))),
     "«Очистить» уходит второй строкой, чтобы ряд костей помещался",
   );
+});
+
+test("нижние ряды панели повторяют макет: кубики → характеристики → навык и «Бросок»", () => {
+  const composer = read("components", "Composer.tsx");
+  const diceAt = composer.indexOf("mt-2 flex flex-nowrap items-center gap-0.5");
+  const statsAt = composer.indexOf("{/* Характеристики листа");
+  const skillAt = composer.indexOf("{/* Навык и «Бросок»");
+  assert.ok(diceAt > 0, "ряд костей на месте");
+  assert.ok(statsAt > diceAt, "под костями — ряд характеристик");
+  assert.ok(skillAt > statsAt, "под характеристиками — навык и «Бросок»");
+
+  assert.match(composer, /rows\.stats\.map/, "кнопки характеристик берутся из листа, а не из воздуха");
+  assert.match(composer, /rows\.skills\.map/, "список навыков — навыки листа");
+  assert.match(
+    composer,
+    /1d20\$\{modText\(stat\.mod\)\}/,
+    "характеристика подставляет 1d20 с модификатором",
+  );
+  assert.match(
+    composer,
+    /`\$\{prefix\}\$\{chosenSkill\.name\} 1d20\$\{modText\(chosenSkill\.bonus\)\}`/,
+    "«Бросок» подставляет проверку навыка с его бонусом",
+  );
+  // Отправка — стрелка в углу поля: широкой кнопки «Отправить» больше нет.
+  assert.match(composer, /\{busy \? "…" : "➤"\}/, "кнопка отправки — стрелка в углу поля");
+  assert.match(
+    composer,
+    /aria-label="Отправить сообщение"/,
+    "у стрелки есть подпись для чтения с экрана",
+  );
+  assert.match(composer, /pr-12/, "поле ввода оставляет место стрелке");
+
+  // Проверки считаются по листу, поэтому ввод получает готовые ряды из комнаты.
+  const room = read("components", "RoomScreen.tsx");
+  assert.match(
+    room,
+    /rules\.abilityMod\(rules\.statValue\(stats, def\.key\)\)/,
+    "модификатор — по характеристике листа",
+  );
+  assert.match(
+    room,
+    /rules\.skillBonus\(skill, stats\)/,
+    "бонус навыка — характеристика + бонус ранга из правил",
+  );
+  assert.match(
+    room,
+    /void import\("@\/lib\/rules"\)/,
+    "справочник правил тянется отдельным чанком: /r открывается без каталогов",
+  );
+});
+
+test("лента: сумма броска крупным числом справа, автор — под карточкой", () => {
+  const feed = read("components", "ChatFeed.tsx");
+  assert.match(feed, /Сумма/, "итог подписан «Сумма», как на макете");
+  assert.match(feed, /text-4xl font-semibold tabular-nums/, "итог броска — крупным числом");
+  const rollAt = feed.indexOf("function RollCard");
+  const authorAt = feed.indexOf("{/* Автор под карточкой");
+  assert.ok(rollAt > 0 && authorAt > rollAt, "подпись автора идёт после карточки сообщения");
+  assert.match(
+    feed,
+    /color=\{colorOf\(message\.author\)\}/,
+    "кружок автора красится цветом профиля игрока",
+  );
+  assert.match(feed, /players: Player\[\]/, "лента знает игроков стола");
 });
 
 test("список персонажей больше не занимает вкладку: лист идёт на всю ширину", () => {
