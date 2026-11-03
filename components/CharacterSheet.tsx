@@ -39,6 +39,7 @@ import {
   rollAbilityScores,
   rollAge,
   rollStartingCoins,
+  sheetOrigins,
   shiftStats,
   skillAvailable,
   skillBonus,
@@ -329,6 +330,8 @@ export function CharacterSheet({
 }: CharacterSheetProps) {
   const [portraitFile, setPortraitFile] = useState<File | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
+  /** Чужие народы на листе: по умолчанию спрятаны, раскрываются кнопкой. */
+  const [originsOpen, setOriginsOpen] = useState(false);
   const [skillQuery, setSkillQuery] = useState("");
   const [knowledgeQuery, setKnowledgeQuery] = useState("");
   const [skillKind, setSkillKind] = useState<SkillKind | "all">("all");
@@ -381,6 +384,13 @@ export function CharacterSheet({
   const ageValue = Math.max(0, Math.min(AGE_MAX, Number(draft.fields.age) || 0));
   const overloaded = overloadedIds(draft.inventory, draft.stats);
   const origin = findOrigin(draft.origin);
+  /**
+   * На основном экране у героя видна только его карточка народа: шесть карточек
+   * с дарами и снаряжением занимали весь лист. Чужие раскрываются кнопкой, а
+   * пока происхождение не выбрано — видны все, иначе выбирать не из чего.
+   */
+  const visibleOrigins = sheetOrigins(draft.origin, originsOpen);
+  const hiddenOriginCount = ORIGINS.length - visibleOrigins.length;
   const languageBudget = languageSlots(draft.stats);
   const slotBudget = skillSlotBudget(draft.level, draft.stats);
   const slotUsage = skillsSlotUsage(draft.skills);
@@ -644,6 +654,8 @@ export function CharacterSheet({
       setNotice(`Происхождение даёт больше ${RULES.maxSkills} навыков и знаний.`);
       return;
     }
+    // Народ выбран — на листе остаётся его карточка, чужие снова прячем.
+    setOriginsOpen(false);
     patch({ origin: nextName, stats, skills, inventory, languages });
   }
 
@@ -2095,19 +2107,36 @@ export function CharacterSheet({
                   Происхождение даёт модификаторы характеристик (они сразу прибавляются к значениям),
                   два языка и культурный код: один конкретный навык и два знания. При смене народа
                   старые дары и их стартовое снаряжение снимаются.
+                  {origin && !originsOpen
+                    ? " Остальные народы скрыты: лист показывает только ваш."
+                    : ""}
                 </p>
-                <button
-                  type="button"
-                  disabled={!editing || !draft.origin}
-                  onClick={() => applyOrigin("")}
-                  className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
-                >
-                  Сбросить происхождение
-                </button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!editing || !draft.origin}
+                    onClick={() => applyOrigin("")}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                  >
+                    Сбросить происхождение
+                  </button>
+                  {origin ? (
+                    <button
+                      type="button"
+                      aria-expanded={originsOpen}
+                      onClick={() => setOriginsOpen((open) => !open)}
+                      className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200"
+                    >
+                      {originsOpen
+                        ? "Скрыть остальные народы"
+                        : `Показать остальные народы (${hiddenOriginCount})`}
+                    </button>
+                  ) : null}
+                </div>
               </section>
 
               <div className="grid gap-2 lg:grid-cols-2">
-                {ORIGINS.map((entry: OriginDef) => {
+                {visibleOrigins.map((entry: OriginDef) => {
                   const selected = draft.origin === entry.name;
                   return (
                     <button

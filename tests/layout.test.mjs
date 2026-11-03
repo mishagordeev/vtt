@@ -83,6 +83,35 @@ test("порядок блоков листа: характеристики → �
   );
 });
 
+test("народ на листе: виден только выбранный, остальные — за кнопкой", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  assert.match(
+    sheet,
+    /const \[originsOpen, setOriginsOpen\] = useState\(false\)/,
+    "чужие народы спрятаны по умолчанию",
+  );
+  assert.match(
+    sheet,
+    /const visibleOrigins = sheetOrigins\(draft\.origin, originsOpen\)/,
+    "список карточек считается по выбранному народу",
+  );
+  assert.match(sheet, /\{visibleOrigins\.map\(/, "на листе рисуются только видимые народы");
+  const gridAt = sheet.indexOf('<div className="grid gap-2 lg:grid-cols-2">');
+  const grid = sheet.slice(gridAt, sheet.indexOf("Особенности и изъяны", gridAt));
+  assert.ok(gridAt > 0 && grid.length > 0, "карточки народов лежат в своей сетке");
+  assert.ok(
+    !/\{ORIGINS\.map\(/.test(grid),
+    "сетка карточек больше не рисует полный список народов",
+  );
+  assert.match(sheet, /Показать остальные народы/, "остальные народы раскрываются кнопкой");
+  assert.match(sheet, /Скрыть остальные народы/, "раскрытый список можно свернуть обратно");
+  assert.match(
+    sheet,
+    /setOriginsOpen\(false\);\s*\n\s*patch\(\{ origin: nextName/,
+    "выбор народа снова прячет чужие карточки",
+  );
+});
+
 test("стол виден всегда, а правая панель идёт: музыка → персонажи → чат → ввод", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.ok(!/const TABS|setTab\(|tab === /.test(room), "вкладок стола больше нет");

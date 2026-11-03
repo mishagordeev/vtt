@@ -32,6 +32,7 @@ import {
   rollAbilityScores,
   rollAge,
   rollStartingCoins,
+  sheetOrigins,
   shiftStats,
   skillSlotBudget,
   skillsSlotUsage,
@@ -261,6 +262,19 @@ test("происхождения дают один навык и два знан
       assert.ok((STARTER_KITS[name] ?? []).length > 0, `нет набора для дара: ${name}`);
     }
   }
+});
+
+test("на листе виден только выбранный народ, остальные спрятаны", () => {
+  const chosen = ORIGINS[0].name;
+  assert.deepEqual(sheetOrigins(chosen, false), [ORIGINS[0]]);
+  assert.deepEqual(sheetOrigins(chosen, true), ORIGINS, "кнопка «Показать остальные народы» раскрывает всех");
+  assert.deepEqual(sheetOrigins("", false), ORIGINS, "без выбора показывать нечего скрывать");
+  assert.deepEqual(sheetOrigins(undefined, false), ORIGINS);
+  assert.deepEqual(
+    sheetOrigins("Народ из старой комнаты", false),
+    ORIGINS,
+    "незнакомое имя происхождения не должно оставлять лист без карточек",
+  );
 });
 
 test("у каждого навыка и знания есть стартовый набор из каталога", () => {

@@ -203,6 +203,19 @@ export function findOrigin(name: string | undefined): OriginDef | undefined {
   return ORIGINS.find((origin) => origin.name === name);
 }
 
+/**
+ * Народы на основном экране листа: у героя с выбранным происхождением видна
+ * только его карточка, чужие прячутся за кнопкой «Показать остальные народы».
+ * Пока происхождение не выбрано (или в листе осталось незнакомое имя из старой
+ * комнаты), отдаём весь список — иначе выбрать народ будет негде.
+ * `open` — игрок сам раскрыл чужие карточки на листе.
+ */
+export function sheetOrigins(name: string | undefined, open: boolean): OriginDef[] {
+  const chosen = findOrigin(name);
+  if (!chosen || open) return ORIGINS;
+  return [chosen];
+}
+
 export interface LanguageDef {
   name: string;
   description: string;
