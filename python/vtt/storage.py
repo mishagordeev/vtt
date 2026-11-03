@@ -10,6 +10,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from urllib import error as urlerror
@@ -336,6 +337,131 @@ def write_seen(code, seen):
         _side_write(code, "seen", seen)
     except OSError:
         pass
+
+
+def scan_codes():
+    """Коды всех комнат в хранилище: Redis SCAN по префиксу или файлы каталога.
+
+    Нужен админскому скрипту `python/rooms.py`: он показывает, что лежит в базе,
+    и чистит брошенные столы. Обычные запросы стола этот список не читают.
+    """
+    creds = credentials()
+    if not creds:
+        if not os.path.isdir(DATA_DIR):
+            return []
+        codes = []
+        for name in os.listdir(DATA_DIR):
+            if not name.endswith(".json") or name.startswith("."):
+                continue
+            stem = name[: -len(".json")]
+            # Рядом с комнатой лежат её боковые ключи `<КОД>.rev.json` и
+            # `<КОД>.seen.json` — это не отдельные комнаты.
+            if stem.endswith(".rev") or stem.endswith(".seen"):
+                continue
+            codes.append(stem)
+        return sorted(codes)
+
+    pattern = urlparse.quote(KEY_PREFIX + "*", safe="")
+    codes = set()
+    cursor = "0"
+    while True:
+        status, text = _redis(creds, "/scan/%s?match=%s&count=1000" % (cursor, pattern))
+        if status != 200:
+            raise storage_error(status, "read", snippet(text))
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            break
+        result = payload.get("result") or ["0", []]
+        cursor = str(result[0])
+        for key in result[1] if len(result) > 1 else []:
+            if key.startswith(KEY_PREFIX):
+                codes.add(key[len(KEY_PREFIX):])
+        if cursor == "0":
+            break
+    return sorted(codes)
+
+
+def room_size(code):
+    """Размер документа комнаты в байтах: STRLEN в Redis, длина файла на диске."""
+    creds = credentials()
+    if creds:
+        status, text = _redis(creds, "/strlen/" + urlparse.quote(storage_key(code), safe=""))
+        if status != 200:
+            raise storage_error(status, "read", snippet(text))
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            payload = {}
+        try:
+            return int(payload.get("result") or 0)
+        except (TypeError, ValueError):
+            return 0
+    try:
+        return os.path.getsize(_room_path(code))
+    except OSError:
+        return 0
+
+
+def room_ttl(code):
+    """Сколько секунд осталось комнате: -2 — её нет, -1 — срок не задан."""
+    creds = credentials()
+    if creds:
+        status, text = _redis(creds, "/ttl/" + urlparse.quote(storage_key(code), safe=""))
+        if status != 200:
+            raise storage_error(status, "read", snippet(text))
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            payload = {}
+        try:
+            return int(float(payload.get("result")))
+        except (TypeError, ValueError):
+            return -2
+    try:
+        modified = os.path.getmtime(_room_path(code))
+    except OSError:
+        return -2
+    left = int(ROOM_TTL_SECONDS - (time.time() - modified))
+    return left if left > 0 else -2
+
+
+def delete_room(code):
+    """Удаляет комнату вместе с боковыми ключами и звуком; возвращает, что стёрто.
+
+    Комнату нельзя удалить через API — только отсюда. Боковые ключи (`rev`,
+    `seen`) убираются обязательно: иначе голова переживёт стол и клиент будет
+    считать, что удалённая комната на месте.
+    """
+    creds = credentials()
+    if creds:
+        removed = []
+        for key in (storage_key(code), rev_key(code), seen_key(code)):
+            status, text = _redis(
+                creds, "/del/" + urlparse.quote(key, safe=""), body="", method="POST"
+            )
+            if status != 200:
+                raise storage_error(status, "write", snippet(text))
+            try:
+                payload = json.loads(text) if text else {}
+            except ValueError:
+                payload = {}
+            if int(payload.get("result") or 0) > 0:
+                removed.append(key)
+        return removed
+
+    removed = []
+    for path in (_room_path(code), _side_path(code, "rev"), _side_path(code, "seen")):
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+        removed.append(os.path.basename(path))
+    music = os.path.join(DATA_DIR, "music", code)
+    if os.path.isdir(music):
+        shutil.rmtree(music, ignore_errors=True)
+        removed.append("music/%s/" % code)
+    return removed
 
 
 def probe(deep=False):

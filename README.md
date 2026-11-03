@@ -441,6 +441,13 @@ py -3.13 python/devserver.py --static out --port 8788  # весь сайт ло�
 комплекта), затем та же команда без флага. У батника есть `--fast` (без сборки), `--check`,
 `--archive` (zip для файлового менеджера панели) и `--no-pause` (для панели и скриптов).
 
+Брошенные комнаты держат базу столько же, сколько живые: срок жизни — 30 дней от
+последней записи. `py -3.13 python/rooms.py` показывает, что лежит в базе (сообщения,
+листы, размер, остаток срока), `delete <код…>` печатает план и ничего не удаляет, а
+`delete <код…> --apply --backup <каталог>` стирает комнату после подтверждения, оставив
+копию документа. Комнаты с листами и длинной лентой скрипт не трогает без `--force`;
+подробности — `python/README.md`, раздел «Чистка комнат».
+
 Что куда кладётся в `public_html`, какие правила Apache нужны (`/api/**` → `api.wsgi`,
 `/r/<КОД>` → `r/index.html`, закрытые `python/` и `keys.env`) — в `deploy/apache/README.md`
 и `python/README.md`. В статической сборке нет обработчиков `app/api` и динамического
@@ -686,6 +693,10 @@ deploy/
   nginx/vtt.conf               reverse proxy на 127.0.0.1:3000 (HTTPS добавляет certbot)
   apache/.htaccess             виртуальный хостинг: /api/** → api.wsgi, /r/<КОД> → r/index.html
   apache/README.md             раскладка out/ + python/ на SpaceWeb и проверка
+python/
+  devserver.py                 локальный сервер WSGI вместо Apache (--static out — весь сайт на одном порту)
+  rooms.py                     чистка комнат в базе: список, сухой прогон и удаление с подтверждением
+  vtt/                         порт lib/: store.py, storage.py (Redis и файлы), characters.py, web.py
 .github/workflows/
   deploy.yml                   автодеплой из GitHub: проверки, сборка, архив, выкладка по ssh
 tests/
@@ -705,6 +716,7 @@ tests/
   export-calendar.test.mjs     выгрузка календаря на копии книг: идемпотентность, --check и расхождение с lib/calendar.ts
   sync-books.test.mjs          книги на копии: идемпотентность, расхождения, минимумы навыков, 2.7, пропавший блок и каталог, пропуск книги правил, нет книги игрока
   deploy.test.mjs              релиз для сервера из фиктивной сборки и согласованность workflow, юнита, nginx и скриптов
+  rooms-admin.test.mjs         python/rooms.py на фейковом Upstash: список, сухой прогон, удаление с ключами rev/seen и защитой
   static-export.test.mjs       статика для Apache: конфиг, пометки node.*, .htaccess, форматы карты и живой сервер по этим правилам
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "poison-press",
-  "version": "0.4.80",
+  "version": "0.4.81",
   "private": true,
   "description": "VTT РґР»СЏ РЅР°СЃС‚РѕР»СЊРЅРѕР№ РёРіСЂС‹ В«Р’С‚РѕСЂС‹РµВ»: С‡Р°С‚, Р±СЂРѕСЃРєРё, РїРµСЂСЃРѕРЅР°Р¶Рё",
   "scripts": {
@@ -9,7 +9,7 @@
     "build:static": "node tools/build-static.cjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/characters.test.mjs tests/layout.test.mjs tests/sheet-live-edit.test.mjs tests/rooms-memory.test.mjs tests/map-text.test.mjs tests/map-tabs.test.mjs tests/client-recovery.test.mjs tests/room-head.test.mjs tests/room-parts.test.mjs tests/room-writes.test.mjs tests/theme.test.mjs tests/youtube.test.mjs tests/tracks.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs tests/deploy.test.mjs tests/python-backend.test.mjs tests/static-export.test.mjs tests/route-manifests.test.mjs",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/dice.test.mjs tests/rules.test.mjs tests/calendar.test.mjs tests/characters.test.mjs tests/layout.test.mjs tests/sheet-live-edit.test.mjs tests/rooms-memory.test.mjs tests/map-text.test.mjs tests/map-tabs.test.mjs tests/client-recovery.test.mjs tests/room-head.test.mjs tests/room-parts.test.mjs tests/room-writes.test.mjs tests/theme.test.mjs tests/youtube.test.mjs tests/tracks.test.mjs tests/catalog-export.test.mjs tests/export-calendar.test.mjs tests/sync-books.test.mjs tests/deploy.test.mjs tests/rooms-admin.test.mjs tests/python-backend.test.mjs tests/static-export.test.mjs tests/route-manifests.test.mjs",
     "rules:catalog": "node tools/export-rules.cjs",
     "rules:books": "node tools/export-rules.cjs && node tools/sync-books.cjs",
     "python:data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tools/export-python-data.mjs",
