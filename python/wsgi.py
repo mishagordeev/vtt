@@ -112,6 +112,7 @@ def _state_marks(params):
         "music": _since(params.get("musicSince")),
         "world": _since(params.get("worldSince")),
         "players": _since(params.get("playersSince")),
+        "pings": _since(params.get("pingsSince")),
         "portraits": _portraits(params.get("portraits")),
     }
 
@@ -204,7 +205,7 @@ def apply(environ, start_response, method):
             if method != "POST":
                 return respond(start_response, 405, {"error": "Метод не поддерживается"})
             message = store.post_message(code, body.get("author"), body.get("text"))
-            return respond(start_response, 200, {"message": message})
+            return respond(start_response, 200, message)
         if method != "DELETE":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})
         actor = params.get("actor", body.get("actor"))
@@ -215,7 +216,7 @@ def apply(environ, start_response, method):
             if method != "POST":
                 return respond(start_response, 405, {"error": "Метод не поддерживается"})
             character = store.create_character(code, body.get("owner"), body.get("character"))
-            return respond(start_response, 200, {"character": character})
+            return respond(start_response, 200, character)
         if extra == "players":
             if method != "PATCH":
                 return respond(start_response, 405, {"error": "Метод не поддерживается"})
@@ -226,18 +227,19 @@ def apply(environ, start_response, method):
         if method == "PATCH":
             patch = body.get("patch") if body.get("patch") is not None else body.get("character")
             character = store.update_character(code, entry_id, body.get("actor"), patch)
-            return respond(start_response, 200, {"character": character})
+            return respond(start_response, 200, character)
         if method == "DELETE":
             actor = params.get("actor", body.get("actor"))
-            store.delete_character(code, entry_id, actor)
-            return respond(start_response, 200, {"ok": True})
+            deleted = store.delete_character(code, entry_id, actor)
+            return respond(start_response, 200, deleted)
         return respond(start_response, 405, {"error": "Метод не поддерживается"})
 
     if resource == "map" and not entry_id:
         if method != "POST":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})
+        # На `only: "ping"` в теле ответа только метка: карту ради неё не гоняем.
         state = store.update_map(code, body.get("actor"), body)
-        return respond(start_response, 200, {"map": state})
+        return respond(start_response, 200, state)
 
     if resource == "music" and not entry_id:
         if method != "POST":

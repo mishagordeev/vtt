@@ -88,6 +88,7 @@ test("запрос /state собирается из меток и разбира
     music: 1730612345680,
     world: 1730612345681,
     players: 173061234567899,
+    pings: 1730612345682,
     portraits: { chr_ab12cd34ef56: "1a-1kf9" },
   };
   const query = snapshotQuery(request);
@@ -99,6 +100,7 @@ test("запрос /state собирается из меток и разбира
   assert.equal(parsed.music, request.music);
   assert.equal(parsed.world, request.world);
   assert.equal(parsed.players, request.players, "метка игроков больше 2^32 — целое");
+  assert.equal(parsed.pings, request.pings, "у меток на карте своя метка времени");
   assert.deepEqual(parsed.portraits, request.portraits, "подписи портретов едут в запросе");
 });
 
@@ -205,7 +207,7 @@ test("сервер отдаёт части только при изменени�
     /function partChanged\(mark: number, since: number\): boolean \{\s*return since <= 0 \|\| mark !== since;/,
     "часть приходит, если клиент её не видел или она изменилась",
   );
-  for (const part of ["players", "chars", "map", "music", "world"]) {
+  for (const part of ["players", "chars", "map", "pings", "music", "world"]) {
     assert.match(
       head,
       new RegExp(`if \\(partChanged\\(marks\\.${part}, request\\.${part}\\)\\)`),

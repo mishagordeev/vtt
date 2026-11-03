@@ -713,7 +713,7 @@ test("Python-сервер: комната, чат с броском, лист, �
     `/api/rooms/${code}/characters/${character.id}?actor=Мастер`,
   );
   assert.equal(removedSheet.status, 200);
-  assert.equal(removedSheet.payload.ok, true);
+  assert.equal(removedSheet.payload.id, character.id, "удаление листа должно вернуть его id");
 
   const removedPlayer = await call(
     baseUrl,
@@ -851,8 +851,8 @@ test("Python-сервер: частичное чтение отдаёт толь
   }
   assert.deepEqual(
     Object.keys(full.payload.marks).sort(),
-    ["chars", "map", "music", "players", "world"],
-    "снимок отдаёт метки частей",
+    ["chars", "map", "music", "pings", "players", "world"],
+    "снимок отдаёт метки частей, включая метки на карте",
   );
   const ids = full.payload.characters.map((character) => character.id).sort();
   assert.deepEqual(full.payload.characterIds.slice().sort(), ids, "id листов приходят всегда");
@@ -866,6 +866,7 @@ test("Python-сервер: частичное чтение отдаёт толь
       musicSince: String(snapshot.marks.music),
       worldSince: String(snapshot.marks.world),
       playersSince: String(snapshot.marks.players),
+      pingsSince: String(snapshot.marks.pings),
     });
     const keys = (snapshot.characters ?? []).map(
       (character) => `${character.id}.${character.portraitKey}`,
@@ -878,7 +879,7 @@ test("Python-сервер: частичное чтение отдаёт толь
   // --- ничего не менялось: части не едут ---
   const quiet = await call(baseUrl, "GET", partial(full.payload));
   assert.equal(quiet.status, 200, server.log());
-  for (const part of ["players", "characters", "map", "music", "world"]) {
+  for (const part of ["players", "characters", "map", "pings", "music", "world"]) {
     assert.equal(part in quiet.payload, false, `часть ${part} приехала без изменений`);
   }
   assert.deepEqual(quiet.payload.characterIds.slice().sort(), ids, "id листов приходят всегда");
@@ -898,6 +899,17 @@ test("Python-сервер: частичное чтение отдаёт толь
     patch: { fields: { notes: "поправил навык" } },
   });
   assert.equal(edited.status, 200, server.log());
+  // Ответ на запись применяется на клиенте как есть: в нём номер изменения,
+  // метки частей и сам лист — но без картинки, иначе каждое автосохранение
+  // везло бы портрет до 260 КБ в обе стороны.
+  assert.ok(edited.payload.rev > 0, "ответ на правку листа без номера изменения");
+  assert.deepEqual(
+    Object.keys(edited.payload.marks).sort(),
+    ["chars", "map", "music", "pings", "players", "world"],
+    "ответ на правку листа без меток частей",
+  );
+  assert.equal(edited.payload.character.portrait, "", "портрет приехал в ответ на правку");
+  assert.equal(edited.payload.character.fields.notes, "поправил навык");
   const afterEdit = await call(baseUrl, "GET", partial(full.payload));
   assert.equal(afterEdit.status, 200, server.log());
   assert.ok(Array.isArray(afterEdit.payload.characters), "изменённый лист должен приехать");
@@ -954,6 +966,124 @@ test("Python-сервер: частичное чтение отдаёт толь
   assert.equal(legacy.status, 200, server.log());
   assert.equal(legacy.payload.characters.length, 1);
   assert.ok(legacy.payload.characters[0].portrait.length > 7000, "портрет пропал без подписей");
+
+  // --- метка на карте: своя мелкая часть вместо всей карты ---
+  const stroke = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "stroke",
+    color: "#22c55e",
+    width: 0.01,
+    points: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.7, y: 0.7 },
+    ],
+  });
+  assert.equal(stroke.status, 200, server.log());
+  assert.ok(stroke.payload.rev > 0, "ответ на действие с картой без номера изменения");
+
+  const light = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "ping",
+    only: "ping",
+    tab: stroke.payload.map.tabs[0].id,
+    x: 0.4,
+    y: 0.6,
+  });
+  assert.equal(light.status, 200, server.log());
+  assert.equal("map" in light.payload, false, "на ping приехала вся карта");
+  assert.equal(light.payload.ping.color, "#fb7185", "сама метка не приехала");
+  assert.ok(light.payload.rev > stroke.payload.rev, "метка не подняла номер изменения");
+  assert.ok(light.payload.marks.pings > 0, "нет метки меток на карте");
+  const lightSize = JSON.stringify(light.payload).length;
+  assert.ok(lightSize < 1000, `ответ на метку весит ${lightSize} Б`);
+
+  // Без `only` приходит карта целиком — так работает открытая старая страница.
+  const heavy = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Игрок",
+    action: "ping",
+    x: 0.2,
+    y: 0.3,
+  });
+  assert.equal(heavy.status, 200, server.log());
+  assert.ok(heavy.payload.map.pings.length >= 1, "старый клиент не получил карту с меткой");
+
+  // Частичное чтение: метки приходят своей частью, карта — нет.
+  const pingsQuery = new URLSearchParams({
+    charsSince: String(heavy.payload.marks.chars),
+    mapSince: String(heavy.payload.marks.map),
+    musicSince: String(heavy.payload.marks.music),
+    worldSince: String(heavy.payload.marks.world),
+    playersSince: String(heavy.payload.marks.players),
+    pingsSince: "0",
+  });
+  const pingsOnly = await call(baseUrl, "GET", `/api/rooms/${code}/state?${pingsQuery.toString()}`);
+  assert.equal(pingsOnly.status, 200, server.log());
+  assert.ok(Array.isArray(pingsOnly.payload.pings), "метки не приехали своей частью");
+  assert.equal("map" in pingsOnly.payload, false, "карта приехала ради меток");
+});
+
+test("Python-сервер: мутация возвращает rev и метки, а не снимок", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl } = server;
+
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  assert.equal(created.status, 200);
+  const code = created.payload.code;
+  await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name: "Мастер" });
+
+  const portrait = `data:image/png;base64,${"Z".repeat(6000)}`;
+  const sheet = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Мастер",
+    character: {
+      name: "С картинкой",
+      level: 1,
+      origin: rules.origins[0].name,
+      portrait,
+      portraitFull: portrait,
+      stats: { str: 12, dex: 14, con: 13, int: 10, wis: 11, cha: 9 },
+      skills: [],
+      traits: [],
+      flaws: [],
+      inventory: [],
+      fields: {},
+    },
+  });
+  assert.equal(sheet.status, 200, server.log());
+  assert.equal(sheet.payload.character.portrait, "", "в ответе на создание приехал портрет");
+  assert.ok(sheet.payload.rev > 0, "создание листа без номера изменения");
+
+  // В хранилище портрет остался: частичное чтение его отдаёт при смене подписи.
+  const full = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
+  const stored = full.payload.characters.find((entry) => entry.id === sheet.payload.character.id);
+  assert.equal(stored.portrait, portrait, "портрет потерялся при записи листа");
+
+  const message = await call(baseUrl, "POST", `/api/rooms/${code}/messages`, {
+    author: "Мастер",
+    text: "проверка ответа",
+  });
+  assert.equal(message.status, 200, server.log());
+  assert.ok(message.payload.message.seq > 0, "сообщение без номера в ленте");
+  assert.ok(message.payload.rev > sheet.payload.rev, "своё сообщение не подняло rev");
+  assert.ok(message.payload.marks, "ответ на сообщение без меток частей");
+
+  const assigned = await call(
+    baseUrl,
+    "PATCH",
+    `/api/rooms/${code}/characters/${sheet.payload.character.id}/players`,
+    { actor: "Мастер", players: ["Мастер"] },
+  );
+  assert.equal(assigned.status, 200, server.log());
+  assert.equal(assigned.payload.character.portrait, "", "назначение игроков вернуло портрет");
+  assert.ok(assigned.payload.marks.players > 0, "нет метки игроков");
+
+  const deleted = await call(
+    baseUrl,
+    "DELETE",
+    `/api/rooms/${code}/characters/${sheet.payload.character.id}?actor=${encodeURIComponent("Мастер")}`,
+  );
+  assert.equal(deleted.status, 200, server.log());
+  assert.equal(deleted.payload.id, sheet.payload.character.id, "удаление без id листа");
+  assert.ok(deleted.payload.rev > assigned.payload.rev, "удаление не подняло rev");
 });
 
 test("Python-сервер: понятные ошибки вместо 500", async (t) => {
@@ -1106,6 +1236,8 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
     "fields",
   ];
 
+  /** Созданные листы: id и ожидаемый черновик — портреты сверим по комнате. */
+  const saved = [];
   for (const [index, sample] of samples.entries()) {
     const expected = normalizeDraft(sample);
     assert.notEqual(expected.name, "", `лист ${index}: имя должно остаться`);
@@ -1116,8 +1248,20 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
     assert.equal(response.status, 200, `лист ${index}: ${server.log()}`);
     const actual = response.payload.character;
     for (const key of draftKeys) {
+      // Картинки в ответе на запись не ездят: портрет клиент и так прислал сам.
+      if (key === "portrait" || key === "portraitFull") continue;
       assert.deepEqual(actual[key], expected[key], `лист ${index}: поле ${key}`);
     }
+    saved.push({ id: actual.id, expected });
+  }
+
+  // В комнате портреты на месте — их отдаёт чтение, а не ответ на запись.
+  const snapshot = await call(baseUrl, "GET", `/api/rooms/${code}/state`);
+  for (const [index, entry] of saved.entries()) {
+    const stored = snapshot.payload.characters.find((character) => character.id === entry.id);
+    assert.ok(stored, `лист ${index}: не найден в комнате`);
+    assert.deepEqual(stored.portrait, entry.expected.portrait, `лист ${index}: портрет потерялся`);
+    assert.equal(stored.portraitFull, "", "полная картинка в снимок не входит");
   }
 });
 

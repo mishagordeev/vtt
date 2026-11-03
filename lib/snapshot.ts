@@ -5,10 +5,12 @@ import type { Character, RoomSnapshot, SnapshotRequest } from "./types";
  *
  * Полный снимок стола весит до 1,5 МБ: портреты, карта и вся лента приходят
  * в каждом ответе `/api/rooms/<КОД>/state`. Поэтому у запроса есть метки частей
- * (`charsSince`, `mapSince`, `musicSince`, `worldSince`, `playersSince`): клиент
- * присылает то, что уже знает, и получает только изменившееся. Портрет стоит
- * до 260 КБ, поэтому у него отдельная подпись в `portraits=`: лист приходит без
- * картинки, если подпись у клиента та же. Правка навыка стоит 2 КБ вместо 1,5 МБ.
+ * (`charsSince`, `mapSince`, `musicSince`, `worldSince`, `playersSince`,
+ * `pingsSince`): клиент присылает то, что уже знает, и получает только
+ * изменившееся. Портрет стоит до 260 КБ, поэтому у него отдельная подпись
+ * в `portraits=`: лист приходит без картинки, если подпись у клиента та же.
+ * Метки на карте — своя мелкая часть: щелчок по карте не тянет всю карту.
+ * Правка навыка стоит 2 КБ вместо 1,5 МБ.
  *
  * Здесь только чистые функции: их берут и клиент, и Next-роут; Python повторяет
  * правила в `python/vtt/store.py`.
@@ -16,7 +18,7 @@ import type { Character, RoomSnapshot, SnapshotRequest } from "./types";
 
 /** Пустые метки: клиент ещё ничего не видел — `/state` вернёт все части. */
 export function emptySnapshotRequest(): SnapshotRequest {
-  return { since: 0, chars: 0, map: 0, music: 0, world: 0, players: 0, portraits: {} };
+  return { since: 0, chars: 0, map: 0, music: 0, world: 0, players: 0, pings: 0, portraits: {} };
 }
 
 /**
@@ -70,6 +72,7 @@ export function parseSnapshotMarks(params: URLSearchParams): SnapshotRequest {
     music: readMark(params.get("musicSince")),
     world: readMark(params.get("worldSince")),
     players: readMark(params.get("playersSince")),
+    pings: readMark(params.get("pingsSince")),
     portraits: parsePortraits(params.get("portraits")),
   };
 }
@@ -83,6 +86,7 @@ export function snapshotQuery(request: SnapshotRequest): string {
     musicSince: String(request.music),
     worldSince: String(request.world),
     playersSince: String(request.players),
+    pingsSince: String(request.pings),
   });
   const portraits = request.portraits ?? {};
   const pairs = Object.keys(portraits)
@@ -128,7 +132,10 @@ export function nextMarks(request: SnapshotRequest, snapshot: RoomSnapshot): Sna
  * больше нет. Старый сервер присылает снимок целиком, без списка id, — тогда
  * ответ заменяет состояние как раньше.
  */
-export function mergeCharacters(previous: Character[], snapshot: RoomSnapshot): Character[] {
+export function mergeCharacters(
+  previous: Character[],
+  snapshot: Pick<RoomSnapshot, "characters" | "characterIds">,
+): Character[] {
   const incoming = snapshot.characters;
   if (!incoming) return previous;
   const ids = snapshot.characterIds;

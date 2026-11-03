@@ -101,13 +101,15 @@ def default_map_tab(created_at=None):
 
 
 def empty_map():
+    now = _now()
     return {
         "tabs": [default_map_tab()],
         "strokes": [],
         "texts": [],
         "cursors": {},
         "pings": [],
-        "updatedAt": _now(),
+        "pingsAt": now,
+        "updatedAt": now,
     }
 
 
@@ -489,18 +491,28 @@ def get_room_head(code, raw_name=""):
 
 def with_room(code, handler):
     """Прочитал → изменил → записал, под блокировкой комнаты."""
+    return write_room(code, handler)[0]
+
+
+def write_room(code, handler):
+    """То же, но с номером изменения и метками частей — их отдаёт каждая мутация.
+
+    `rev` и `marks` считаются после записи: клиент кладёт ответ в своё состояние
+    сам и не делает второе чтение ради тех же данных (это и была самая большая
+    статья трафика — полный снимок на каждое сохранение листа).
+    """
     with storage.room_lock(code):
         doc = read_doc(code)
         if doc is None:
             raise AppError(404, ROOM_NOT_FOUND)
-        result = handler(doc)
+        value = handler(doc)
         # Номер изменения растёт на каждую запись — по нему клиент узнаёт,
         # что комнату надо перечитать, не читая сам документ.
         rev = doc_rev(doc) + 1
         doc["rev"] = rev
         storage.write_doc(doc)
         write_head(code, rev)
-        return result
+        return value, {"rev": rev, "marks": snapshot_marks(doc)}
 
 
 def create_room():
@@ -612,6 +624,40 @@ def _part_changed(mark, since):
     return since <= 0 or mark != since
 
 
+def pings_mark(doc):
+    """Метка меток на карте: своя, чтобы щелчок по карте не тянул всю карту.
+
+    В комнатах до 0.4.77 поля `pingsAt` нет — тогда метка идёт от `updatedAt`.
+    """
+    state = as_dict(doc.get("map"))
+    return int(number_or(state.get("pingsAt"), 0)) or int(number_or(state.get("updatedAt"), 0))
+
+
+def snapshot_marks(doc):
+    """Текущие метки частей комнаты: их отдают `/state` и любая мутация.
+
+    Одна функция на оба ответа — иначе клиент после своей записи сравнивал бы
+    метки из разных мест и перечитывал то, что уже пришло.
+    """
+    return {
+        "chars": characters_mark(doc),
+        "map": int(number_or(as_dict(doc.get("map")).get("updatedAt"), 0)),
+        "music": int(number_or(as_dict(doc.get("music")).get("updatedAt"), 0)),
+        "world": int(number_or(as_dict(doc.get("world")).get("updatedAt"), 0)),
+        "players": players_mark(doc),
+        "pings": pings_mark(doc),
+    }
+
+
+def live_pings(doc, now):
+    """Метки на карте, которые ещё живут на столе: старые не гоняем зря."""
+    return [
+        ping
+        for ping in as_list(as_dict(doc.get("map")).get("pings"))
+        if now - int(number_or(as_dict(ping).get("createdAt"), 0)) <= MAX_PING_AGE
+    ]
+
+
 def changed_characters(characters, marks):
     """Листы, которые клиенту нужно обновить: изменённые после его метки.
 
@@ -653,13 +699,7 @@ def get_room_snapshot(code, marks=None):
         except (AppError, OSError):
             pass  # если запись не удалась, состояние всё равно отдаём без дублей
 
-    counters = {
-        "chars": characters_mark(doc),
-        "map": int(number_or(as_dict(doc.get("map")).get("updatedAt"), 0)),
-        "music": int(number_or(as_dict(doc.get("music")).get("updatedAt"), 0)),
-        "world": int(number_or(as_dict(doc.get("world")).get("updatedAt"), 0)),
-        "players": players_mark(doc),
-    }
+    counters = snapshot_marks(doc)
     messages = doc.get("messages") or []
     since = int(number_or(request.get("since"), 0))
     if since > 0:
@@ -683,6 +723,10 @@ def get_room_snapshot(code, marks=None):
         snapshot["characters"] = changed_characters(as_list(doc.get("characters")), request)
     if _part_changed(counters["map"], request.get("map")):
         snapshot["map"] = doc.get("map")
+    # Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
+    # до 179 КБ у всех, кто в этот момент читает комнату.
+    if _part_changed(counters["pings"], request.get("pings")):
+        snapshot["pings"] = live_pings(doc, snapshot["serverNow"])
     if _part_changed(counters["music"], request.get("music")):
         snapshot["music"] = doc.get("music")
     if _part_changed(counters["world"], request.get("world")):
@@ -744,6 +788,19 @@ def heartbeat(code, raw_name):
     with_room(code, handler)
 
 
+def light_character(character):
+    """Лист для ответа на запись — без картинок.
+
+    Портрет стоит до 260 КБ, полная картинка — до 560 КБ, и гонять их туда-обратно
+    на каждое автосохранение незачем: клиент прислал портрет в правке или уже
+    имеет его у себя, а в документе комнаты он остаётся целиком.
+    """
+    copy = dict(character)
+    copy["portrait"] = ""
+    copy["portraitFull"] = ""
+    return copy
+
+
 def post_message(code, raw_author, raw_text):
     """Сообщение в чат: сервер сам ищет в тексте бросок и бросает кубики."""
     author = normalize_name(raw_author)
@@ -771,7 +828,8 @@ def post_message(code, raw_author, raw_text):
             message["roll"] = roll
         return append_message(doc, message)
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {"message": value, **meta}
 
 
 def required_flaws(traits):
@@ -830,7 +888,8 @@ def create_character(code, raw_owner, raw_draft):
         rebuild_character_players(doc)
         return character
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {"character": light_character(value), **meta}
 
 
 def _patch_value(patch, key, fallback):
@@ -931,7 +990,8 @@ def update_character(code, character_id, raw_actor, raw_patch):
         touch_player(doc, actor)
         return character
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {"character": light_character(value), **meta}
 
 
 def delete_character(code, character_id, raw_actor):
@@ -954,9 +1014,10 @@ def delete_character(code, character_id, raw_actor):
             linked = [entry for entry in as_list(player.get("characterIds")) if entry != character_id]
             player["characterIds"] = linked
         rebuild_character_players(doc)
-        return None
+        return character_id
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {"id": value, **meta}
 
 
 def set_character_players(code, character_id, raw_actor, raw_players):
@@ -1003,7 +1064,12 @@ def set_character_players(code, character_id, raw_actor, raw_players):
         character["updatedAt"] = _now()
         return {"character": character, "players": doc["players"]}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {
+        "character": light_character(value["character"]),
+        "players": value["players"],
+        **meta,
+    }
 
 
 def _map_coord(value):
@@ -1099,12 +1165,18 @@ def _stroke_touched(stroke, erase_points, radius):
 
 
 def update_map(code, raw_actor, raw_action):
-    """Действия с картой: метка, линия, ластик, надписи, очистка и вкладки."""
+    """Действия с картой: метка, линия, ластик, надписи, очистка и вкладки.
+
+    Метка возвращается отдельной мелкой частью: клиент просит лёгкий ответ
+    (`only: "ping"`) и получает только её, а не всю карту до 179 КБ. Без `only`
+    карта приходит целиком — так работает открытая старая страница.
+    """
     actor = normalize_name(raw_actor)
     if not actor:
         raise AppError(400, "Сначала войдите в комнату")
     action = as_dict(raw_action)
     kind = str(action.get("action") or "")
+    only = _as_text(action.get("only"))
 
     def handler(doc):
         ensure_map(doc)
@@ -1115,6 +1187,10 @@ def update_map(code, raw_actor, raw_action):
         tabs = ensure_map_tabs(state.get("tabs"))
         state["tabs"] = tabs
         now = _now()
+        # Сколько меток было до действия: если список усох (старые истекли или ушли
+        # вместе с вкладкой), это тоже изменение своей части.
+        pings_before = len(as_list(state.get("pings")))
+        ping = None
         # К какой вкладке относится действие: рисование, метка, надпись и очистка
         # работают только с выбранной картой, остальные вкладки не трогаются.
         tab_id = _map_tab_id(tabs, action.get("tab"))
@@ -1130,17 +1206,16 @@ def update_map(code, raw_actor, raw_action):
                 own_color = profile.get("color")
             color = own_color or _color_or(action.get("color"), "#fb7185")
             pings = as_list(state.get("pings"))
-            pings.append(
-                {
-                    "id": uid("png"),
-                    "name": actor,
-                    "x": x,
-                    "y": y,
-                    "color": color,
-                    "createdAt": now,
-                    "tab": tab_id,
-                }
-            )
+            ping = {
+                "id": uid("png"),
+                "name": actor,
+                "x": x,
+                "y": y,
+                "color": color,
+                "createdAt": now,
+                "tab": tab_id,
+            }
+            pings.append(ping)
             if len(pings) > MAX_PINGS:
                 del pings[: len(pings) - MAX_PINGS]
             state["pings"] = pings
@@ -1291,14 +1366,25 @@ def update_map(code, raw_actor, raw_action):
             raise AppError(400, "Неизвестное действие с картой")
 
         state["pings"] = [
-            ping
-            for ping in as_list(state.get("pings"))
-            if now - number_or(as_dict(ping).get("createdAt"), 0) <= MAX_PING_AGE
+            ping_entry
+            for ping_entry in as_list(state.get("pings"))
+            if now - number_or(as_dict(ping_entry).get("createdAt"), 0) <= MAX_PING_AGE
         ]
-        state["updatedAt"] = now
-        return state
+        # Метка двигает свою метку и не трогает метку карты: иначе щелчок по карте
+        # заставлял бы всех перечитывать её целиком.
+        if ping is not None:
+            state["pingsAt"] = now
+        elif len(state["pings"]) != pings_before:
+            state["pingsAt"] = now
+        if ping is None:
+            state["updatedAt"] = now
+        return {"map": state, "ping": ping}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    # Лёгкий ответ: только сама метка. Без `only` карта приходит целиком, как раньше.
+    if only == "ping" and value.get("ping"):
+        return {"ping": value["ping"], **meta}
+    return {"map": value["map"], **meta}
 
 
 def _as_text(value):
@@ -1378,7 +1464,8 @@ def add_file_track(code, raw_actor, track_id, raw_title, size):
         music["updatedAt"] = now
         return {"music": music, "track": track, "serverNow": now}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {**value, **meta}
 
 
 def track_info(code):
@@ -1493,12 +1580,12 @@ def update_music(code, raw_actor, raw_action):
         music["updatedAt"] = now
         return {"music": music, "serverNow": now}
 
-    result = with_room(code, handler)
+    value, meta = write_room(code, handler)
     # Файл удаляем после записи документа: если запись не прошла, трек остался
     # в комнате и mp3 должен остаться вместе с ним.
     for track_id in removed_files:
         tracks.delete(code, track_id)
-    return result
+    return {**value, **meta}
 
 
 def world_minutes(world, now):
@@ -1574,7 +1661,8 @@ def update_world(code, raw_actor, raw_action):
         world["updatedAt"] = now
         return {"world": world, "serverNow": now}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {**value, **meta}
 
 
 def update_player(code, raw_actor, raw_target, raw_patch):
@@ -1650,7 +1738,13 @@ def update_player(code, raw_actor, raw_target, raw_patch):
             "renamedTo": player.get("name"),
         }
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    # Листы в ответе без картинок: клиент их уже имеет, а переименование не про них.
+    return {
+        **value,
+        "characters": [light_character(entry) for entry in as_list(value.get("characters"))],
+        **meta,
+    }
 
 
 def remove_player(code, raw_actor, raw_target):
@@ -1672,7 +1766,7 @@ def remove_player(code, raw_actor, raw_target):
             raise AppError(400, "Мастер не может удалить себя")
         now = _now()
         doc["players"] = [entry for entry in doc["players"] if entry is not player]
-        append_message(
+        message = append_message(
             doc,
             {
                 "kind": "system",
@@ -1681,9 +1775,10 @@ def remove_player(code, raw_actor, raw_target):
                 "createdAt": now,
             },
         )
-        return {"players": doc["players"]}
+        return {"players": doc["players"], "message": message}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {**value, **meta}
 
 
 def delete_message(code, raw_actor, raw_id):
@@ -1712,7 +1807,8 @@ def delete_message(code, raw_actor, raw_id):
         touch_player(doc, actor)
         return {"id": message_id, "deletedMessages": doc["deletedMessages"]}
 
-    return with_room(code, handler)
+    value, meta = write_room(code, handler)
+    return {**value, **meta}
 
 
 def health(deep=False):

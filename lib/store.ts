@@ -19,7 +19,7 @@ import {
   nextMapTabName,
 } from "./mapTabs.ts";
 import { RULES } from "./rules";
-import { portraitKey } from "./snapshot";
+import { emptySnapshotRequest, portraitKey } from "./snapshot";
 import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
 import type {
@@ -37,6 +37,7 @@ import type {
   RoomHead,
   RoomSnapshot,
   RoomState,
+  RoomWriteMeta,
   SnapshotMarks,
   SnapshotRequest,
   StorageHealth,
@@ -73,13 +74,15 @@ const MAX_WEATHER_SEED = 100_000;
 const PLAYER_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 export function emptyMap(): MapState {
+  const now = Date.now();
   return {
     tabs: [defaultMapTab()],
     strokes: [],
     texts: [],
     cursors: {},
     pings: [],
-    updatedAt: Date.now(),
+    pingsAt: now,
+    updatedAt: now,
   };
 }
 
@@ -652,7 +655,17 @@ async function writeDoc(doc: RoomState): Promise<void> {
 // Простая очередь на комнату: сериализует «прочитал → изменил → записал» внутри процесса.
 const roomLocks = new Map<string, Promise<void>>();
 
-async function withRoom<T>(code: string, handler: (doc: RoomState) => T | Promise<T>): Promise<T> {
+/** Что запись комнаты отдаёт наружу: значение, номер изменения и метки частей. */
+interface RoomWrite<T> {
+  value: T;
+  rev: number;
+  marks: SnapshotMarks;
+}
+
+async function writeRoom<T>(
+  code: string,
+  handler: (doc: RoomState) => T | Promise<T>,
+): Promise<RoomWrite<T>> {
   const previous = roomLocks.get(code) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
@@ -666,15 +679,22 @@ async function withRoom<T>(code: string, handler: (doc: RoomState) => T | Promis
   try {
     const doc = await readDoc(code);
     if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
-    const result = await handler(doc);
+    const value = await handler(doc);
     // Номер изменения растёт на каждую запись — по нему клиент узнаёт,
     // что комнату надо перечитать, не читая сам документ.
     doc.rev = docRev(doc) + 1;
     await writeDoc(doc);
-    return result;
+    // Метки считаем после записи и отдаём вместе с ней: клиент кладёт ответ
+    // в своё состояние сам и не делает второе чтение ради тех же данных.
+    return { value, rev: docRev(doc), marks: snapshotMarks(doc) };
   } finally {
     release();
   }
+}
+
+/** То же, но без номера изменения и меток — для записей, где они не нужны. */
+async function withRoom<T>(code: string, handler: (doc: RoomState) => T | Promise<T>): Promise<T> {
+  return (await writeRoom(code, handler)).value;
 }
 
 function appendMessage(doc: RoomState, message: Omit<ChatMessage, "id" | "seq">): ChatMessage {
@@ -762,6 +782,14 @@ function charactersMark(doc: RoomState): number {
 }
 
 /**
+ * Метка меток на карте: своя, чтобы щёлчок по карте не тянул всю карту.
+ * В комнатах до 0.4.77 поля `pingsAt` нет — тогда метка идёт от `updatedAt`.
+ */
+function pingsMark(doc: RoomState): number {
+  return Number(doc.map?.pingsAt) || Number(doc.map?.updatedAt) || 0;
+}
+
+/**
  * Метка игроков: последнее присутствие и число имён.
  *
  * Имена приходят целиком, когда метка меняется, поэтому число в младших
@@ -781,6 +809,30 @@ function playersMark(doc: RoomState): number {
 /** Часть снимка нужна клиенту, если он её ещё не видел или она изменилась. */
 function partChanged(mark: number, since: number): boolean {
   return since <= 0 || mark !== since;
+}
+
+/**
+ * Текущие метки частей комнаты: их отдают `/state` и любая мутация.
+ *
+ * Одна функция на оба ответа — иначе клиент после своей записи сравнивал бы
+ * метки из разных мест и перечитывал то, что уже пришло.
+ */
+function snapshotMarks(doc: RoomState): SnapshotMarks {
+  return {
+    chars: charactersMark(doc),
+    map: Number(doc.map.updatedAt) || 0,
+    music: Number(doc.music.updatedAt) || 0,
+    world: Number(doc.world.updatedAt) || 0,
+    players: playersMark(doc),
+    pings: pingsMark(doc),
+  };
+}
+
+/** Метки на карте, которые ещё живут на столе: старые не гоняем зря. */
+function livePings(doc: RoomState, now: number): MapPing[] {
+  return (doc.map.pings ?? []).filter(
+    (ping) => now - (Number(ping.createdAt) || 0) <= MAX_PING_AGE,
+  );
 }
 
 /**
@@ -818,7 +870,7 @@ function changedCharacters(characters: Character[], request: SnapshotRequest): C
  */
 export async function getRoomSnapshot(
   code: string,
-  request: SnapshotRequest = { since: 0, chars: 0, map: 0, music: 0, world: 0, players: 0 },
+  request: SnapshotRequest = emptySnapshotRequest(),
 ): Promise<RoomSnapshot> {
   const doc = await readDoc(code);
   if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
@@ -829,13 +881,7 @@ export async function getRoomSnapshot(
       // Если запись не удалась, состояние всё равно отдаём без дублей.
     }
   }
-  const marks: SnapshotMarks = {
-    chars: charactersMark(doc),
-    map: Number(doc.map.updatedAt) || 0,
-    music: Number(doc.music.updatedAt) || 0,
-    world: Number(doc.world.updatedAt) || 0,
-    players: playersMark(doc),
-  };
+  const marks = snapshotMarks(doc);
   const snapshot: RoomSnapshot = {
     code: doc.code,
     title: doc.title,
@@ -857,6 +903,11 @@ export async function getRoomSnapshot(
     snapshot.characters = changedCharacters(doc.characters, request);
   }
   if (partChanged(marks.map, request.map)) snapshot.map = doc.map;
+  // Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
+  // до 179 КБ у всех, кто в этот момент читает комнату.
+  if (partChanged(marks.pings, request.pings)) {
+    snapshot.pings = livePings(doc, snapshot.serverNow);
+  }
   if (partChanged(marks.music, request.music)) snapshot.music = doc.music;
   if (partChanged(marks.world, request.world)) snapshot.world = doc.world;
   return snapshot;
@@ -905,7 +956,7 @@ export async function postMessage(
   code: string,
   rawAuthor: unknown,
   rawText: unknown,
-): Promise<ChatMessage> {
+): Promise<{ message: ChatMessage } & RoomWriteMeta> {
   const author = normalizeName(rawAuthor);
   const text =
     typeof rawText === "string" ? rawText.replace(/\r\n/g, "\n").trim().slice(0, MAX_TEXT) : "";
@@ -916,7 +967,7 @@ export async function postMessage(
   const roll = formula ? rollFormula(formula) : null;
   if (formula && !roll) throw new AppError(400, "Не удалось разобрать формулу броска");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const now = Date.now();
     if (!findPlayer(doc, author)) {
       doc.players.push({ name: author, joinedAt: now, lastSeen: now, color: "", characterIds: [] });
@@ -931,13 +982,14 @@ export async function postMessage(
       roll: roll ?? undefined,
     });
   });
+  return { message: write.value, rev: write.rev, marks: write.marks };
 }
 
 export async function createCharacter(
   code: string,
   rawOwner: unknown,
   rawDraft: unknown,
-): Promise<Character> {
+): Promise<{ character: Character } & RoomWriteMeta> {
   const owner = normalizeName(rawOwner);
   if (!owner) throw new AppError(400, "Сначала войдите в комнату");
 
@@ -947,7 +999,7 @@ export async function createCharacter(
     throw new AppError(400, "Для второй особенности нужен изъян");
   }
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     if (doc.characters.length >= 60) {
       throw new AppError(400, "В комнате уже слишком много персонажей");
     }
@@ -991,10 +1043,22 @@ export async function createCharacter(
     rebuildCharacterPlayers(doc);
     return character;
   });
+  return { character: lightCharacter(write.value), rev: write.rev, marks: write.marks };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+/**
+ * Лист для ответа на запись — без картинок.
+ *
+ * Портрет стоит до 260 КБ, полная картинка — до 560 КБ, и гонять их туда-обратно
+ * на каждое автосохранение незачем: клиент прислал портрет в правке или уже
+ * имеет его у себя, а в документе комнаты он остаётся целиком.
+ */
+function lightCharacter(character: Character): Character {
+  return { ...character, portrait: "", portraitFull: "" };
 }
 
 export async function updateCharacter(
@@ -1002,11 +1066,11 @@ export async function updateCharacter(
   id: string,
   rawActor: unknown,
   rawPatch: unknown,
-): Promise<Character> {
+): Promise<{ character: Character } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const character = doc.characters.find((entry) => entry.id === id);
     if (!character) throw new AppError(404, "Персонаж не найден");
     if (!canEdit(character, actor, doc.gm)) throw new AppError(403, "Это чужой персонаж");
@@ -1076,13 +1140,18 @@ export async function updateCharacter(
     touchPlayer(doc, actor);
     return character;
   });
+  return { character: lightCharacter(write.value), rev: write.rev, marks: write.marks };
 }
 
-export async function deleteCharacter(code: string, id: string, rawActor: unknown): Promise<void> {
+export async function deleteCharacter(
+  code: string,
+  id: string,
+  rawActor: unknown,
+): Promise<{ id: string } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
 
-  await withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const character = doc.characters.find((entry) => entry.id === id);
     if (!character) throw new AppError(404, "Персонаж не найден");
     if (!canEdit(character, actor, doc.gm)) throw new AppError(403, "Это чужой персонаж");
@@ -1091,7 +1160,9 @@ export async function deleteCharacter(code: string, id: string, rawActor: unknow
       player.characterIds = (player.characterIds ?? []).filter((entry) => entry !== id);
     }
     rebuildCharacterPlayers(doc);
+    return id;
   });
+  return { id: write.value, rev: write.rev, marks: write.marks };
 }
 
 /**
@@ -1103,11 +1174,11 @@ export async function setCharacterPlayers(
   id: string,
   rawActor: unknown,
   rawPlayers: unknown,
-): Promise<{ character: Character; players: Player[] }> {
+): Promise<{ character: Character; players: Player[] } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const character = doc.characters.find((entry) => entry.id === id);
     if (!character) throw new AppError(404, "Персонаж не найден");
     const isGM = isGm(doc, actor);
@@ -1140,6 +1211,12 @@ export async function setCharacterPlayers(
     character.updatedAt = Date.now();
     return { character, players: doc.players };
   });
+  return {
+    character: lightCharacter(write.value.character),
+    players: write.value.players,
+    rev: write.rev,
+    marks: write.marks,
+  };
 }
 
 /** Ограничивает координату карты диапазоном 0–1. */
@@ -1186,17 +1263,30 @@ function distanceToSegment(point: MapPoint, start: MapPoint, end: MapPoint): num
   return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
 }
 
+/**
+ * Что вернула запись карты: карту целиком или только что поставленную метку.
+ *
+ * Метка живёт три секунды, а карта весит до 179 КБ, поэтому на `ping` клиент
+ * просит лёгкий ответ (`only: "ping"`) и получает только её. Без `only`
+ * приходит карта, как раньше: так работает открытая старая страница.
+ */
+export interface MapWrite extends RoomWriteMeta {
+  map?: MapState;
+  ping?: MapPing;
+}
+
 /** Действия с картой: метка, линия, ластик, надписи, очистка. */
 export async function updateMap(
   code: string,
   rawActor: unknown,
   rawAction: unknown,
-): Promise<MapState> {
+): Promise<MapWrite> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   const action = rawAction && typeof rawAction === "object" ? (rawAction as Record<string, unknown>) : {};
+  const only = typeof action.only === "string" ? action.only : "";
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     ensureMap(doc);
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
@@ -1205,6 +1295,10 @@ export async function updateMap(
     map.tabs = tabs;
     const kind = String(action.action ?? "");
     const now = Date.now();
+    // Сколько меток было до действия: если список усох (старые истекли или ушли
+    // вместе с вкладкой), это тоже изменение своей части.
+    const pingsBefore = map.pings.length;
+    let ping: MapPing | undefined;
     // К какой вкладке относится действие: рисование, метка, надпись и очистка
     // работают только с выбранной картой, остальные вкладки не трогаются.
     const tab = mapTabId(tabs, action.tab);
@@ -1218,7 +1312,7 @@ export async function updateMap(
       const color = ownColor || (/^#[0-9a-f]{6}$/i.test(String(action.color ?? ""))
         ? String(action.color)
         : "#fb7185");
-      const ping: MapPing = { id: uid("png"), name: actor, x, y, color, createdAt: now, tab };
+      ping = { id: uid("png"), name: actor, x, y, color, createdAt: now, tab };
       map.pings.push(ping);
       if (map.pings.length > MAX_PINGS) {
         map.pings.splice(0, map.pings.length - MAX_PINGS);
@@ -1340,9 +1434,18 @@ export async function updateMap(
     }
 
     map.pings = map.pings.filter((ping) => now - ping.createdAt <= MAX_PING_AGE);
-    map.updatedAt = now;
-    return map;
+    // Метка двигает свою метку и не трогает метку карты: иначе щелчок по карте
+    // заставлял бы всех перечитывать её целиком.
+    if (ping) map.pingsAt = now;
+    else if (map.pings.length !== pingsBefore) map.pingsAt = now;
+    if (!ping) map.updatedAt = now;
+    return { map, ping };
   });
+  // Лёгкий ответ: только сама метка. Без `only` карта приходит целиком, как раньше.
+  if (only === "ping" && write.value.ping) {
+    return { ping: write.value.ping, rev: write.rev, marks: write.marks };
+  }
+  return { map: write.value.map, rev: write.rev, marks: write.marks };
 }
 
 function musicPosition(value: unknown, fallback = 0): number {
@@ -1385,11 +1488,11 @@ export async function addFileTrack(
   trackId: string,
   rawTitle: unknown,
   size: number,
-): Promise<{ music: MusicState; track: MusicTrack; serverNow: number }> {
+): Promise<{ music: MusicState; track: MusicTrack; serverNow: number } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   const title = musicTitle(rawTitle) || "Свой трек";
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
     const now = Date.now();
@@ -1414,6 +1517,7 @@ export async function addFileTrack(
     doc.music.updatedAt = now;
     return { music: doc.music, track, serverNow: now };
   });
+  return { ...write.value, rev: write.rev, marks: write.marks };
 }
 
 /** Что можно загрузить в комнату: лимиты, занятые слоты, конвертер. */
@@ -1433,7 +1537,7 @@ export async function updateMusic(
   code: string,
   rawActor: unknown,
   rawAction: unknown,
-): Promise<{ music: MusicState; serverNow: number }> {
+): Promise<{ music: MusicState; serverNow: number } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   const action =
@@ -1456,7 +1560,7 @@ export async function updateMusic(
     };
   }
 
-  const result = await withRoom(code, (doc) => {
+  const result = await writeRoom(code, (doc) => {
     ensureMusic(doc);
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
@@ -1533,7 +1637,7 @@ export async function updateMusic(
   // Файл убираем после записи документа: если запись не прошла, трек остался
   // в комнате, и mp3 должен остаться вместе с ним.
   for (const removedId of removedFiles) await deleteTrack(code, removedId);
-  return result;
+  return { ...result.value, rev: result.rev, marks: result.marks };
 }
 
 /** Сколько минут прошло внутри суток — с учётом хода реального времени. */
@@ -1563,13 +1667,13 @@ export async function updateWorld(
   code: string,
   rawActor: unknown,
   rawAction: unknown,
-): Promise<{ world: WorldState; serverNow: number }> {
+): Promise<{ world: WorldState; serverNow: number } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   const action =
     rawAction && typeof rawAction === "object" ? (rawAction as Record<string, unknown>) : {};
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     if (!findPlayer(doc, actor)) throw new AppError(400, "Сначала войдите в комнату");
     touchPlayer(doc, actor);
     if (!isGm(doc, actor)) throw new AppError(403, "Часы и погоду ведёт мастер");
@@ -1610,6 +1714,7 @@ export async function updateWorld(
     world.updatedAt = now;
     return { world, serverNow: now };
   });
+  return { ...write.value, rev: write.rev, marks: write.marks };
 }
 
 /** Мастер — тот, кто создал стол (первый вошедший). */
@@ -1652,13 +1757,15 @@ export async function updatePlayer(
   rawActor: unknown,
   rawTarget: unknown,
   patch: PlayerPatch,
-): Promise<{ players: Player[]; gm: string; characters: Character[]; renamedTo: string }> {
+): Promise<
+  { players: Player[]; gm: string; characters: Character[]; renamedTo: string } & RoomWriteMeta
+> {
   const actor = normalizeName(rawActor);
   const target = normalizeName(rawTarget);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!target) throw new AppError(400, "Не указан игрок");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const player = findPlayer(doc, target);
     if (!player) throw new AppError(404, "Игрок не найден");
     const gm = isGm(doc, actor);
@@ -1713,6 +1820,13 @@ export async function updatePlayer(
       renamedTo: player.name,
     };
   });
+  // Листы в ответе без картинок: клиент их уже имеет, а переименование не про них.
+  return {
+    ...write.value,
+    characters: write.value.characters.map(lightCharacter),
+    rev: write.rev,
+    marks: write.marks,
+  };
 }
 
 /** Мастер убирает игрока из-за стола. Листы и сообщения остаются. */
@@ -1720,27 +1834,28 @@ export async function removePlayer(
   code: string,
   rawActor: unknown,
   rawTarget: unknown,
-): Promise<{ players: Player[] }> {
+): Promise<{ players: Player[]; message: ChatMessage } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   const target = normalizeName(rawTarget);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!target) throw new AppError(400, "Не указан игрок");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     if (!isGm(doc, actor)) throw new AppError(403, "Удалять игроков может только мастер");
     const player = findPlayer(doc, target);
     if (!player) throw new AppError(404, "Игрок не найден");
     if (isGm(doc, player.name)) throw new AppError(400, "Мастер не может удалить себя");
     const now = Date.now();
     doc.players = doc.players.filter((entry) => entry !== player);
-    appendMessage(doc, {
+    const message = appendMessage(doc, {
       kind: "system",
       author: "system",
       text: `${player.name} больше не за столом.`,
       createdAt: now,
     });
-    return { players: doc.players };
+    return { players: doc.players, message };
   });
+  return { ...write.value, rev: write.rev, marks: write.marks };
 }
 
 /** Удаление сообщения: своё — автору, любое — мастеру. */
@@ -1748,13 +1863,13 @@ export async function deleteMessage(
   code: string,
   rawActor: unknown,
   rawId: unknown,
-): Promise<{ id: string; deletedMessages: string[] }> {
+): Promise<{ id: string; deletedMessages: string[] } & RoomWriteMeta> {
   const actor = normalizeName(rawActor);
   const id = typeof rawId === "string" ? rawId.trim() : "";
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!id) throw new AppError(400, "Не указано сообщение");
 
-  return withRoom(code, (doc) => {
+  const write = await writeRoom(code, (doc) => {
     const message = doc.messages.find((entry) => entry.id === id);
     if (!message) throw new AppError(404, "Сообщение не найдено");
     if (!isGm(doc, actor) && message.author.trim().toLowerCase() !== actor.toLowerCase()) {
@@ -1766,4 +1881,5 @@ export async function deleteMessage(
     touchPlayer(doc, actor);
     return { id, deletedMessages: deleted };
   });
+  return { ...write.value, rev: write.rev, marks: write.marks };
 }

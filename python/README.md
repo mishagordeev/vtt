@@ -18,19 +18,26 @@ Node-версии, поэтому обе реализации видят одн�
 | `GET/PATCH/DELETE /api/rooms/<КОД>/players` | имена за столом, цвет и листы игрока, удаление игрока мастером |
 | `POST /api/rooms/<КОД>/join` | вход по имени, первый вошедший — мастер |
 | `POST /api/rooms/<КОД>/heartbeat` | «пульс» присутствия не чаще раза в 20 секунд |
-| `GET /api/rooms/<КОД>/state?since=&charsSince=&mapSince=&musicSince=&worldSince=&playersSince=&portraits=` | снимок комнаты; с метками — только изменившиеся части |
+| `GET /api/rooms/<КОД>/state?since=&charsSince=&mapSince=&musicSince=&worldSince=&playersSince=&pingsSince=&portraits=` | снимок комнаты; с метками — только изменившиеся части (метки на карте — своей мелкой частью) |
 | `GET /api/rooms/<КОД>/rev?name=<игрок>` | голова комнаты: `rev`, `seen`, время сервера — без чтения документа |
 | `POST /api/rooms/<КОД>/messages` | сообщение; сервер сам находит в тексте бросок и бросает кубики |
 | `DELETE /api/rooms/<КОД>/messages/<id>` | удаление сообщения (автор или мастер) |
 | `POST /api/rooms/<КОД>/characters` | новый лист персонажа |
 | `PATCH/DELETE /api/rooms/<КОД>/characters/<id>` | правка и удаление листа |
 | `PATCH /api/rooms/<КОД>/characters/<id>/players` | назначить лист игрокам |
-| `POST /api/rooms/<КОД>/map` | метка, линия, ластик, надписи мастера (`text`, `textUpdate`, `textRemove`), очистка карты |
+| `POST /api/rooms/<КОД>/map` | метка, линия, ластик, надписи мастера (`text`, `textUpdate`, `textRemove`), очистка карты; на `only: "ping"` в ответе только метка |
 | `POST /api/rooms/<КОД>/music` | треки YouTube: добавить, play/pause, громкость, удалить, стоп |
 | `GET /api/rooms/<КОД>/tracks` | лимиты звука, занятые слоты и доступна ли конвертация YouTube |
 | `POST /api/rooms/<КОД>/tracks` | свой mp3 телом запроса или ролик YouTube, скачанный в mp3 (до 40 МБ) |
 | `GET /api/rooms/<КОД>/tracks/<id>` | mp3 комнаты, кусками по `Range` — браузер перематывает |
 | `POST /api/rooms/<КОД>/world` | часы и погода кампании (ведёт мастер) |
+
+Каждая запись (сообщение, лист, карта, музыка, часы, игроки) отвечает не только
+своим результатом, но и `rev` с метками частей — как `write_room` в
+`vtt/store.py`. Листы в ответах на запись идут без портретов (`light_character`),
+а `ping` умеет отвечать одной меткой: клиент кладёт ответ в своё состояние сам
+и не делает второе чтение — иначе одно сохранение листа стоило бы полного
+снимка комнаты на 1,5 МБ.
 
 Логика — порт `lib/store.ts`, `lib/characters.ts`, `lib/dice.ts`,
 `lib/youtube.ts` и `worldClock` из `lib/calendar.ts`. Справочники правил не

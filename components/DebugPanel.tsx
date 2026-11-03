@@ -21,6 +21,8 @@ interface DebugPanelProps {
   strokes: number;
   /** Размер данных комнаты в байтах (JSON текущего состояния). */
   roomBytes: number;
+  /** Номер изменения комнаты: растёт на каждую запись — свою видно сразу. */
+  rev: number;
   lastSyncAt: number;
   onSync: () => void;
 }
@@ -89,6 +91,7 @@ export function DebugPanel({
   tracks,
   strokes,
   roomBytes,
+  rev,
   lastSyncAt,
   onSync,
 }: DebugPanelProps) {
@@ -177,7 +180,8 @@ export function DebugPanel({
         </span>
         <span className="font-mono text-zinc-600">сессия: {formatBytes(sessionTraffic)}</span>
         <span className="ml-auto font-mono text-zinc-600">
-          синхронизация: {formatTime(lastSyncAt)} · только по действиям
+          изменение: rev <span className="text-zinc-400">{rev || "—"}</span> · синхронизация:{" "}
+          {formatTime(lastSyncAt)} · только по действиям
         </span>
         <button
           type="button"
@@ -324,7 +328,8 @@ export function DebugPanel({
             </button>
             <span className="text-[9px] leading-snug text-zinc-600">
               Клиент ходит в базу только по действиям: отправка сообщения, правка листа, карта,
-              музыка, вход и кнопка «обновить». Фонового опроса по таймеру нет.
+              музыка, вход и кнопка «обновить». Фонового опроса по таймеру нет, и своя запись
+              комнату не перечитывает — ответ применяется сразу.
             </span>
           </div>
 

@@ -6,8 +6,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
-import { emptySnapshotRequest, mergeCharacters, nextMarks, snapshotQuery } from "@/lib/snapshot";
-import type { ChatMessage, Character, CharacterDraft, MapState, MusicState, Player, RoomSnapshot, SnapshotRequest, WorldState } from "@/lib/types";
+import {
+  emptySnapshotRequest,
+  mergeCharacters,
+  nextMarks,
+  portraitKey,
+  snapshotQuery,
+} from "@/lib/snapshot";
+import {
+  advanceMarks,
+  dropCharacter,
+  mergePings,
+  putCharacter,
+  renameMapAuthors,
+  renameMessages,
+  renameMusicAuthors,
+} from "@/lib/writes";
+import type { ChatMessage, Character, CharacterDraft, MapPing, MapState, MusicState, Player, RoomSnapshot, RoomWriteMeta, SnapshotRequest, WorldState } from "@/lib/types";
 import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
 import { ChatFeed } from "./ChatFeed";
@@ -133,8 +148,42 @@ export default function RoomScreen({ code }: { code: string }) {
    */
   const syncRef = useRef<SnapshotRequest>(emptySnapshotRequest());
   const meRef = useRef("");
+  /** Номер изменения комнаты: из снимка после чтения, из ответа — после своей записи. */
+  const [roomRev, setRoomRev] = useState(0);
+  /**
+   * Что уже лежит в состоянии. Ответы мутаций применяются к нему напрямую
+   * (`lib/writes.ts`), и без этих ссылок не видно, какой портрет у клиента есть
+   * и какую карту он показывает.
+   */
+  const charactersRef = useRef<Character[]>([]);
+  const mapRef = useRef<MapState>(EMPTY_MAP);
   /** id уже показанных бросков: старые не анимируем, даже после полной перечитки ленты. */
   const animatedRollsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    charactersRef.current = characters;
+  }, [characters]);
+
+  useEffect(() => {
+    mapRef.current = map;
+  }, [map]);
+
+  /**
+   * Запоминает подпись портрета листа, который клиент только что получил или
+   * отправил: следующий `/state` не будет присылать картинку до 260 КБ.
+   */
+  const rememberSignature = useCallback((character: Character) => {
+    syncRef.current.portraits = {
+      ...(syncRef.current.portraits ?? {}),
+      [character.id]: portraitKey(character.portrait ?? ""),
+    };
+  }, []);
+
+  /** Номер изменения из ответа мутации: голова комнаты и дебаг-панель видят его сразу. */
+  const rememberRev = useCallback((meta: { rev?: number } | undefined) => {
+    const rev = Number(meta?.rev);
+    if (Number.isFinite(rev) && rev > 0) setRoomRev(rev);
+  }, []);
 
   /** Я мастер: мне доступны полный список листов, музыка и запуск треков. */
   const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
@@ -190,8 +239,16 @@ export default function RoomScreen({ code }: { code: string }) {
         setCharacters((prev) => mergeCharacters(prev, snapshot));
       }
       if (snapshot.map) setMap(snapshot.map);
+      // Метки на карте — своя часть: кладём их к тому, что уже показано.
+      if (snapshot.pings) {
+        setMap((prev) => ({
+          ...prev,
+          pings: mergePings(prev.pings ?? [], snapshot.pings ?? []),
+        }));
+      }
       if (snapshot.music) setMusic(snapshot.music);
       if (snapshot.world) setWorld(snapshot.world);
+      rememberRev(snapshot);
       if (Number.isFinite(snapshot.serverNow)) {
         setClockOffset(snapshot.serverNow - Date.now());
       }
@@ -218,7 +275,7 @@ export default function RoomScreen({ code }: { code: string }) {
         error instanceof Error ? error.message : "Не удалось связаться с комнатой",
       );
     }
-  }, [code]);
+  }, [code, rememberRev]);
 
   /**
    * «Повторить» у баннера ошибки: перечитываем комнату, не перезагружая страницу.
@@ -422,76 +479,152 @@ export default function RoomScreen({ code }: { code: string }) {
 
   const send = useCallback(
     async (text: string) => {
-      const result = await api<{ message: ChatMessage }>(`/api/rooms/${code}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ author: meRef.current, text }),
-      });
+      const result = await api<{ message: ChatMessage } & RoomWriteMeta>(
+        `/api/rooms/${code}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify({ author: meRef.current, text }),
+        },
+      );
       setMessages((prev) =>
         prev.some((message) => message.id === result.message.id)
           ? prev
           : [...prev, result.message],
       );
+      // Своё сообщение уже в ленте: следующее чтение начнётся со следующего номера.
+      syncRef.current.since = Math.max(
+        syncRef.current.since,
+        (Number(result.message.seq) || 0) + 1,
+      );
+      rememberRev(result);
     },
-    [code],
+    [code, rememberRev],
   );
 
+  /**
+   * Новый лист: ответ кладём в состояние сами. Раньше здесь было `await load()` —
+   * полная перечитка комнаты на каждое сохранение.
+   */
   const createCharacter = useCallback(
     async (draft: CharacterDraft): Promise<Character> => {
-      const result = await api<{ character: Character }>(`/api/rooms/${code}/characters`, {
-        method: "POST",
-        body: JSON.stringify({ owner: meRef.current, character: draft }),
-      });
-      await load();
-      return result.character;
+      const result = await api<{ character: Character } & RoomWriteMeta>(
+        `/api/rooms/${code}/characters`,
+        {
+          method: "POST",
+          body: JSON.stringify({ owner: meRef.current, character: draft }),
+        },
+      );
+      // Портрета в ответе нет: он есть в черновике, с которого создавали лист.
+      const saved: Character = {
+        ...result.character,
+        portrait: result.character.portrait || draft.portrait,
+      };
+      setCharacters((prev) => putCharacter(prev, saved));
+      rememberSignature(saved);
+      rememberRev(result);
+      return saved;
     },
-    [code, load],
+    [code, rememberRev, rememberSignature],
   );
 
+  /**
+   * Правка листа. Портрет до 260 КБ в правке не повторяем, если он не менялся:
+   * сервер отсутствие поля понимает как «оставить прежний». Ответ применяем
+   * локально — второго чтения комнаты больше нет.
+   */
   const updateCharacter = useCallback(
     async (id: string, draft: CharacterDraft): Promise<Character> => {
-      const result = await api<{ character: Character }>(`/api/rooms/${code}/characters/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ actor: meRef.current, patch: draft }),
-      });
-      await load();
-      return result.character;
+      const known = charactersRef.current.find((entry) => entry.id === id);
+      const draftPortrait = draft.portrait ?? "";
+      // Пустой портрет в черновике не значит «стереть картинку»: стирать её нечем,
+      // а вот затереть прежнюю такой правкой было бы обидно.
+      const keepPortrait = !draftPortrait || draftPortrait === (known?.portrait ?? "");
+      const patch: Record<string, unknown> = { ...draft };
+      if (keepPortrait) {
+        delete patch.portrait;
+        delete patch.portraitFull;
+      }
+      const result = await api<{ character: Character } & RoomWriteMeta>(
+        `/api/rooms/${code}/characters/${id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ actor: meRef.current, patch }),
+        },
+      );
+      const saved: Character = {
+        ...result.character,
+        portrait: result.character.portrait || draftPortrait || (known?.portrait ?? ""),
+      };
+      setCharacters((prev) => putCharacter(prev, saved));
+      rememberSignature(saved);
+      rememberRev(result);
+      return saved;
     },
-    [code, load],
+    [code, rememberRev, rememberSignature],
   );
 
   const removeCharacter = useCallback(
     async (id: string) => {
-      await api(
+      const result = await api<{ id: string } & RoomWriteMeta>(
         `/api/rooms/${code}/characters/${id}?actor=${encodeURIComponent(meRef.current)}`,
         { method: "DELETE" },
       );
-      await load();
+      const removed = result.id || id;
+      setCharacters((prev) => dropCharacter(prev, removed));
+      // Подпись удалённого листа больше не нужна — иначе она росла бы вечно.
+      const portraits = { ...(syncRef.current.portraits ?? {}) };
+      delete portraits[removed];
+      syncRef.current.portraits = portraits;
+      rememberRev(result);
     },
-    [code, load],
+    [code, rememberRev],
   );
 
+  /**
+   * Действия с картой.
+   *
+   * Метка возвращается отдельной мелкой частью (`only: "ping"`): щелчок по карте
+   * раньше отдавал всю карту целиком — до 179 КБ. Остальные действия приходят
+   * картой целиком, поэтому их метку можно сразу считать прочитанной.
+   */
   const mapAction = useCallback(
     async (payload: Record<string, unknown>): Promise<MapState | null> => {
+      const isPing = payload.action === "ping";
       try {
-        const result = await api<{ map: MapState }>(`/api/rooms/${code}/map`, {
-          method: "POST",
-          body: JSON.stringify({ actor: meRef.current, ...payload }),
-        });
+        const result = await api<{ map?: MapState; ping?: MapPing } & RoomWriteMeta>(
+          `/api/rooms/${code}/map`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              actor: meRef.current,
+              ...payload,
+              ...(isPing ? { only: "ping" } : {}),
+            }),
+          },
+        );
+        rememberRev(result);
+        if (result.ping) {
+          // Карта не менялась: в состояние кладём только метку и метку карты не двигаем.
+          const ping = result.ping;
+          setMap((prev) => ({ ...prev, pings: mergePings(prev.pings ?? [], [ping]) }));
+          return mapRef.current;
+        }
+        if (!result.map) return null;
         setMap(result.map);
         // Свою карту только что применили сами: следующий `/state` не должен её повторять.
-        syncRef.current.map = Number(result.map.updatedAt) || 0;
+        syncRef.current = advanceMarks(syncRef.current, result, ["map"]);
         return result.map;
       } catch {
         return null;
       }
     },
-    [code],
+    [code, rememberRev],
   );
 
   const musicAction = useCallback(
     async (payload: Record<string, unknown>): Promise<MusicState | null> => {
       try {
-        const result = await api<{ music: MusicState; serverNow: number }>(
+        const result = await api<{ music: MusicState; serverNow: number } & RoomWriteMeta>(
           `/api/rooms/${code}/music`,
           {
             method: "POST",
@@ -499,7 +632,8 @@ export default function RoomScreen({ code }: { code: string }) {
           },
         );
         setMusic(result.music);
-        syncRef.current.music = Number(result.music.updatedAt) || 0;
+        syncRef.current = advanceMarks(syncRef.current, result, ["music"]);
+        rememberRev(result);
         if (Number.isFinite(result.serverNow)) {
           setClockOffset(result.serverNow - Date.now());
         }
@@ -508,14 +642,14 @@ export default function RoomScreen({ code }: { code: string }) {
         return null;
       }
     },
-    [code],
+    [code, rememberRev],
   );
 
   /** Часы кампании и погоду ведёт мастер; ответ приходит целиком. */
   const worldAction = useCallback(
     async (payload: Record<string, unknown>): Promise<WorldState | null> => {
       try {
-        const result = await api<{ world: WorldState; serverNow: number }>(
+        const result = await api<{ world: WorldState; serverNow: number } & RoomWriteMeta>(
           `/api/rooms/${code}/world`,
           {
             method: "POST",
@@ -523,7 +657,8 @@ export default function RoomScreen({ code }: { code: string }) {
           },
         );
         setWorld(result.world);
-        syncRef.current.world = Number(result.world.updatedAt) || 0;
+        syncRef.current = advanceMarks(syncRef.current, result, ["world"]);
+        rememberRev(result);
         if (Number.isFinite(result.serverNow)) {
           setClockOffset(result.serverNow - Date.now());
         }
@@ -532,7 +667,7 @@ export default function RoomScreen({ code }: { code: string }) {
         return null;
       }
     },
-    [code],
+    [code, rememberRev],
   );
 
   const musicEnded = useCallback(
@@ -569,26 +704,26 @@ export default function RoomScreen({ code }: { code: string }) {
   const deleteMessage = useCallback(
     async (id: string) => {
       try {
-        const result = await api<{ id: string }>(
+        const result = await api<{ id: string } & RoomWriteMeta>(
           `/api/rooms/${code}/messages/${id}?actor=${encodeURIComponent(meRef.current)}`,
           { method: "DELETE" },
         );
         setMessages((prev) => prev.filter((message) => message.id !== result.id));
+        rememberRev(result);
       } catch {
         setLoadError("Не удалось удалить сообщение");
       }
     },
-    [code],
+    [code, rememberRev],
   );
 
-  /** Полная перечитка ленты — нужна после переименования игрока. */
-  const reloadMessages = useCallback(async () => {
-    syncRef.current = emptySnapshotRequest();
-    setMessages([]);
-    await load();
-  }, [load]);
-
-  /** Профиль игрока: имя, цвет, привязанные листы. */
+  /**
+   * Профиль игрока: имя, цвет, привязанные листы.
+   *
+   * Переименование раньше тянуло полную перечитку ленты (`since=0`, до 80 КБ):
+   * теперь имя переносится по сообщениям, карте и музыке здесь же, как на
+   * сервере, а ответ применяется напрямую.
+   */
   const saveProfile = useCallback(
     async (target: string, patch: { name: string; color: string; characterIds: string[] }) => {
       const result = await api<{
@@ -596,13 +731,19 @@ export default function RoomScreen({ code }: { code: string }) {
         gm: string;
         characters: Character[];
         renamedTo: string;
-      }>(`/api/rooms/${code}/players`, {
+      } & RoomWriteMeta>(`/api/rooms/${code}/players`, {
         method: "PATCH",
         body: JSON.stringify({ actor: meRef.current, target, ...patch }),
       });
       setPlayers(result.players);
       setGm(result.gm);
-      setCharacters(result.characters);
+      // Листы приходят без портретов — знакомым оставляем прежние картинки.
+      setCharacters((prev) =>
+        mergeCharacters(prev, {
+          characters: result.characters,
+          characterIds: result.characters.map((character) => character.id),
+        }),
+      );
       const wasMe = target.trim().toLowerCase() === meRef.current.trim().toLowerCase();
       if (wasMe && result.renamedTo !== meRef.current) {
         meRef.current = result.renamedTo;
@@ -610,39 +751,58 @@ export default function RoomScreen({ code }: { code: string }) {
         window.localStorage.setItem(nameKey(code), result.renamedTo);
         window.localStorage.setItem("pp:name", result.renamedTo);
       }
-      await reloadMessages();
+      if (target.trim().toLowerCase() !== result.renamedTo.trim().toLowerCase()) {
+        setMessages((prev) => renameMessages(prev, target, result.renamedTo));
+        setMap((prev) => renameMapAuthors(prev, target, result.renamedTo));
+        setMusic((prev) => renameMusicAuthors(prev, target, result.renamedTo));
+      }
+      // Имена пришли целиком: их часть дальше не перечитываем.
+      syncRef.current = advanceMarks(syncRef.current, result, ["players"]);
+      rememberRev(result);
     },
-    [code, reloadMessages],
+    [code, rememberRev],
   );
 
   /** Назначение листа игрокам: привязка синхронна с профилями. */
   const assignCharacterPlayers = useCallback(
     async (id: string, names: string[]) => {
-      const result = await api<{ character: Character; players: Player[] }>(
+      const result = await api<{ character: Character; players: Player[] } & RoomWriteMeta>(
         `/api/rooms/${code}/characters/${id}/players`,
         { method: "PATCH", body: JSON.stringify({ actor: meRef.current, players: names }) },
       );
       setPlayers(result.players);
-      setCharacters((prev) =>
-        prev.map((entry) =>
-          entry.id === id ? { ...entry, players: result.character.players ?? [] } : entry,
-        ),
-      );
+      // Картинки в ответе нет — у знакомого листа остаётся прежняя.
+      setCharacters((prev) => putCharacter(prev, result.character));
+      syncRef.current = advanceMarks(syncRef.current, result, ["players"]);
+      rememberRev(result);
     },
-    [code],
+    [code, rememberRev],
   );
 
   /** Мастер убирает игрока из-за стола. */
   const kickPlayer = useCallback(
     async (target: string) => {
-      const result = await api<{ players: Player[] }>(
+      const result = await api<{ players: Player[]; message?: ChatMessage } & RoomWriteMeta>(
         `/api/rooms/${code}/players?actor=${encodeURIComponent(meRef.current)}&target=${encodeURIComponent(target)}`,
         { method: "DELETE" },
       );
       setPlayers(result.players);
+      // Системное сообщение «… больше не за столом» приходит вместе с ответом.
+      if (result.message) {
+        const message = result.message;
+        setMessages((prev) =>
+          prev.some((entry) => entry.id === message.id) ? prev : [...prev, message],
+        );
+        syncRef.current.since = Math.max(
+          syncRef.current.since,
+          (Number(message.seq) || 0) + 1,
+        );
+      }
+      syncRef.current = advanceMarks(syncRef.current, result, ["players"]);
+      rememberRev(result);
       setProfileFor(null);
     },
-    [code],
+    [code, rememberRev],
   );
 
   useEffect(() => {
@@ -654,6 +814,7 @@ export default function RoomScreen({ code }: { code: string }) {
     window.localStorage.removeItem("pp:name");
     meRef.current = "";
     syncRef.current = emptySnapshotRequest();
+    setRoomRev(0);
     animatedRollsRef.current = new Set();
     setLastSyncAt(0);
     setDiceQueue([]);
@@ -972,6 +1133,7 @@ export default function RoomScreen({ code }: { code: string }) {
         tracks={music.tracks.length}
         strokes={map.strokes.length}
         roomBytes={roomBytes}
+        rev={roomRev}
         lastSyncAt={lastSyncAt}
         onSync={() => void load()}
       />
