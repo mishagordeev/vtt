@@ -1400,3 +1400,128 @@ test("Python-сервер: свой mp3 в комнате, раздача по �
   assert.equal(gone.status, 404);
 });
 
+test("Python-сервер: лента и портреты лежат своими ключами, старый документ раскладывается", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl, dataDir } = server;
+  const readJson = (...parts) => JSON.parse(fs.readFileSync(path.join(dataDir, ...parts), "utf8"));
+
+  // --- новая комната: документ мелкий, лента и портрет — отдельными файлами ---
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  assert.equal(created.status, 200);
+  const code = created.payload.code;
+  await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name: "Мастер" });
+  await call(baseUrl, "POST", `/api/rooms/${code}/messages`, {
+    author: "Мастер",
+    text: "Привет столу",
+  });
+  const portrait = `data:image/png;base64,${"Q".repeat(4000)}`;
+  const sheet = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Мастер",
+    character: {
+      name: "С портретом",
+      level: 1,
+      origin: rules.origins[0].name,
+      portrait,
+      portraitFull: portrait,
+      stats: { str: 12, dex: 14, con: 13, int: 10, wis: 11, cha: 9 },
+      skills: [],
+      traits: [],
+      flaws: [],
+      inventory: [],
+      fields: {},
+    },
+  });
+  assert.equal(sheet.status, 200, server.log());
+  const id = sheet.payload.character.id;
+
+  const doc = readJson(`${code}.json`);
+  assert.equal("messages" in doc, false, "лента осталась в документе комнаты");
+  assert.equal("seq" in doc, false, "номер сообщений остался в документе комнаты");
+  const inDoc = doc.characters.find((entry) => entry.id === id);
+  assert.ok(inDoc, "лист пропал из документа");
+  assert.equal("portrait" in inDoc, false, "портрет остался в документе комнаты");
+  assert.equal("portraitFull" in inDoc, false, "полная картинка осталась в документе комнаты");
+  assert.ok(inDoc.portraitKey, "в документе нет подписи портрета");
+
+  const feed = readJson(`${code}.feed.json`);
+  assert.equal(feed.messages.length, 3, "лента: создание, вход и сообщение");
+  assert.deepEqual(readJson(`${code}.portrait.${id}.json`), { portrait, portraitFull: portrait });
+
+  // --- старый документ: лента и портрет внутри, раскладываются при чтении ---
+  const legacyCode = "LEGACY";
+  const now = Date.now();
+  const legacyPortrait = "data:image/png;base64,OLD";
+  fs.writeFileSync(
+    path.join(dataDir, `${legacyCode}.json`),
+    JSON.stringify({
+      code: legacyCode,
+      title: "Старый стол",
+      createdAt: now,
+      gm: "Мастер",
+      players: [
+        { name: "Мастер", joinedAt: now, lastSeen: now, color: "", characterIds: ["chr_old"] },
+      ],
+      messages: [
+        { id: "msg_old", seq: 1, kind: "text", author: "Мастер", text: "Старое сообщение", createdAt: now },
+      ],
+      deletedMessages: [],
+      seq: 2,
+      characters: [
+        {
+          id: "chr_old",
+          owner: "Мастер",
+          players: ["Мастер"],
+          name: "Старый",
+          level: 1,
+          origin: rules.origins[0].name,
+          portrait: legacyPortrait,
+          portraitFull: "",
+          stats: {},
+          resources: {},
+          skills: [],
+          traits: [],
+          flaws: [],
+          languages: [],
+          inventory: [],
+          fields: {},
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      rev: 7,
+    }),
+    "utf8",
+  );
+
+  const legacyState = await call(baseUrl, "GET", `/api/rooms/${legacyCode}/state`);
+  assert.equal(legacyState.status, 200, server.log());
+  assert.equal(legacyState.payload.messages.length, 1, "лента старого документа не отдалась");
+  assert.equal(legacyState.payload.seq, 2, "номер сообщений старого документа потерялся");
+  const legacySheet = legacyState.payload.characters.find((entry) => entry.id === "chr_old");
+  assert.equal(legacySheet.portrait, legacyPortrait, "портрет старого документа потерялся");
+
+  const migrated = readJson(`${legacyCode}.json`);
+  assert.equal("messages" in migrated, false, "старый документ не разложен: лента внутри");
+  assert.equal("seq" in migrated, false, "старый документ не разложен: seq внутри");
+  assert.equal("portrait" in migrated.characters[0], false, "старый портрет остался в документе");
+  assert.equal(
+    readJson(`${legacyCode}.feed.json`).messages[0].text,
+    "Старое сообщение",
+    "сообщения старого документа не переехали в ленту",
+  );
+  assert.equal(
+    readJson(`${legacyCode}.portrait.chr_old.json`).portrait,
+    legacyPortrait,
+    "портрет старого документа не переехал в свой ключ",
+  );
+
+  // Повторное чтение уже разложенный документ не переписывает.
+  const before = fs.readFileSync(path.join(dataDir, `${legacyCode}.json`), "utf8");
+  await call(baseUrl, "GET", `/api/rooms/${legacyCode}/state`);
+  assert.equal(
+    fs.readFileSync(path.join(dataDir, `${legacyCode}.json`), "utf8"),
+    before,
+    "чтение переписывает уже разложенный документ",
+  );
+});
+

@@ -1,8 +1,10 @@
 """Логика комнат — порт lib/store.ts.
 
 Каждая операция — «прочитал документ комнаты → изменил → записал» под блокировкой
-комнаты. Документ целиком лежит в Redis (или в файле), как и в Node-версии,
-поэтому обе реализации видят одни и те же комнаты.
+комнаты. Комната лежит не одним куском: документ, лента сообщений и портреты
+листов — разные ключи (`storage.py`), поэтому правка листа не переписывает
+историю чата и мегабайт картинок, а `/state` не тянет портреты, которые клиент
+уже видел. Обе реализации — Python и Node — видят одни и те же комнаты.
 """
 
 import math
@@ -322,8 +324,6 @@ def ensure_players(doc):
         if not isinstance(as_dict(character).get("players"), list):
             character["players"] = []
     rebuild_character_players(doc)
-    if not isinstance(doc.get("deletedMessages"), list):
-        doc["deletedMessages"] = []
     return doc
 
 
@@ -382,8 +382,12 @@ def is_gm(doc, name):
     return bool(gm) and str(gm).strip().lower() == (name or "").strip().lower()
 
 
-def rename_references(doc, source, target):
-    """Переносит имя игрока во все места комнаты: листы, чат, музыка, рисунки."""
+def rename_references(doc, feed, source, target):
+    """Переносит имя игрока во все места комнаты: листы, чат, музыка, рисунки.
+
+    Лента приходит сюда из своего ключа: сообщения больше не лежат в документе,
+    и переименование автора должно переписать именно её.
+    """
     old = source.strip().lower()
 
     def same(value):
@@ -394,7 +398,7 @@ def rename_references(doc, source, target):
             character["owner"] = target
             # Лист поменялся: без новой метки клиент с частичным чтением его не перечитает.
             character["updatedAt"] = _now()
-    for message in as_list(doc.get("messages")):
+    for message in feed["messages"]:
         if same(message.get("author")):
             message["author"] = target
     for track in as_list(as_dict(doc.get("music")).get("tracks")):
@@ -413,26 +417,58 @@ def rename_references(doc, source, target):
         doc["gm"] = target
 
 
-def append_message(doc, message):
-    """Добавляет сообщение с очередным seq и подрезает историю."""
+def append_message(feed, message):
+    """Добавляет сообщение в ленту с очередным seq и подрезает историю."""
     entry = dict(message)
     entry["id"] = uid("msg")
-    entry["seq"] = doc.get("seq", 1)
-    doc["seq"] = entry["seq"] + 1
-    messages = as_list(doc.get("messages"))
+    entry["seq"] = feed["seq"]
+    feed["seq"] = entry["seq"] + 1
+    messages = feed["messages"]
     messages.append(entry)
-    doc["messages"] = messages
     if len(messages) > MAX_MESSAGES:
         del messages[: len(messages) - MAX_MESSAGES]
     return entry
 
 
+def ensure_feed(feed):
+    """Поля ленты: номер, сообщения, удалённые — всё, что нужно снимку."""
+    if not isinstance(feed, dict):
+        feed = {}
+    if not isinstance(feed.get("messages"), list):
+        feed["messages"] = []
+    if not isinstance(feed.get("deletedMessages"), list):
+        feed["deletedMessages"] = []
+    feed["seq"] = max(1, int(number_or(feed.get("seq"), 1)))
+    return feed
+
+
+def load_feed(code):
+    """Лента комнаты: у старой комнаты без ключа ленты она пустая.
+
+    Сообщения живут своим ключом (`storage.read_feed`), поэтому документ
+    комнаты не пухнет от истории и правка листа не переписывает переписку.
+    """
+    return ensure_feed(storage.read_feed(code))
+
+
 def read_doc(code):
-    """Документ комнаты с полями, которых могли не знать старые комнаты."""
+    """Документ комнаты с полями, которых могли не знать старые комнаты.
+
+    Заодно раскладывает старый документ по ключам (`storage.split_legacy`):
+    лента и портреты уезжают в свои ключи, а документ остаётся десятками
+    килобайт. Сбой записи здесь не мешает отдать состояние — переселение
+    просто повторится при следующем чтении.
+    """
     doc = storage.read_doc(code)
     if doc is None:
         return None
-    return ensure_players(ensure_music(ensure_map(ensure_world(doc))))
+    doc = ensure_players(ensure_music(ensure_map(ensure_world(doc))))
+    if storage.split_legacy(code, doc):
+        try:
+            storage.write_doc(doc)
+        except (AppError, OSError):
+            pass
+    return doc
 
 
 def doc_rev(doc):
@@ -528,17 +564,15 @@ def create_room():
             "createdAt": now,
             "gm": "",
             "players": [],
-            "messages": [],
             "characters": [],
             "map": empty_map(),
             "music": empty_music(),
             "world": empty_world(),
-            "deletedMessages": [],
-            "seq": 1,
             "rev": 1,
         }
+        feed = ensure_feed(None)
         append_message(
-            doc,
+            feed,
             {
                 "kind": "system",
                 "author": "system",
@@ -546,6 +580,9 @@ def create_room():
                 "createdAt": now,
             },
         )
+        # Лента пишется первой: комната без ленты выглядит как стол без чата,
+        # а вот лента без комнаты просто истечёт вместе со сроком.
+        storage.write_feed(code, feed)
         storage.write_doc(doc)
         return doc
     raise AppError(500, "Не удалось создать комнату, попробуйте ещё раз")
@@ -658,12 +695,13 @@ def live_pings(doc, now):
     ]
 
 
-def changed_characters(characters, marks):
+def changed_characters(code, characters, marks):
     """Листы, которые клиенту нужно обновить: изменённые после его метки.
 
     Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
-    подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Полный портрет нужен
-    лишь для просмотра — в снимок он не входит.
+    подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Сама картинка лежит
+    своим ключом (`storage.read_portrait`) и читается только тому, у кого её
+    ещё нет, — в документе комнаты осталась лишь её подпись.
     """
     since = int(number_or(marks.get("chars"), 0))
     portraits = marks.get("portraits")
@@ -672,14 +710,23 @@ def changed_characters(characters, marks):
     for character in characters:
         if since > 0 and int(number_or(character.get("updatedAt"), 0)) < since:
             continue
-        key = portrait_key(character.get("portrait") or "")
+        key = character.get("portraitKey") or portrait_key("")
         known = known_all.get(character.get("id")) if known_all is not None else None
         copy = dict(character)
-        copy["portrait"] = "" if known == key else (character.get("portrait") or "")
+        copy["portrait"] = "" if known == key else load_portrait(code, character.get("id"))
         copy["portraitFull"] = ""
         copy["portraitKey"] = key
         changed.append(copy)
     return changed
+
+
+def load_portrait(code, character_id):
+    """Миниатюра листа из своего ключа; ключа нет — пустая строка."""
+    payload = storage.read_portrait(code, character_id)
+    if not isinstance(payload, dict):
+        return ""
+    value = payload.get("portrait")
+    return value if isinstance(value, str) else ""
 
 
 def get_room_snapshot(code, marks=None):
@@ -700,7 +747,10 @@ def get_room_snapshot(code, marks=None):
             pass  # если запись не удалась, состояние всё равно отдаём без дублей
 
     counters = snapshot_marks(doc)
-    messages = doc.get("messages") or []
+    # Лента читается своим ключом: в документе её больше нет, иначе `/state`
+    # тянул бы историю вместе с каждой правкой листа.
+    feed = load_feed(code)
+    messages = feed["messages"]
     since = int(number_or(request.get("since"), 0))
     if since > 0:
         messages = [message for message in messages if number_or(message.get("seq"), 0) >= since]
@@ -710,17 +760,17 @@ def get_room_snapshot(code, marks=None):
         "createdAt": doc.get("createdAt"),
         "gm": doc.get("gm") or "",
         "messages": messages,
-        "deletedMessages": doc.get("deletedMessages") or [],
+        "deletedMessages": feed["deletedMessages"],
         "characterIds": [entry.get("id") for entry in as_list(doc.get("characters"))],
         "serverNow": _now(),
-        "seq": doc.get("seq"),
+        "seq": feed["seq"],
         "rev": doc_rev(doc),
         "marks": counters,
     }
     if _part_changed(counters["players"], request.get("players")):
         snapshot["players"] = doc.get("players") or []
     if _part_changed(counters["chars"], request.get("chars")):
-        snapshot["characters"] = changed_characters(as_list(doc.get("characters")), request)
+        snapshot["characters"] = changed_characters(code, as_list(doc.get("characters")), request)
     if _part_changed(counters["map"], request.get("map")):
         snapshot["map"] = doc.get("map")
     # Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
@@ -749,8 +799,9 @@ def join_room(code, raw_name):
             doc["players"].append(
                 {"name": name, "joinedAt": now, "lastSeen": now, "color": "", "characterIds": []}
             )
+            feed = load_feed(code)
             append_message(
-                doc,
+                feed,
                 {
                     "kind": "system",
                     "author": "system",
@@ -758,6 +809,7 @@ def join_room(code, raw_name):
                     "createdAt": now,
                 },
             )
+            storage.write_feed(code, feed)
         if not doc.get("gm"):
             doc["gm"] = existing["name"] if existing else name
         return {
@@ -793,7 +845,8 @@ def light_character(character):
 
     Портрет стоит до 260 КБ, полная картинка — до 560 КБ, и гонять их туда-обратно
     на каждое автосохранение незачем: клиент прислал портрет в правке или уже
-    имеет его у себя, а в документе комнаты он остаётся целиком.
+    имеет его у себя, а в комнате картинки лежат своим ключом и в документ
+    листа не входят.
     """
     copy = dict(character)
     copy["portrait"] = ""
@@ -826,7 +879,10 @@ def post_message(code, raw_author, raw_text):
         message = {"kind": "roll" if roll else "text", "author": author, "text": text, "createdAt": now}
         if roll:
             message["roll"] = roll
-        return append_message(doc, message)
+        feed = load_feed(code)
+        entry = append_message(feed, message)
+        storage.write_feed(code, feed)
+        return entry
 
     value, meta = write_room(code, handler)
     return {"message": value, **meta}
@@ -865,8 +921,8 @@ def create_character(code, raw_owner, raw_draft):
             "name": draft["name"],
             "level": draft["level"],
             "origin": draft["origin"],
-            "portrait": draft["portrait"],
-            "portraitFull": draft["portraitFull"],
+            # Картинка уезжает в свой ключ, в документе остаётся её подпись.
+            "portraitKey": portrait_key(draft["portrait"]),
             "stats": draft["stats"],
             "resources": draft["resources"],
             "skills": draft["skills"],
@@ -879,6 +935,12 @@ def create_character(code, raw_owner, raw_draft):
             "createdAt": now,
             "updatedAt": now,
         }
+        if draft["portrait"] or draft["portraitFull"]:
+            storage.write_portrait(
+                code,
+                character["id"],
+                {"portrait": draft["portrait"], "portraitFull": draft["portraitFull"]},
+            )
         doc["characters"].append(character)
         owner_account = find_player(doc, owner)
         if owner_account is not None:
@@ -922,6 +984,18 @@ def update_character(code, character_id, raw_actor, raw_patch):
 
         patch = as_dict(raw_patch)
         current = draft_from_character(character)
+        # Портрет приходит в правке только при смене картинки: его отсутствие
+        # значит «оставить прежний», и тогда ключ портрета не трогаем вовсе.
+        patch_portrait = patch.get("portrait")
+        portrait_saved = isinstance(patch_portrait, str) and patch_portrait != ""
+        if portrait_saved:
+            stored = storage.read_portrait(code, character_id) or {}
+            current["portrait"] = patch_portrait
+            current["portraitFull"] = (
+                patch.get("portraitFull")
+                or (stored.get("portraitFull") if isinstance(stored.get("portraitFull"), str) else "")
+                or patch_portrait
+            )
 
         resources = dict(current["resources"])
         for key, value in as_dict(patch.get("resources")).items():
@@ -942,8 +1016,8 @@ def update_character(code, character_id, raw_actor, raw_patch):
                 "name": _patch_value(patch, "name", current["name"]),
                 "level": _patch_value(patch, "level", current["level"]),
                 "origin": _patch_value(patch, "origin", current["origin"]),
-                "portrait": _patch_value(patch, "portrait", current["portrait"]),
-                "portraitFull": patch.get("portraitFull") or current["portraitFull"],
+                "portrait": current["portrait"],
+                "portraitFull": current["portraitFull"],
                 "traits": list_or("traits", current["traits"]),
                 "flaws": list_or("flaws", current["flaws"]),
                 "languages": list_or("languages", current["languages"]),
@@ -973,8 +1047,6 @@ def update_character(code, character_id, raw_actor, raw_patch):
             "name",
             "level",
             "origin",
-            "portrait",
-            "portraitFull",
             "traits",
             "flaws",
             "languages",
@@ -986,6 +1058,15 @@ def update_character(code, character_id, raw_actor, raw_patch):
             "fields",
         ):
             character[key] = normalized[key]
+        # Портрет и полная картинка живут своим ключом: в документе остаётся
+        # только подпись, по которой клиент понимает, что картинка новая.
+        if portrait_saved:
+            storage.write_portrait(
+                code,
+                character_id,
+                {"portrait": normalized["portrait"], "portraitFull": normalized["portraitFull"]},
+            )
+            character["portraitKey"] = portrait_key(normalized["portrait"])
         character["updatedAt"] = _now()
         touch_player(doc, actor)
         return character
@@ -1014,6 +1095,11 @@ def delete_character(code, character_id, raw_actor):
             linked = [entry for entry in as_list(player.get("characterIds")) if entry != character_id]
             player["characterIds"] = linked
         rebuild_character_players(doc)
+        # Портрет удалённого листа не должен остаться в базе до конца срока.
+        try:
+            storage.delete_portrait(code, character_id)
+        except (AppError, OSError):
+            pass
         return character_id
 
     value, meta = write_room(code, handler)
@@ -1699,7 +1785,9 @@ def update_player(code, raw_actor, raw_target, raw_patch):
                 )
                 if clash:
                     raise AppError(400, "Это имя уже занято за столом")
-                rename_references(doc, str(player.get("name") or ""), next_name)
+                feed = load_feed(code)
+                rename_references(doc, feed, str(player.get("name") or ""), next_name)
+                storage.write_feed(code, feed)
                 player["name"] = next_name
 
         if patch.get("color") is not None:
@@ -1766,8 +1854,9 @@ def remove_player(code, raw_actor, raw_target):
             raise AppError(400, "Мастер не может удалить себя")
         now = _now()
         doc["players"] = [entry for entry in doc["players"] if entry is not player]
+        feed = load_feed(code)
         message = append_message(
-            doc,
+            feed,
             {
                 "kind": "system",
                 "author": "system",
@@ -1775,6 +1864,7 @@ def remove_player(code, raw_actor, raw_target):
                 "createdAt": now,
             },
         )
+        storage.write_feed(code, feed)
         return {"players": doc["players"], "message": message}
 
     value, meta = write_room(code, handler)
@@ -1791,8 +1881,9 @@ def delete_message(code, raw_actor, raw_id):
         raise AppError(400, "Не указано сообщение")
 
     def handler(doc):
+        feed = load_feed(code)
         message = None
-        for entry in doc["messages"]:
+        for entry in feed["messages"]:
             if entry.get("id") == message_id:
                 message = entry
         if message is None:
@@ -1800,12 +1891,13 @@ def delete_message(code, raw_actor, raw_id):
         author = str(message.get("author") or "").strip().lower()
         if not is_gm(doc, actor) and author != actor.lower():
             raise AppError(403, "Удалять чужие сообщения может только мастер")
-        doc["messages"] = [entry for entry in doc["messages"] if entry.get("id") != message_id]
-        deleted = list(as_list(doc.get("deletedMessages")))
+        feed["messages"] = [entry for entry in feed["messages"] if entry.get("id") != message_id]
+        deleted = list(feed["deletedMessages"])
         deleted.append(message_id)
-        doc["deletedMessages"] = deleted[-MAX_DELETED_MESSAGES:]
+        feed["deletedMessages"] = deleted[-MAX_DELETED_MESSAGES:]
+        storage.write_feed(code, feed)
         touch_player(doc, actor)
-        return {"id": message_id, "deletedMessages": doc["deletedMessages"]}
+        return {"id": message_id, "deletedMessages": feed["deletedMessages"]}
 
     value, meta = write_room(code, handler)
     return {**value, **meta}

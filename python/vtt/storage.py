@@ -3,7 +3,12 @@
 Node-версия умеет два режима — Redis и память процесса. На shared-хостинге
 память процесса бесполезна (Apache поднимает и гасит воркеры), поэтому второй
 режим — файлы в `python/data/rooms` (можно переопределить `VTT_DATA_DIR`).
-Ключи и TTL те же: `poison-press:room:<КОД>`, 30 дней.
+
+Комната лежит не одним куском: документ (`poison-press:room:<КОД>`), лента
+(`poison-press:feed:<КОД>`) и портреты листов
+(`poison-press:portrait:<КОД>:<ID>`) — разные ключи с одним сроком в 30 дней.
+Так документ остаётся десятками килобайт: правка листа не переписывает
+мегабайт картинок, а `/state` не тянет портреты, которые клиент уже видел.
 """
 
 import contextlib
@@ -24,7 +29,12 @@ KEY_PREFIX = "poison-press:room:"
 # Боковые ключи комнаты: голова (номер изменения) и присутствие.
 REV_KEY_PREFIX = "poison-press:rev:"
 SEEN_KEY_PREFIX = "poison-press:seen:"
+FEED_KEY_PREFIX = "poison-press:feed:"
+PORTRAIT_KEY_PREFIX = "poison-press:portrait:"
 SEEN_KEY_SECONDS = 600
+# Части комнаты продлевают свой срок не каждой записью, а раз в шесть дней:
+# иначе каждая правка листа стоила бы семи лишних команд Redis.
+PARTS_TTL_REFRESH_SECONDS = 6 * 24 * 3600
 HTTP_TIMEOUT = 10
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -91,6 +101,20 @@ def rev_key(code):
 def seen_key(code):
     """Боковой ключ присутствия: кто когда проверял голову."""
     return "%s%s" % (SEEN_KEY_PREFIX, code)
+
+
+def feed_key(code):
+    """Ключ ленты: сообщения, номера и удалённые — отдельно от документа.
+
+    Лента растёт вместе с кампанией (у живого стола уже 86 сообщений), и держать
+    её в документе значило бы переписывать историю на каждую правку листа.
+    """
+    return "%s%s" % (FEED_KEY_PREFIX, code)
+
+
+def portrait_key(code, character_id):
+    """Ключ картинок листа: миниатюра и полный портрет живут вне документа."""
+    return "%s%s:%s" % (PORTRAIT_KEY_PREFIX, code, character_id)
 
 
 def snippet(text):
@@ -218,24 +242,267 @@ def read_doc(code):
 
 
 def write_doc(doc):
-    """Сохраняет документ с TTL 30 дней."""
+    """Сохраняет документ комнаты с TTL 30 дней и держит живыми её части."""
     creds = credentials()
+    refresh = _parts_stale(doc)
+    if refresh:
+        doc["partsAt"] = int(time.time())
     if creds:
         body = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
         path = "/set/%s?EX=%d" % (urlparse.quote(storage_key(doc["code"]), safe=""), ROOM_TTL_SECONDS)
         status, text = _redis(creds, path, body=body, method="POST")
         if status != 200:
             raise storage_error(status, "write", snippet(text))
+    else:
+        _file_write(doc)
+    if refresh:
+        keep_parts_alive(doc)
+
+
+def _parts_stale(doc):
+    """Пора ли продлить срок ленты и портретов: раз в шесть дней, не чаще."""
+    try:
+        stamp = int(float(doc.get("partsAt") or 0))
+    except (TypeError, ValueError):
+        stamp = 0
+    return time.time() - stamp >= PARTS_TTL_REFRESH_SECONDS
+
+
+def keep_parts_alive(doc):
+    """Продлевает срок частям комнаты, пока жива сама комната.
+
+    Лента и портреты лежат своими ключами с тем же сроком в 30 дней. Документ
+    продлевает свой срок каждой записью, а части — только своей: без этой
+    проверки лента стола, где неделями не пишут в чат, истекла бы раньше него.
+    Вызов редкий (раз в шесть дней), поэтому лишние команды Redis не мешают.
+    """
+    code = doc.get("code")
+    if not code:
         return
-    _file_write(doc)
+    suffixes = ["feed"]
+    for character in doc.get("characters") or []:
+        if isinstance(character, dict) and character.get("id"):
+            suffixes.append("portrait.%s" % character["id"])
+    creds = credentials()
+    for suffix in suffixes:
+        try:
+            if creds:
+                _redis(
+                    creds,
+                    "/expire/%s/%d" % (
+                        urlparse.quote(_side_key(code, suffix), safe=""),
+                        ROOM_TTL_SECONDS,
+                    ),
+                    body="",
+                    method="POST",
+                )
+            else:
+                os.utime(_side_path(code, suffix), None)
+        except (OSError, urlerror.URLError, AppError):
+            pass  # части может ещё не быть — это не повод ломать запись комнаты
+
+
+def _side_key(code, suffix):
+    """Ключ части комнаты: `<КОД>` — лента, `<КОД>:<ID>` — портрет листа."""
+    kind, _, ident = suffix.partition(".")
+    if kind == "feed":
+        return feed_key(code)
+    return portrait_key(code, ident)
+
+
+def _part_read(code, suffix):
+    """JSON-часть комнаты: Redis-ключ или файл `<КОД>.<suffix>.json`."""
+    creds = credentials()
+    if creds:
+        status, text = _redis(creds, "/get/" + urlparse.quote(_side_key(code, suffix), safe=""))
+        if status != 200:
+            raise storage_error(status, "read", snippet(text))
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            return None
+        result = payload.get("result")
+        if not result:
+            return None
+        try:
+            value = json.loads(result)
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+    return _side_read(code, suffix, expires=False)
+
+
+def _part_write(code, suffix, payload):
+    """Пишет часть комнаты своим ключом с тем же сроком жизни."""
+    creds = credentials()
+    if creds:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        path = "/set/%s?EX=%d" % (
+            urlparse.quote(_side_key(code, suffix), safe=""),
+            ROOM_TTL_SECONDS,
+        )
+        status, text = _redis(creds, path, body=body, method="POST")
+        if status != 200:
+            raise storage_error(status, "write", snippet(text))
+        return
+    _side_write(code, suffix, payload)
+
+
+def read_feed(code):
+    """Лента комнаты: `{seq, messages, deletedMessages}` или None, если её нет."""
+    return _part_read(code, "feed")
+
+
+def write_feed(code, feed):
+    """Сохраняет ленту: сообщения больше не ездят в документе комнаты."""
+    _part_write(code, "feed", feed)
+
+
+def read_portrait(code, character_id):
+    """Картинки листа: `{portrait, portraitFull}` или None, если их нет."""
+    return _part_read(code, "portrait.%s" % character_id)
+
+
+def write_portrait(code, character_id, payload):
+    """Сохраняет портрет листа отдельным ключом — документ остаётся мелким."""
+    _part_write(code, "portrait.%s" % character_id, payload)
+
+
+def delete_portrait(code, character_id):
+    """Убирает портрет удалённого листа: ключ и файл."""
+    creds = credentials()
+    if creds:
+        status, text = _redis(
+            creds,
+            "/del/" + urlparse.quote(portrait_key(code, character_id), safe=""),
+            body="",
+            method="POST",
+        )
+        if status != 200:
+            raise storage_error(status, "write", snippet(text))
+        return
+    try:
+        os.remove(_side_path(code, "portrait.%s" % character_id))
+    except OSError:
+        pass
+
+
+def portrait_ids(code):
+    """id листов, у которых есть свой ключ портретов (нужно при удалении комнаты)."""
+    creds = credentials()
+    if not creds:
+        prefix = "%s.portrait." % code
+        if not os.path.isdir(DATA_DIR):
+            return []
+        ids = []
+        for name in os.listdir(DATA_DIR):
+            if name.startswith(prefix) and name.endswith(".json"):
+                ids.append(name[len(prefix): -len(".json")])
+        return sorted(ids)
+
+    prefix = portrait_key(code, "")
+    pattern = urlparse.quote(prefix + "*", safe="")
+    cursor = "0"
+    ids = set()
+    while True:
+        status, text = _redis(creds, "/scan/%s?match=%s&count=1000" % (cursor, pattern))
+        if status != 200:
+            return sorted(ids)
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            break
+        result = payload.get("result") or ["0", []]
+        cursor = str(result[0])
+        for key in result[1] if len(result) > 1 else []:
+            if key.startswith(prefix):
+                ids.add(key[len(prefix):])
+        if cursor == "0":
+            break
+    return sorted(ids)
+
+
+def split_legacy(code, doc):
+    """Раскладывает старый документ по ключам: лента и портреты — отдельно.
+
+    Комнаты до 0.4.84 держали в одном ключе и переписку, и картинки: у живого
+    стола документ весил 1,4 МБ, из них 1,43 МБ — портреты, поэтому `/state`
+    тянул мегабайт, а правка листа переписывала его целиком. Здесь сообщения
+    переезжают в ключ ленты, портреты — в свои ключи, а в документе остаются
+    только подписи картинок (`portraitKey`).
+
+    Части пишутся до того, как из документа что-то убрано: если запись не
+    удалась, исключение уходит наверх, а документ остаётся целым — данные
+    не теряются, и переселение повторится при следующем чтении.
+    Возвращает True, если документ надо переписать.
+    """
+    changed = False
+    messages = doc.get("messages")
+    deleted = doc.get("deletedMessages")
+    if isinstance(messages, list) or isinstance(deleted, list):
+        if read_feed(code) is None:
+            seq = 1
+            for message in messages if isinstance(messages, list) else []:
+                if isinstance(message, dict):
+                    seq = max(seq, int(message.get("seq") or 0) + 1)
+            write_feed(
+                code,
+                {
+                    "seq": max(seq, int(doc.get("seq") or 1)),
+                    "messages": messages if isinstance(messages, list) else [],
+                    "deletedMessages": deleted if isinstance(deleted, list) else [],
+                },
+            )
+        for key in ("messages", "seq", "deletedMessages"):
+            if key in doc:
+                doc.pop(key)
+                changed = True
+
+    for character in doc.get("characters") or []:
+        if not isinstance(character, dict):
+            continue
+        if "portrait" not in character and "portraitFull" not in character:
+            continue
+        portrait = character.get("portrait")
+        full = character.get("portraitFull")
+        if (portrait or full) and character.get("id"):
+            write_portrait(
+                code,
+                character["id"],
+                {
+                    "portrait": portrait if isinstance(portrait, str) else "",
+                    "portraitFull": full if isinstance(full, str) else "",
+                },
+            )
+        character["portraitKey"] = _signature(portrait if isinstance(portrait, str) else "")
+        character.pop("portrait", None)
+        character.pop("portraitFull", None)
+        changed = True
+    return changed
+
+
+def _signature(portrait):
+    """Подпись портрета — та же функция, что в логике комнат (`store.portrait_key`).
+
+    Импорт внутри функции: `vtt.store` сам импортирует этот модуль, и наверху
+    получился бы замкнутый круг.
+    """
+    from .store import portrait_key
+
+    return portrait_key(portrait)
 
 
 def _side_path(code, suffix):
     return os.path.join(DATA_DIR, "%s.%s.json" % (code, suffix))
 
 
-def _side_read(code, suffix):
-    """Боковой JSON рядом с комнатой или None, если файла нет или он протух."""
+def _side_read(code, suffix, expires=True):
+    """Боковой JSON рядом с комнатой или None, если файла нет или он протух.
+
+    `expires=False` — для частей комнаты (лента, портреты): их срок считает
+    документ, а не mtime файла, иначе лента молчащей неделями комнаты исчезла
+    бы раньше, чем сам стол.
+    """
     path = _side_path(code, suffix)
     try:
         modified = os.path.getmtime(path)
@@ -243,7 +510,7 @@ def _side_read(code, suffix):
         return None
     # Файл живёт столько же, сколько комната: иначе голова переживёт её и
     # клиент будет считать, что удалённый стол на месте.
-    if time.time() - modified > ROOM_TTL_SECONDS:
+    if expires and time.time() - modified > ROOM_TTL_SECONDS:
         try:
             os.remove(path)
         except OSError:
@@ -354,9 +621,10 @@ def scan_codes():
             if not name.endswith(".json") or name.startswith("."):
                 continue
             stem = name[: -len(".json")]
-            # Рядом с комнатой лежат её боковые ключи `<КОД>.rev.json` и
-            # `<КОД>.seen.json` — это не отдельные комнаты.
-            if stem.endswith(".rev") or stem.endswith(".seen"):
+            # Рядом с комнатой лежат её части и боковые ключи: `<КОД>.rev.json`,
+            # `<КОД>.seen.json`, `<КОД>.feed.json`, `<КОД>.portrait.<ID>.json`.
+            # Код комнаты точки не содержит, поэтому любая точка — не комната.
+            if "." in stem:
                 continue
             codes.append(stem)
         return sorted(codes)
@@ -382,11 +650,11 @@ def scan_codes():
     return sorted(codes)
 
 
-def room_size(code):
-    """Размер документа комнаты в байтах: STRLEN в Redis, длина файла на диске."""
+def _key_size(key, path):
+    """Размер значения в байтах: STRLEN в Redis, длина файла на диске."""
     creds = credentials()
     if creds:
-        status, text = _redis(creds, "/strlen/" + urlparse.quote(storage_key(code), safe=""))
+        status, text = _redis(creds, "/strlen/" + urlparse.quote(key, safe=""))
         if status != 200:
             raise storage_error(status, "read", snippet(text))
         try:
@@ -398,9 +666,27 @@ def room_size(code):
         except (TypeError, ValueError):
             return 0
     try:
-        return os.path.getsize(_room_path(code))
+        return os.path.getsize(path)
     except OSError:
         return 0
+
+
+def room_size(code):
+    """Размер документа комнаты в байтах (без ленты и портретов)."""
+    return _key_size(storage_key(code), _room_path(code))
+
+
+def feed_size(code):
+    """Размер ленты комнаты: у живого стола это десятки килобайт."""
+    return _key_size(feed_key(code), _side_path(code, "feed"))
+
+
+def portrait_size(code, character_id):
+    """Размер картинок листа: миниатюра и полный портрет вместе."""
+    return _key_size(
+        portrait_key(code, character_id),
+        _side_path(code, "portrait.%s" % character_id),
+    )
 
 
 def room_ttl(code):
@@ -427,16 +713,21 @@ def room_ttl(code):
 
 
 def delete_room(code):
-    """Удаляет комнату вместе с боковыми ключами и звуком; возвращает, что стёрто.
+    """Удаляет комнату вместе с её частями, боковыми ключами и звуком.
 
-    Комнату нельзя удалить через API — только отсюда. Боковые ключи (`rev`,
-    `seen`) убираются обязательно: иначе голова переживёт стол и клиент будет
-    считать, что удалённая комната на месте.
+    Комнату нельзя удалить через API — только отсюда. Убираем всё, что от неё
+    осталось: документ, ленту, портреты листов и боковые ключи (`rev`, `seen`).
+    Боковые ключи обязательны: иначе голова переживёт стол и клиент будет
+    считать, что удалённая комната на месте, а брошенные лента и портреты
+    занимали бы базу до конца срока.
     """
     creds = credentials()
+    ids = portrait_ids(code)
+    keys = [storage_key(code), rev_key(code), seen_key(code), feed_key(code)]
+    keys.extend(portrait_key(code, character_id) for character_id in ids)
     if creds:
         removed = []
-        for key in (storage_key(code), rev_key(code), seen_key(code)):
+        for key in keys:
             status, text = _redis(
                 creds, "/del/" + urlparse.quote(key, safe=""), body="", method="POST"
             )
@@ -451,7 +742,9 @@ def delete_room(code):
         return removed
 
     removed = []
-    for path in (_room_path(code), _side_path(code, "rev"), _side_path(code, "seen")):
+    paths = [_room_path(code), _side_path(code, "rev"), _side_path(code, "seen"), _side_path(code, "feed")]
+    paths.extend(_side_path(code, "portrait.%s" % character_id) for character_id in ids)
+    for path in paths:
         try:
             os.remove(path)
         except OSError:

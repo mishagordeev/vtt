@@ -186,16 +186,37 @@ export interface RoomState {
   createdAt: number;
   gm: string;
   players: Player[];
-  messages: ChatMessage[];
   characters: Character[];
   map: MapState;
   music: MusicState;
   world: WorldState;
-  /** id удалённых сообщений: клиент вычищает их из своей ленты. */
-  deletedMessages: string[];
-  seq: number;
   /** Номер изменения: растёт на каждую запись комнаты. В комнатах до 0.4.75 поля нет. */
   rev?: number;
+  /**
+   * Когда части комнаты (лента, портреты) в последний раз продлевали свой срок.
+   * Документ продлевает свой срок каждой записью, а части — раз в шесть дней.
+   */
+  partsAt?: number;
+}
+
+/**
+ * Лента комнаты: сообщения живут своим ключом, а не в документе.
+ *
+ * У живого стола это десятки килобайт истории, и держать их в документе значило
+ * бы переписывать переписку на каждую правку листа.
+ */
+export interface RoomFeed {
+  /** Номер следующего сообщения: по нему клиент просит только новое. */
+  seq: number;
+  messages: ChatMessage[];
+  /** id удалённых сообщений: клиент вычищает их из своей ленты. */
+  deletedMessages: string[];
+}
+
+/** Картинки листа: миниатюра для карточки и полная для просмотра. */
+export interface PortraitParts {
+  portrait: string;
+  portraitFull: string;
 }
 
 export interface MapPoint {

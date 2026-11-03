@@ -4,9 +4,10 @@
 тестовый стол на три сообщения держит базу столько же, сколько игровая
 кампания. Скрипт показывает комнаты, а `delete` без `--apply` ничего не
 трогает: сначала печатает план (сообщения, листы, размер, сколько дней
-осталось), и только `--apply` с подтверждением стирает документ комнаты
-вместе с боковыми ключами `rev` и `seen` — иначе голова комнаты переживёт
-стол и клиент будет считать, что она на месте.
+осталось), и только `--apply` с подтверждением стирает всё, чем лежит комната:
+документ, ленту сообщений, портреты листов и боковые ключи `rev` и `seen` —
+иначе голова комнаты переживёт стол и клиент будет считать, что она на месте,
+а брошенные лента и портреты занимали бы базу до конца срока.
 
 Запуск (из каталога vtt):
 
@@ -206,13 +207,21 @@ def ssh_run(target, command, timeout=30.0):
 
 
 def room_info(storage, code):
-    """Всё, по чему решают, чистить комнату или нет."""
+    """Всё, по чему решают, чистить комнату или нет.
+
+    Комната лежит тремя ключами: документ, лента и портреты листов. Размер
+    считаем общий, а рядом показываем, из чего он сложился, — иначе после
+    выноса портретов «1,4 МБ» превратились бы в непонятные 33 КБ.
+    """
     doc = storage.read_doc(code)
     info = {
         "code": code,
         "doc": doc,
         "ttl": storage.room_ttl(code),
-        "size": storage.room_size(code),
+        "size": 0,
+        "docSize": storage.room_size(code),
+        "feedSize": 0,
+        "portraitsSize": 0,
         "messages": [],
         "characters": [],
         "players": [],
@@ -223,9 +232,22 @@ def room_info(storage, code):
     }
     if not doc:
         return info
-    messages = [entry for entry in (doc.get("messages") or []) if isinstance(entry, dict)]
+    feed = storage.read_feed(code)
+    if feed is None:
+        # Комната до 0.4.84 держала ленту в самом документе: старые комнаты
+        # скрипт понимает и без ключа ленты — иначе он показал бы пустой чат.
+        messages = doc.get("messages")
+    else:
+        info["feedSize"] = storage.feed_size(code)
+        messages = feed.get("messages")
+    messages = [entry for entry in (messages or []) if isinstance(entry, dict)]
     info["messages"] = messages
-    info["characters"] = [entry for entry in (doc.get("characters") or []) if isinstance(entry, dict)]
+    characters = [entry for entry in (doc.get("characters") or []) if isinstance(entry, dict)]
+    info["characters"] = characters
+    info["portraitsSize"] = sum(
+        storage.portrait_size(code, entry.get("id")) for entry in characters if entry.get("id")
+    )
+    info["size"] = info["docSize"] + info["feedSize"] + info["portraitsSize"]
     info["players"] = [
         entry.get("name")
         for entry in (doc.get("players") or [])
@@ -246,7 +268,13 @@ def describe(info):
     ]
     if info["players"]:
         parts.append(count_label(len(info["players"]), "игрок", "игрока", "игроков"))
-    parts.append(human_size(info["size"]))
+    detail = "документ %s, лента %s" % (
+        human_size(info.get("docSize") or 0),
+        human_size(info.get("feedSize") or 0),
+    )
+    if info.get("portraitsSize"):
+        detail += ", портреты %s" % human_size(info["portraitsSize"])
+    parts.append("%s (%s)" % (human_size(info["size"]), detail))
     parts.append("осталось %s" % human_ttl(info["ttl"]))
     return ", ".join(parts)
 
@@ -262,18 +290,18 @@ def command_list(storage, args):
     skipped = []
     for code in codes:
         ttl = storage.room_ttl(code)
-        size = storage.room_size(code)
-        if size > args.read_limit:
-            # Игровой стол бывает на сотни килобайт: ради списка его не читаем.
+        doc_size = storage.room_size(code)
+        if doc_size > args.read_limit:
+            # Документ комнаты бывает на сотни килобайт: ради списка его не читаем.
             skipped.append(code)
             say(
                 "%-7s %7s %6s %10s %9s  %s"
-                % (code, "?", "?", human_size(size), human_ttl(ttl), "большая — не читала")
+                % (code, "?", "?", human_size(doc_size), human_ttl(ttl), "большая — не читала")
             )
             continue
         info = room_info(storage, code)
         info["ttl"] = ttl
-        info["size"] = size
+        size = info["size"]
         last = info["last"] or {}
         say(
             "%-7s %7d %6d %10s %9s  %s"
@@ -356,14 +384,37 @@ def ask_confirmation(plan, *, assume_yes):
     return answer in expected
 
 
-def save_backup(plan, directory):
-    """Копия документов перед удалением: стереть комнату из базы иначе не вернуть."""
+def save_backup(storage, plan, directory):
+    """Копия комнаты перед удалением: документ, лента и портреты листов.
+
+    Комната лежит тремя ключами, поэтому и копия из трёх: иначе после удаления
+    пропали бы переписка и картинки, ради которых бэкап и делают. Стереть
+    комнату из базы иначе не вернуть.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     saved = []
     for info in plan:
+        code = info["code"]
         path = directory / ("%s.json" % info["code"])
         path.write_text(json.dumps(info["doc"], ensure_ascii=False, indent=2), encoding="utf-8")
         saved.append(str(path))
+        feed = storage.read_feed(code)
+        if feed:
+            feed_path = directory / ("%s.feed.json" % code)
+            feed_path.write_text(json.dumps(feed, ensure_ascii=False, indent=2), encoding="utf-8")
+            saved.append(str(feed_path))
+        for character in info["characters"]:
+            character_id = character.get("id")
+            if not character_id:
+                continue
+            portrait = storage.read_portrait(code, character_id)
+            if not portrait:
+                continue
+            portrait_path = directory / ("%s.portrait.%s.json" % (code, character_id))
+            portrait_path.write_text(
+                json.dumps(portrait, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            saved.append(str(portrait_path))
     return saved
 
 
@@ -485,8 +536,8 @@ def command_delete(storage, codes, args):
         return 1
 
     if args.backup:
-        saved = save_backup(plan, args.backup)
-        say("Копии документов: %s" % ", ".join(saved))
+        saved = save_backup(storage, plan, args.backup)
+        say("Копии комнат: %s" % ", ".join(saved))
 
     problems = 0
     for info in plan:

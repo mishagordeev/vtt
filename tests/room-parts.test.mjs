@@ -221,7 +221,7 @@ test("сервер отдаёт части только при изменени�
   );
   assert.match(
     store,
-    /\.\.\.character,\s*portrait: known === key \? "" : character\.portrait,/,
+    /result\.push\(\{ \.\.\.character, portrait, portraitFull: "", portraitKey: key \}\)/,
     "портрет вырезается, когда подпись у клиента та же",
   );
   assert.match(
@@ -229,7 +229,7 @@ test("сервер отдаёт части только при изменени�
     /characters\.filter\(\(character\) => \(Number\(character\.updatedAt\) \|\| 0\) >= since\)/,
     "в частичном ответе только изменённые листы",
   );
-  assert.match(store, /portraitKey: key,/, "лист несёт подпись портрета");
+  assert.match(store, /portraitKey: key\b/, "лист несёт подпись портрета");
   assert.match(store, /character\.updatedAt = now;/, "переименование игрока обновляет лист");
 });
 
@@ -258,7 +258,16 @@ test("Python-версия повторяет частичное чтение и 
   assert.match(store, /def get_room_snapshot\(code, marks=None\):/, "снимок принимает метки");
   assert.match(store, /"characterIds": \[entry\.get\("id"\)/, "id листов приходят всегда");
   assert.match(store, /snapshot\["characters"\] = changed_characters/, "листы приходят по изменению");
-  assert.match(store, /copy\["portrait"\] = "" if known == key else/, "портрет режется по подписи");
+  assert.match(
+    store,
+    /copy\["portrait"\] = "" if known == key else load_portrait\(code, character\.get\("id"\)\)/,
+    "портрет режется по подписи, а сама картинка читается своим ключом",
+  );
+  assert.match(
+    store,
+    /def changed_characters\(code, characters, marks\):/,
+    "листы получают код комнаты: портреты лежат отдельными ключами",
+  );
   assert.match(store, /character\["updatedAt"\] = _now\(\)/, "переименование обновляет лист");
 
   assert.match(wsgi, /def _state_marks\(params\):/, "метки разбираются в wsgi");

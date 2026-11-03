@@ -34,6 +34,8 @@ import type {
   MusicState,
   MusicTrack,
   Player,
+  PortraitParts,
+  RoomFeed,
   RoomHead,
   RoomSnapshot,
   RoomState,
@@ -55,6 +57,15 @@ const KEY_PREFIX = "poison-press:room:";
 const REV_KEY_PREFIX = "poison-press:rev:";
 /** Боковой ключ присутствия: кто когда проверял голову. */
 const SEEN_KEY_PREFIX = "poison-press:seen:";
+/** Ключ ленты комнаты: сообщения живут отдельно от документа. */
+const FEED_KEY_PREFIX = "poison-press:feed:";
+/** Ключ картинок листа: `<КОД>:<ID листа>`. */
+const PORTRAIT_KEY_PREFIX = "poison-press:portrait:";
+/**
+ * Части комнаты продлевают свой срок не каждой записью, а раз в шесть дней:
+ * иначе каждая правка листа стоила бы лишних команд Redis.
+ */
+const PARTS_TTL_REFRESH_MS = 6 * 24 * 60 * 60 * 1000;
 /** Присутствие пишем не чаще раза в 20 секунд — иначе голова станет второй записью комнаты. */
 const SEEN_WINDOW_MS = 20_000;
 /** Сколько держим имя в голове после последней проверки. */
@@ -158,7 +169,6 @@ function ensurePlayers(doc: RoomState): RoomState {
     if (!Array.isArray(character.players)) character.players = [];
   }
   rebuildCharacterPlayers(doc);
-  if (!Array.isArray(doc.deletedMessages)) doc.deletedMessages = [];
   return doc;
 }
 
@@ -216,15 +226,24 @@ type MemoryEntry = { doc: RoomState; expiresAt: number };
 type MemoryHead = { rev: number; expiresAt: number };
 /** Присутствие в памяти процесса. */
 type MemorySeen = { seen: Record<string, number>; expiresAt: number };
+/** Лента комнаты в памяти процесса. */
+type MemoryFeed = { feed: RoomFeed; expiresAt: number };
+/** Картинки листа в памяти процесса. */
+type MemoryPortrait = { parts: PortraitParts; expiresAt: number };
 
 const globalStore = globalThis as typeof globalThis & {
   __poisonPressRooms?: Map<string, MemoryEntry>;
   __poisonPressHeads?: Map<string, MemoryHead>;
   __poisonPressSeen?: Map<string, MemorySeen>;
+  __poisonPressFeeds?: Map<string, MemoryFeed>;
+  __poisonPressPortraits?: Map<string, MemoryPortrait>;
 };
 const memoryRooms: Map<string, MemoryEntry> = (globalStore.__poisonPressRooms ??= new Map());
 const memoryHeads: Map<string, MemoryHead> = (globalStore.__poisonPressHeads ??= new Map());
 const memorySeen: Map<string, MemorySeen> = (globalStore.__poisonPressSeen ??= new Map());
+const memoryFeeds: Map<string, MemoryFeed> = (globalStore.__poisonPressFeeds ??= new Map());
+const memoryPortraits: Map<string, MemoryPortrait> = (globalStore.__poisonPressPortraits ??=
+  new Map());
 
 interface RedisCredentials {
   url: string;
@@ -453,6 +472,10 @@ function storageError(
 
 const revKey = (code: string) => `${REV_KEY_PREFIX}${code}`;
 const seenKey = (code: string) => `${SEEN_KEY_PREFIX}${code}`;
+/** Ключ ленты: у каждой комнаты своя, чтобы документ не пух от истории. */
+const feedKey = (code: string) => `${FEED_KEY_PREFIX}${code}`;
+/** Ключ картинок листа: `<КОД>:<ID>`. */
+const portraitKeyOf = (code: string, id: string) => `${PORTRAIT_KEY_PREFIX}${code}:${id}`;
 
 /** Номер изменения документа; у комнат до 0.4.75 поля нет — считаем 0. */
 function docRev(doc: RoomState): number {
@@ -569,6 +592,220 @@ function freshSeen(raw: Record<string, number>, now: number): Record<string, num
   return seen;
 }
 
+/** Сериализованная JSON-часть комнаты: null — ключа нет или он битый. */
+async function readJsonKey(key: string): Promise<Record<string, unknown> | null> {
+  const kv = kvCredentials();
+  if (!kv) return null;
+  const res = await fetch(`${kv.url}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${kv.token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw storageError(res.status, "read", await responseSnippet(res));
+  const payload = (await res.json()) as { result?: string | null };
+  if (!payload.result) return null;
+  try {
+    const value: unknown = JSON.parse(payload.result);
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Пишет часть комнаты своим ключом с тем же сроком жизни, что у документа. */
+async function writeJsonKey(key: string, value: unknown): Promise<void> {
+  const kv = kvCredentials();
+  if (!kv) return;
+  const res = await fetch(`${kv.url}/set/${encodeURIComponent(key)}?EX=${ROOM_TTL_SECONDS}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${kv.token}`, "Content-Type": "text/plain" },
+    body: JSON.stringify(value),
+    cache: "no-store",
+  });
+  if (!res.ok) throw storageError(res.status, "write", await responseSnippet(res));
+}
+
+/** Поля ленты: номер, сообщения, удалённые — всё, что нужно снимку. */
+function ensureFeed(raw: Partial<RoomFeed> | null | undefined): RoomFeed {
+  const seq = Number(raw?.seq);
+  return {
+    seq: Number.isFinite(seq) && seq > 1 ? Math.floor(seq) : 1,
+    messages: Array.isArray(raw?.messages) ? (raw.messages as ChatMessage[]) : [],
+    deletedMessages: Array.isArray(raw?.deletedMessages) ? (raw.deletedMessages as string[]) : [],
+  };
+}
+
+/** Лента комнаты: сообщения живут своим ключом, а не в документе. */
+async function readFeed(code: string): Promise<RoomFeed | null> {
+  const kv = kvCredentials();
+  if (!kv) {
+    const entry = memoryFeeds.get(code);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      memoryFeeds.delete(code);
+      return null;
+    }
+    return ensureFeed(JSON.parse(JSON.stringify(entry.feed)) as RoomFeed);
+  }
+  const value = await readJsonKey(feedKey(code));
+  return value ? ensureFeed(value as unknown as RoomFeed) : null;
+}
+
+/** Сохраняет ленту: правка листа больше не переписывает историю чата. */
+async function writeFeed(code: string, feed: RoomFeed): Promise<void> {
+  const kv = kvCredentials();
+  if (!kv) {
+    memoryFeeds.set(code, {
+      feed: JSON.parse(JSON.stringify(feed)) as RoomFeed,
+      expiresAt: Date.now() + ROOM_TTL_SECONDS * 1000,
+    });
+    return;
+  }
+  await writeJsonKey(feedKey(code), feed);
+}
+
+/** Картинки листа своим ключом: в документе остаётся только их подпись. */
+async function readPortrait(code: string, id: string): Promise<PortraitParts | null> {
+  const kv = kvCredentials();
+  if (!kv) {
+    const entry = memoryPortraits.get(portraitKeyOf(code, id));
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      memoryPortraits.delete(portraitKeyOf(code, id));
+      return null;
+    }
+    return { ...entry.parts };
+  }
+  const value = await readJsonKey(portraitKeyOf(code, id));
+  if (!value) return null;
+  return {
+    portrait: typeof value.portrait === "string" ? value.portrait : "",
+    portraitFull: typeof value.portraitFull === "string" ? value.portraitFull : "",
+  };
+}
+
+async function writePortrait(code: string, id: string, parts: PortraitParts): Promise<void> {
+  const kv = kvCredentials();
+  if (!kv) {
+    memoryPortraits.set(portraitKeyOf(code, id), {
+      parts: { ...parts },
+      expiresAt: Date.now() + ROOM_TTL_SECONDS * 1000,
+    });
+    return;
+  }
+  await writeJsonKey(portraitKeyOf(code, id), parts);
+}
+
+/** Портрет удалённого листа не должен остаться в базе до конца срока. */
+async function deletePortrait(code: string, id: string): Promise<void> {
+  const kv = kvCredentials();
+  if (!kv) {
+    memoryPortraits.delete(portraitKeyOf(code, id));
+    return;
+  }
+  try {
+    const res = await fetch(`${kv.url}/del/${encodeURIComponent(portraitKeyOf(code, id))}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${kv.token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) throw storageError(res.status, "write", await responseSnippet(res));
+  } catch (error) {
+    // Портрет мог не сохраниться — это не повод не удалять лист.
+    if (error instanceof AppError && error.status === 404) return;
+  }
+}
+
+/** Пора ли продлить срок ленте и портретам: раз в шесть дней, не чаще. */
+function partsStale(doc: RoomState): boolean {
+  const stamp = Number(doc.partsAt) || 0;
+  return Date.now() - stamp >= PARTS_TTL_REFRESH_MS;
+}
+
+/**
+ * Продлевает срок частям комнаты, пока жива сама комната.
+ *
+ * Лента и портреты лежат своими ключами с тем же сроком в 30 дней. Документ
+ * продлевает свой срок каждой записью, а части — только своей: без этой
+ * проверки лента стола, где неделями не пишут в чат, истекла бы раньше него.
+ * Вызов редкий (раз в шесть дней), поэтому лишние команды Redis не мешают.
+ */
+async function keepPartsAlive(doc: RoomState): Promise<void> {
+  const ids = doc.characters.map((character) => character.id);
+  const kv = kvCredentials();
+  if (!kv) {
+    const until = Date.now() + ROOM_TTL_SECONDS * 1000;
+    const feed = memoryFeeds.get(doc.code);
+    if (feed) feed.expiresAt = until;
+    for (const id of ids) {
+      const entry = memoryPortraits.get(portraitKeyOf(doc.code, id));
+      if (entry) entry.expiresAt = until;
+    }
+    return;
+  }
+  const keys = [feedKey(doc.code), ...ids.map((id) => portraitKeyOf(doc.code, id))];
+  for (const key of keys) {
+    try {
+      await fetch(`${kv.url}/expire/${encodeURIComponent(key)}/${ROOM_TTL_SECONDS}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${kv.token}` },
+        cache: "no-store",
+      });
+    } catch {
+      // Части может ещё не быть — это не повод ломать запись комнаты.
+    }
+  }
+}
+
+/**
+ * Раскладывает старый документ по ключам: лента и портреты — отдельно.
+ *
+ * Комнаты до 0.4.84 держали в одном ключе и переписку, и картинки: у живого
+ * стола документ весил 1,4 МБ, из них 1,43 МБ — портреты. Здесь сообщения
+ * переезжают в ключ ленты, портреты — в свои ключи, а в документе остаются
+ * только подписи картинок. Части пишутся до того, как из документа что-то
+ * убрано: если запись упадёт, данные не потеряются, а переселение повторится.
+ */
+async function splitLegacy(code: string, doc: RoomState): Promise<boolean> {
+  const legacy = doc as RoomState & {
+    messages?: ChatMessage[];
+    seq?: number;
+    deletedMessages?: string[];
+  };
+  let changed = false;
+  if (Array.isArray(legacy.messages) || Array.isArray(legacy.deletedMessages)) {
+    if (!(await readFeed(code))) {
+      const messages = legacy.messages ?? [];
+      const next = messages.reduce(
+        (max, message) => Math.max(max, (Number(message.seq) || 0) + 1),
+        Math.max(1, Number(legacy.seq) || 1),
+      );
+      await writeFeed(code, {
+        seq: next,
+        messages,
+        deletedMessages: legacy.deletedMessages ?? [],
+      });
+    }
+    delete legacy.messages;
+    delete legacy.seq;
+    delete legacy.deletedMessages;
+    changed = true;
+  }
+  for (const character of doc.characters) {
+    const extra = character as unknown as Record<string, unknown>;
+    if (!("portrait" in extra) && !("portraitFull" in extra)) continue;
+    const portrait = typeof extra.portrait === "string" ? extra.portrait : "";
+    const portraitFull = typeof extra.portraitFull === "string" ? extra.portraitFull : "";
+    if (portrait || portraitFull) {
+      await writePortrait(code, character.id, { portrait, portraitFull });
+    }
+    character.portraitKey = portraitKey(portrait);
+    delete extra.portrait;
+    delete extra.portraitFull;
+    changed = true;
+  }
+  return changed;
+}
+
 /**
  * Голова комнаты для проверки изменений: `rev`, `seen` и время сервера.
  *
@@ -597,6 +834,7 @@ export async function getRoomHead(code: string, rawName: unknown = ""): Promise<
 
 async function readDoc(code: string): Promise<RoomState | null> {
   const kv = kvCredentials();
+  let parsed: RoomState | null = null;
   if (kv) {
     const res = await fetch(`${kv.url}/get/${encodeURIComponent(storageKey(code))}`, {
       headers: { Authorization: `Bearer ${kv.token}` },
@@ -606,27 +844,38 @@ async function readDoc(code: string): Promise<RoomState | null> {
     const payload = (await res.json()) as { result?: string | null };
     if (!payload.result) return null;
     try {
-      return ensurePlayers(
-        ensureMusic(ensureMap(ensureWorld(JSON.parse(payload.result) as RoomState))),
-      );
+      parsed = JSON.parse(payload.result) as RoomState;
     } catch {
       return null;
     }
+  } else {
+    const entry = memoryRooms.get(code);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      memoryRooms.delete(code);
+      return null;
+    }
+    parsed = JSON.parse(JSON.stringify(entry.doc)) as RoomState;
   }
 
-  const entry = memoryRooms.get(code);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
-    memoryRooms.delete(code);
-    return null;
+  const doc = ensurePlayers(ensureMusic(ensureMap(ensureWorld(parsed))));
+  // Старая комната держала ленту и портреты в документе: раскладываем их по
+  // ключам при первом чтении. Сбой записи не мешает отдать состояние —
+  // переселение просто повторится в следующий раз.
+  if (await splitLegacy(code, doc)) {
+    try {
+      await writeDoc(doc);
+    } catch {
+      // Документ остался прежним, данные не потеряны.
+    }
   }
-  return ensurePlayers(
-    ensureMusic(ensureMap(ensureWorld(JSON.parse(JSON.stringify(entry.doc)) as RoomState))),
-  );
+  return doc;
 }
 
 async function writeDoc(doc: RoomState): Promise<void> {
   const kv = kvCredentials();
+  const refresh = partsStale(doc);
+  if (refresh) doc.partsAt = Date.now();
   if (kv) {
     const res = await fetch(
       `${kv.url}/set/${encodeURIComponent(storageKey(doc.code))}?EX=${ROOM_TTL_SECONDS}`,
@@ -647,6 +896,10 @@ async function writeDoc(doc: RoomState): Promise<void> {
       }
     }
   }
+
+  // Части комнаты живут своими ключами со своим сроком: продлеваем его, пока
+  // жива комната, иначе лента стола без новых сообщений истечёт раньше неё.
+  if (refresh) await keepPartsAlive(doc);
 
   // Голова идёт следом за документом: клиент узнаёт об изменении, не читая комнату.
   await writeHead(doc.code, docRev(doc));
@@ -697,12 +950,12 @@ async function withRoom<T>(code: string, handler: (doc: RoomState) => T | Promis
   return (await writeRoom(code, handler)).value;
 }
 
-function appendMessage(doc: RoomState, message: Omit<ChatMessage, "id" | "seq">): ChatMessage {
-  const entry: ChatMessage = { ...message, id: uid("msg"), seq: doc.seq };
-  doc.seq += 1;
-  doc.messages.push(entry);
-  if (doc.messages.length > MAX_MESSAGES) {
-    doc.messages.splice(0, doc.messages.length - MAX_MESSAGES);
+function appendMessage(feed: RoomFeed, message: Omit<ChatMessage, "id" | "seq">): ChatMessage {
+  const entry: ChatMessage = { ...message, id: uid("msg"), seq: feed.seq };
+  feed.seq += 1;
+  feed.messages.push(entry);
+  if (feed.messages.length > MAX_MESSAGES) {
+    feed.messages.splice(0, feed.messages.length - MAX_MESSAGES);
   }
   return entry;
 }
@@ -741,21 +994,22 @@ export async function createRoom(): Promise<RoomState> {
       createdAt: now,
       gm: "",
       players: [],
-      messages: [],
       characters: [],
       map: emptyMap(),
       music: emptyMusic(),
       world: emptyWorld(),
-      deletedMessages: [],
-      seq: 1,
       rev: 1,
     };
-    appendMessage(doc, {
+    const feed = ensureFeed(null);
+    appendMessage(feed, {
       kind: "system",
       author: "system",
       text: "Комната создана. Скопируйте ссылку и отправьте её игрокам.",
       createdAt: now,
     });
+    // Лента пишется первой: комната без ленты выглядит как стол без чата,
+    // а вот лента без комнаты просто истечёт вместе со сроком.
+    await writeFeed(code, feed);
     await writeDoc(doc);
     return doc;
   }
@@ -839,26 +1093,30 @@ function livePings(doc: RoomState, now: number): MapPing[] {
  * Листы, которые клиенту нужно обновить: изменённые после его метки.
  *
  * Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
- * подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Полный портрет нужен
- * лишь для просмотра — в снимок он не входит.
+ * подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Сама картинка лежит
+ * своим ключом (`readPortrait`) и читается только тому, у кого её ещё нет, —
+ * в документе комнаты осталась лишь её подпись `portraitKey`.
  */
-function changedCharacters(characters: Character[], request: SnapshotRequest): Character[] {
+async function changedCharacters(
+  code: string,
+  characters: Character[],
+  request: SnapshotRequest,
+): Promise<Character[]> {
   const since = request.chars;
   const portraits = request.portraits ?? null;
   const changed =
     since > 0
       ? characters.filter((character) => (Number(character.updatedAt) || 0) >= since)
       : characters;
-  return changed.map((character) => {
-    const key = portraitKey(character.portrait ?? "");
+  const result: Character[] = [];
+  for (const character of changed) {
+    const key = character.portraitKey ?? portraitKey("");
     const known = portraits ? portraits[character.id] : undefined;
-    return {
-      ...character,
-      portrait: known === key ? "" : character.portrait,
-      portraitFull: "",
-      portraitKey: key,
-    };
-  });
+    const portrait =
+      known === key ? "" : ((await readPortrait(code, character.id))?.portrait ?? "");
+    result.push({ ...character, portrait, portraitFull: "", portraitKey: key });
+  }
+  return result;
 }
 
 /**
@@ -882,6 +1140,9 @@ export async function getRoomSnapshot(
     }
   }
   const marks = snapshotMarks(doc);
+  // Лента читается своим ключом: в документе её больше нет, иначе `/state`
+  // тянул бы историю вместе с каждой правкой листа.
+  const feed = ensureFeed(await readFeed(code));
   const snapshot: RoomSnapshot = {
     code: doc.code,
     title: doc.title,
@@ -889,18 +1150,18 @@ export async function getRoomSnapshot(
     gm: doc.gm,
     messages:
       request.since > 0
-        ? doc.messages.filter((message) => message.seq >= request.since)
-        : doc.messages,
-    deletedMessages: doc.deletedMessages ?? [],
+        ? feed.messages.filter((message) => message.seq >= request.since)
+        : feed.messages,
+    deletedMessages: feed.deletedMessages,
     characterIds: doc.characters.map((character) => character.id),
     serverNow: Date.now(),
-    seq: doc.seq,
+    seq: feed.seq,
     rev: docRev(doc),
     marks,
   };
   if (partChanged(marks.players, request.players)) snapshot.players = doc.players;
   if (partChanged(marks.chars, request.chars)) {
-    snapshot.characters = changedCharacters(doc.characters, request);
+    snapshot.characters = await changedCharacters(code, doc.characters, request);
   }
   if (partChanged(marks.map, request.map)) snapshot.map = doc.map;
   // Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
@@ -920,19 +1181,21 @@ export async function joinRoom(
   const name = normalizeName(rawName);
   if (!name) throw new AppError(400, "Введите имя");
 
-  return withRoom(code, (doc) => {
+  return withRoom(code, async (doc) => {
     const now = Date.now();
     const existing = findPlayer(doc, name);
     if (existing) {
       existing.lastSeen = now;
     } else {
       doc.players.push({ name, joinedAt: now, lastSeen: now, color: "", characterIds: [] });
-      appendMessage(doc, {
+      const feed = ensureFeed(await readFeed(code));
+      appendMessage(feed, {
         kind: "system",
         author: "system",
         text: `${name} садится за стол.`,
         createdAt: now,
       });
+      await writeFeed(code, feed);
     }
     if (!doc.gm) doc.gm = existing?.name ?? name;
     return { players: doc.players, gm: doc.gm, name: existing?.name ?? name };
@@ -967,20 +1230,23 @@ export async function postMessage(
   const roll = formula ? rollFormula(formula) : null;
   if (formula && !roll) throw new AppError(400, "Не удалось разобрать формулу броска");
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     const now = Date.now();
     if (!findPlayer(doc, author)) {
       doc.players.push({ name: author, joinedAt: now, lastSeen: now, color: "", characterIds: [] });
     } else {
       touchPlayer(doc, author);
     }
-    return appendMessage(doc, {
+    const feed = ensureFeed(await readFeed(code));
+    const entry = appendMessage(feed, {
       kind: roll ? "roll" : "text",
       author,
       text,
       createdAt: now,
       roll: roll ?? undefined,
     });
+    await writeFeed(code, feed);
+    return entry;
   });
   return { message: write.value, rev: write.rev, marks: write.marks };
 }
@@ -999,7 +1265,7 @@ export async function createCharacter(
     throw new AppError(400, "Для второй особенности нужен изъян");
   }
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     if (doc.characters.length >= 60) {
       throw new AppError(400, "В комнате уже слишком много персонажей");
     }
@@ -1020,8 +1286,10 @@ export async function createCharacter(
       name: draft.name,
       level: draft.level,
       origin: draft.origin,
-      portrait: draft.portrait,
-      portraitFull: draft.portraitFull,
+      // Картинка уезжает в свой ключ, в документе остаётся её подпись.
+      portrait: "",
+      portraitFull: "",
+      portraitKey: portraitKey(draft.portrait),
       stats: draft.stats,
       resources: draft.resources,
       skills: draft.skills,
@@ -1034,6 +1302,12 @@ export async function createCharacter(
       createdAt: now,
       updatedAt: now,
     };
+    if (draft.portrait || draft.portraitFull) {
+      await writePortrait(code, character.id, {
+        portrait: draft.portrait,
+        portraitFull: draft.portraitFull,
+      });
+    }
     doc.characters.push(character);
     // Автор листа сразу привязан к нему — с обеих сторон.
     const ownerAccount = findPlayer(doc, owner);
@@ -1070,7 +1344,7 @@ export async function updateCharacter(
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     const character = doc.characters.find((entry) => entry.id === id);
     if (!character) throw new AppError(404, "Персонаж не найден");
     if (!canEdit(character, actor, doc.gm)) throw new AppError(403, "Это чужой персонаж");
@@ -1078,6 +1352,19 @@ export async function updateCharacter(
     const patch = asRecord(rawPatch);
     const current = draftFromCharacter(character);
     const patchResources = asRecord(patch.resources);
+
+    // Портрет приходит в правке только при смене картинки: его отсутствие
+    // значит «оставить прежний», и тогда ключ портрета не трогаем вовсе.
+    const patchPortrait = typeof patch.portrait === "string" ? patch.portrait : "";
+    const portraitSaved = patchPortrait !== "";
+    if (portraitSaved) {
+      const stored = await readPortrait(code, id);
+      current.portrait = patchPortrait;
+      current.portraitFull =
+        (typeof patch.portraitFull === "string" ? patch.portraitFull : "") ||
+        stored?.portraitFull ||
+        patchPortrait;
+    }
 
     const resources = { ...current.resources };
     for (const key of Object.keys(patchResources)) {
@@ -1095,8 +1382,8 @@ export async function updateCharacter(
       name: patch.name ?? current.name,
       level: patch.level ?? current.level,
       origin: patch.origin ?? current.origin,
-      portrait: patch.portrait ?? current.portrait,
-      portraitFull: patch.portraitFull || current.portraitFull,
+      portrait: current.portrait,
+      portraitFull: current.portraitFull,
       traits: Array.isArray(patch.traits) ? patch.traits : current.traits,
       flaws: Array.isArray(patch.flaws) ? patch.flaws : current.flaws,
       languages: Array.isArray(patch.languages) ? patch.languages : current.languages,
@@ -1125,8 +1412,6 @@ export async function updateCharacter(
     character.name = normalized.name;
     character.level = normalized.level;
     character.origin = normalized.origin;
-    character.portrait = normalized.portrait;
-    character.portraitFull = normalized.portraitFull;
     character.traits = normalized.traits;
     character.flaws = normalized.flaws;
     character.languages = normalized.languages;
@@ -1136,6 +1421,15 @@ export async function updateCharacter(
     character.inventory = normalized.inventory;
     character.stashes = normalized.stashes;
     character.fields = normalized.fields;
+    // Портрет и полная картинка живут своим ключом: в документе остаётся
+    // только подпись, по которой клиент понимает, что картинка новая.
+    if (portraitSaved) {
+      await writePortrait(code, id, {
+        portrait: normalized.portrait,
+        portraitFull: normalized.portraitFull,
+      });
+      character.portraitKey = portraitKey(normalized.portrait);
+    }
     character.updatedAt = Date.now();
     touchPlayer(doc, actor);
     return character;
@@ -1151,7 +1445,7 @@ export async function deleteCharacter(
   const actor = normalizeName(rawActor);
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     const character = doc.characters.find((entry) => entry.id === id);
     if (!character) throw new AppError(404, "Персонаж не найден");
     if (!canEdit(character, actor, doc.gm)) throw new AppError(403, "Это чужой персонаж");
@@ -1160,6 +1454,8 @@ export async function deleteCharacter(
       player.characterIds = (player.characterIds ?? []).filter((entry) => entry !== id);
     }
     rebuildCharacterPlayers(doc);
+    // Портрет удалённого листа не должен остаться в базе до конца срока.
+    await deletePortrait(code, id);
     return id;
   });
   return { id: write.value, rev: write.rev, marks: write.marks };
@@ -1723,7 +2019,7 @@ function isGm(doc: RoomState, name: string): boolean {
 }
 
 /** Переносит имя игрока во все места комнаты: листы, чат, музыка, рисунки. */
-function renameReferences(doc: RoomState, from: string, to: string): void {
+function renameReferences(doc: RoomState, feed: RoomFeed, from: string, to: string): void {
   const target = from.trim().toLowerCase();
   const same = (value: string | undefined): boolean => (value ?? "").trim().toLowerCase() === target;
   const now = Date.now();
@@ -1733,7 +2029,7 @@ function renameReferences(doc: RoomState, from: string, to: string): void {
     // Лист поменялся: без новой метки клиент с частичным чтением его не перечитает.
     character.updatedAt = now;
   }
-  for (const message of doc.messages) if (same(message.author)) message.author = to;
+  for (const message of feed.messages) if (same(message.author)) message.author = to;
   for (const track of doc.music?.tracks ?? []) if (same(track.addedBy)) track.addedBy = to;
   for (const stroke of doc.map?.strokes ?? []) if (same(stroke.author)) stroke.author = to;
   for (const text of doc.map?.texts ?? []) if (same(text.author)) text.author = to;
@@ -1765,7 +2061,7 @@ export async function updatePlayer(
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!target) throw new AppError(400, "Не указан игрок");
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     const player = findPlayer(doc, target);
     if (!player) throw new AppError(404, "Игрок не найден");
     const gm = isGm(doc, actor);
@@ -1781,7 +2077,10 @@ export async function updatePlayer(
           (entry) => entry !== player && entry.name.toLowerCase() === nextName.toLowerCase(),
         );
         if (clash) throw new AppError(400, "Это имя уже занято за столом");
-        renameReferences(doc, player.name, nextName);
+        // Переименование переписывает и ленту — она живёт своим ключом.
+        const feed = ensureFeed(await readFeed(code));
+        renameReferences(doc, feed, player.name, nextName);
+        await writeFeed(code, feed);
         player.name = nextName;
       }
     }
@@ -1840,19 +2139,21 @@ export async function removePlayer(
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!target) throw new AppError(400, "Не указан игрок");
 
-  const write = await writeRoom(code, (doc) => {
+  const write = await writeRoom(code, async (doc) => {
     if (!isGm(doc, actor)) throw new AppError(403, "Удалять игроков может только мастер");
     const player = findPlayer(doc, target);
     if (!player) throw new AppError(404, "Игрок не найден");
     if (isGm(doc, player.name)) throw new AppError(400, "Мастер не может удалить себя");
     const now = Date.now();
     doc.players = doc.players.filter((entry) => entry !== player);
-    const message = appendMessage(doc, {
+    const feed = ensureFeed(await readFeed(code));
+    const message = appendMessage(feed, {
       kind: "system",
       author: "system",
       text: `${player.name} больше не за столом.`,
       createdAt: now,
     });
+    await writeFeed(code, feed);
     return { players: doc.players, message };
   });
   return { ...write.value, rev: write.rev, marks: write.marks };
@@ -1869,15 +2170,17 @@ export async function deleteMessage(
   if (!actor) throw new AppError(400, "Сначала войдите в комнату");
   if (!id) throw new AppError(400, "Не указано сообщение");
 
-  const write = await writeRoom(code, (doc) => {
-    const message = doc.messages.find((entry) => entry.id === id);
+  const write = await writeRoom(code, async (doc) => {
+    const feed = ensureFeed(await readFeed(code));
+    const message = feed.messages.find((entry) => entry.id === id);
     if (!message) throw new AppError(404, "Сообщение не найдено");
     if (!isGm(doc, actor) && message.author.trim().toLowerCase() !== actor.toLowerCase()) {
       throw new AppError(403, "Удалять чужие сообщения может только мастер");
     }
-    doc.messages = doc.messages.filter((entry) => entry.id !== id);
-    const deleted = [...(doc.deletedMessages ?? []), id].slice(-MAX_DELETED_MESSAGES);
-    doc.deletedMessages = deleted;
+    feed.messages = feed.messages.filter((entry) => entry.id !== id);
+    const deleted = [...feed.deletedMessages, id].slice(-MAX_DELETED_MESSAGES);
+    feed.deletedMessages = deleted;
+    await writeFeed(code, feed);
     touchPlayer(doc, actor);
     return { id, deletedMessages: deleted };
   });
