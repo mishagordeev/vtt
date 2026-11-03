@@ -14,15 +14,26 @@
     py -3.13 python/rooms.py show PSWFWB            # подробности одной комнаты
     py -3.13 python/rooms.py delete 794ZZM 8CG8UY   # сухой прогон, ничего не удаляет
     py -3.13 python/rooms.py delete 794ZZM --apply  # удалить после подтверждения
+    py -3.13 python/rooms.py delete 794ZZM --apply --ssh onitselfgm@77.222.40.251
 
 Ключи Upstash берутся из `deploy/apache/keys.env` (`--keys` — другой файл);
 уже заданные переменные окружения важнее файла. Без ключей скрипт работает с
 файловым хранилищем `python/data/rooms` (или `--data-dir`).
+
+Звук комнаты (`tracks.mode: file`) — это mp3 файлами на диске, а не в Redis,
+поэтому удаление ключей их не трогает. Скрипт убирает каталог
+`python/data/rooms/music/<КОД>/`, если видит его сам (запуск на сервере), а с
+`--ssh пользователь@хост` чистит его и на сервере по ssh; без этого честно
+предупреждает, что файлы остались, и печатает готовую команду.
 """
 
 import argparse
 import json
 import os
+import re
+import shlex
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +44,12 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 DEFAULT_KEYS = ROOT / "deploy" / "apache" / "keys.env"
+
+# Звук комнаты лежит внутри публичной папки сайта: `python/data/rooms/music/<КОД>/`.
+# Каталог сайта на аккаунте SpaceWeb — `vtt_poison_press/public_html` (см. deploy.py).
+REMOTE_SITE = "vtt_poison_press/public_html"
+REMOTE_MUSIC = "python/data/rooms/music"
+CODE_PATTERN = re.compile(r"^[A-Z0-9]{1,12}$")
 
 
 def say(text=""):
@@ -103,6 +120,89 @@ def human_time(stamp):
 def one_line(text, limit=40):
     flat = " ".join(str(text or "").split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def music_root():
+    """Каталог звуков на этой машине: `VTT_MUSIC_DIR` или `music` рядом с комнатами."""
+    from vtt import tracks  # путь звука описан в одном месте — tracks.py
+
+    return Path(tracks.music_dir())
+
+
+def music_state(code):
+    """Звук комнаты рядом со скриптом: (файлов, байт) или None, если каталога нет.
+
+    mp3 — обычные файлы на диске (`tracks.mode: file`), поэтому Redis и файловое
+    хранилище о них не знают: каталог надо смотреть самому.
+    """
+    if not CODE_PATTERN.match(str(code or "")):
+        return None
+    path = music_root() / code
+    if not path.is_dir():
+        return None
+    files = 0
+    size = 0
+    for entry in path.iterdir():
+        try:
+            if entry.is_file():
+                files += 1
+                size += entry.stat().st_size
+        except OSError:
+            continue
+    return files, size
+
+
+def music_label(state):
+    files, size = state
+    return "%s, %s" % (count_label(files, "файл", "файла", "файлов"), human_size(size))
+
+
+def remote_music_path(code, site=None):
+    """Каталог звука на сервере: `<папка сайта>/python/data/rooms/music/<КОД>/`."""
+    return "%s/%s/%s/" % (str(site or REMOTE_SITE).strip("/"), REMOTE_MUSIC, code)
+
+
+def music_cleanup_command(code, site=None):
+    """Команда для сервера: убрать каталог звука и сказать, был ли он вообще."""
+    path = shlex.quote(remote_music_path(code, site))
+    return (
+        "if [ -d %s ]; then rm -rf -- %s && echo VTT_MUSIC_REMOVED; "
+        "else echo VTT_MUSIC_NONE; fi" % (path, path)
+    )
+
+
+def ssh_run(target, command, timeout=30.0):
+    """ssh на аккаунт без интерактива: (код возврата, вывод).
+
+    Команду ssh можно заменить переменной `VTT_SSH` — там целая строка, например
+    `ssh -i ~/.ssh/sweb_deploy`. Тесты подставляют туда свою программу, поэтому
+    ничего не соединяется с сетью.
+    """
+    root = os.environ.get("VTT_SSH") or "ssh"
+    try:
+        argv = shlex.split(root)
+    except ValueError:
+        argv = [root]
+    argv += [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "ConnectTimeout=10",
+        target,
+        command,
+    ]
+    try:
+        finished = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    except FileNotFoundError:
+        return 127, "не нашла ssh: %s" % argv[0]
+    except subprocess.TimeoutExpired:
+        return 124, "ssh не ответил за %d с" % int(timeout)
+    except OSError as error:
+        return 1, str(error)
+    output = finished.stdout.decode("utf-8", "replace") if finished.stdout else ""
+    return finished.returncode, output.strip()
 
 
 def room_info(storage, code):
@@ -209,6 +309,13 @@ def command_show(storage, code, args):
     say("Создана: %s, последняя запись: %s" % (human_time(info.get("createdAt")), human_time(last_at)))
     say("Игроки: %s" % (", ".join(info["players"]) if info["players"] else "никого"))
     say("Состав: %s" % describe(info))
+    state = music_state(code)
+    if state:
+        say("Звук: %s — %s" % (music_label(state), music_root() / code))
+    else:
+        say("Звук: файлов рядом с комнатой нет")
+    if storage.credentials():
+        say("Звук на сервере: %s" % remote_music_path(code, REMOTE_SITE))
     if info["characters"]:
         say("Листы:")
         for entry in info["characters"]:
@@ -260,8 +367,64 @@ def save_backup(plan, directory):
     return saved
 
 
+def say_music_plan(code, args, remote_mode):
+    """Строка о звуке комнаты в плане: каталог на диске и что будет на сервере."""
+    state = music_state(code)
+    if state:
+        say("  звук на диске: %s — %s" % (music_label(state), music_root() / code))
+    if args.ssh:
+        say(
+            "  звук на сервере: %s — уберу по ssh %s"
+            % (remote_music_path(code, args.ssh_site), args.ssh)
+        )
+    elif remote_mode:
+        say("  звук на сервере без --ssh не убрать: %s" % remote_music_path(code, REMOTE_SITE))
+
+
+def remove_music(code, args, remote_mode):
+    """Убирает mp3 комнаты: каталог рядом со скриптом и, если задан --ssh, на сервере.
+
+    Возвращает число проблем: не убрался каталог на диске или ssh не справился.
+    В Redis-режиме без `--ssh` файлы на сервере остаются — это предупреждение,
+    а не ошибка: ключей комнаты уже нет, и скрипт об этом честно говорит.
+    """
+    problems = 0
+    state = music_state(code)
+    if state:
+        path = music_root() / code
+        try:
+            shutil.rmtree(path)
+        except OSError as error:
+            say("%s: звук остался — %s (%s)" % (code, path, error))
+            problems += 1
+        else:
+            say("%s: звук убран — %s (%s)" % (code, music_label(state), path))
+    if args.ssh:
+        site = args.ssh_site
+        status, output = ssh_run(args.ssh, music_cleanup_command(code, site))
+        if status == 0 and "VTT_MUSIC_REMOVED" in output:
+            say("%s: звук на сервере убран — %s" % (code, remote_music_path(code, site)))
+        elif status == 0 and "VTT_MUSIC_NONE" in output:
+            say("%s: звука на сервере не было" % code)
+        else:
+            problems += 1
+            say(
+                "%s: звук на сервере не убрался (%s)"
+                % (code, one_line(output, 120) or "ssh ничего не ответил")
+            )
+            say(
+                '  вручную: ssh %s "rm -rf -- %s"'
+                % (args.ssh, remote_music_path(code, site))
+            )
+    elif remote_mode:
+        say("%s: звук на сервере остался — %s" % (code, remote_music_path(code, REMOTE_SITE)))
+        say("  убрать вместе с комнатой: --ssh <пользователь@хост>")
+    return problems
+
+
 def command_delete(storage, codes, args):
     """Сухой прогон или удаление: сначала план, потом подтверждение и проверка."""
+    remote_mode = bool(storage.credentials())
     plan = []
     refused = []
     missing = []
@@ -299,6 +462,7 @@ def command_delete(storage, codes, args):
     for info in plan:
         note = ", защита снята --force" if info["forced"] else ""
         say("%s — %s — можно удалять%s" % (info["code"], describe(info), note))
+        say_music_plan(info["code"], args, remote_mode)
 
     if not plan:
         say()
@@ -307,6 +471,11 @@ def command_delete(storage, codes, args):
 
     say()
     say("Итого: к удалению %d, отказов %d, нет в базе %d." % (len(plan), len(refused), len(missing)))
+    if remote_mode and not args.ssh:
+        say()
+        say("Звук в Redis-режиме лежит файлами на сервере (`tracks.mode: file`),")
+        say("и удаление ключей mp3 не трогает. Путь: %s/<КОД>/" % REMOTE_MUSIC)
+        say("Убрать вместе с комнатой: --ssh <пользователь@хост> (папка сайта — --ssh-site).")
     if not args.apply:
         say("Это сухой прогон: ничего не удалено. Повторите с --apply, чтобы стереть.")
         return 0
@@ -331,6 +500,7 @@ def command_delete(storage, codes, args):
         else:
             say("%s: ключ на месте после удаления — проверьте базу вручную" % info["code"])
             problems += 1
+        problems += remove_music(info["code"], args, remote_mode)
     return 1 if problems or refused else 0
 
 
@@ -344,6 +514,7 @@ def parse_args(argv=None):
             "  py -3.13 python/rooms.py show PSWFWB\n"
             "  py -3.13 python/rooms.py delete 794ZZM 8CG8UY\n"
             "  py -3.13 python/rooms.py delete 794ZZM 8CG8UY --apply\n"
+            "  py -3.13 python/rooms.py delete 794ZZM --apply --ssh onitselfgm@77.222.40.251\n"
         ),
     )
     parser.add_argument(
@@ -371,6 +542,17 @@ def parse_args(argv=None):
         help="сухой прогон (так скрипт работает и без флага)",
     )
     parser.add_argument("--yes", action="store_true", help="не спрашивать подтверждение")
+    parser.add_argument(
+        "--ssh",
+        default=None,
+        metavar="ПОЛЬЗОВАТЕЛЬ@ХОСТ",
+        help="убрать звук комнат и на сервере по ssh (вместе с ключами)",
+    )
+    parser.add_argument(
+        "--ssh-site",
+        default=REMOTE_SITE,
+        help="папка сайта на сервере (по умолчанию %s)" % REMOTE_SITE,
+    )
     parser.add_argument(
         "--force", action="store_true", help="удалять и комнаты с листами или длинной лентой"
     )

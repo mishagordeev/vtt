@@ -117,6 +117,8 @@ function runCli(args, env = {}) {
         KV_REST_API_URL: "",
         KV_REST_API_TOKEN: "",
         VTT_DATA_DIR: "",
+        VTT_MUSIC_DIR: "",
+        VTT_SSH: "",
         PYTHONIOENCODING: "utf-8",
         ...env,
       },
@@ -130,6 +132,34 @@ function runCli(args, env = {}) {
     });
     child.on("close", (status) => resolve({ status, output }));
   });
+}
+
+/**
+ * Двойник ssh: вместо соединения печатает «каталог убран» и складывает в журнал
+ * адрес и полученную команду. Так видно, что скрипт правда зовёт ssh с нужным
+ * путём, и никуда не ходит.
+ */
+function fakeSsh(t) {
+  const dir = tempDir("vtt-fake-ssh-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const script = path.join(dir, "fake_ssh.py");
+  const log = path.join(dir, "ssh.log");
+  fs.writeFileSync(
+    script,
+    [
+      "import os",
+      "import pathlib",
+      "import sys",
+      'pathlib.Path(os.environ["VTT_SSH_LOG"]).write_text(',
+      '    sys.argv[-2] + "\\n" + sys.argv[-1] + "\\n", encoding="utf-8"',
+      ")",
+      'print("VTT_MUSIC_REMOVED")',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const command = [PY.command, ...PY.args, script.replace(/\\/g, "/")].join(" ");
+  return { command, log };
 }
 
 function tempDir(prefix) {
@@ -259,3 +289,104 @@ test("файловое хранилище: удаление убирает до�
   assert.ok(fs.existsSync(path.join(dataDir, "FILEBB.json")), "соседняя комната не тронута");
   assert.ok(fs.existsSync(path.join(dataDir, "FILEBB.rev.json")));
 });
+
+test("Redis-режим: план говорит, что звук остаётся на сервере, и печатает путь", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1", { messages: 3 }) });
+  t.after(fake.close);
+
+  const result = await runCli(["delete", "SMALL1"], { UPSTASH_REDIS_REST_URL: fake.url });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /tracks\.mode: file/);
+  assert.match(result.output, /python\/data\/rooms\/music\/<КОД>\//);
+  assert.match(result.output, /звук на сервере без --ssh не убрать/);
+  assert.match(result.output, /vtt_poison_press\/public_html\/python\/data\/rooms\/music\/SMALL1\//);
+  assert.match(result.output, /--ssh/);
+});
+
+test("Redis-режим без --ssh: звук на диске убирается, mp3 на сервере честно остаются", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1") });
+  t.after(fake.close);
+  const musicRoot = tempDir("vtt-rooms-music-");
+  t.after(() => fs.rmSync(musicRoot, { recursive: true, force: true }));
+  const roomMusic = path.join(musicRoot, "SMALL1");
+  fs.mkdirSync(roomMusic, { recursive: true });
+  fs.writeFileSync(path.join(roomMusic, "track.mp3"), "mp3", "utf8");
+
+  const result = await runCli(["delete", "SMALL1", "--apply", "--yes"], {
+    UPSTASH_REDIS_REST_URL: fake.url,
+    VTT_MUSIC_DIR: musicRoot,
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.ok(!fs.existsSync(roomMusic), "каталог звука рядом со скриптом удаляется");
+  assert.match(result.output, /SMALL1: звук убран — 1 файл/);
+  assert.match(result.output, /SMALL1: звук на сервере остался — .*music\/SMALL1\//);
+  assert.ok(!fake.store.has("poison-press:room:SMALL1"));
+});
+
+test("--ssh убирает звук комнаты на сервере: адрес и путь уходят в ssh", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1") });
+  t.after(fake.close);
+  const ssh = fakeSsh(t);
+
+  const result = await runCli(
+    ["delete", "SMALL1", "--apply", "--yes", "--ssh", "onitselfgm@example.test"],
+    { UPSTASH_REDIS_REST_URL: fake.url, VTT_SSH: ssh.command, VTT_SSH_LOG: ssh.log },
+  );
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /SMALL1: звук на сервере убран/);
+  assert.match(result.output, /vtt_poison_press\/public_html\/python\/data\/rooms\/music\/SMALL1\//);
+  assert.ok(!fake.store.has("poison-press:room:SMALL1"));
+
+  const sent = fs.readFileSync(ssh.log, "utf8").split(/\r?\n/);
+  assert.equal(sent[0], "onitselfgm@example.test");
+  assert.match(sent[1], /rm -rf -- vtt_poison_press\/public_html\/python\/data\/rooms\/music\/SMALL1\//);
+});
+
+test("сухой прогон с --ssh ничего не зовёт и показывает свою папку сайта", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1") });
+  t.after(fake.close);
+  const ssh = fakeSsh(t);
+
+  const result = await runCli(
+    ["delete", "SMALL1", "--ssh", "onitselfgm@example.test", "--ssh-site", "sites/vtt"],
+    { UPSTASH_REDIS_REST_URL: fake.url, VTT_SSH: ssh.command, VTT_SSH_LOG: ssh.log },
+  );
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /звук на сервере: sites\/vtt\/python\/data\/rooms\/music\/SMALL1\//);
+  assert.match(result.output, /уберу по ssh onitselfgm@example\.test/);
+  assert.ok(!fs.existsSync(ssh.log), "сухой прогон не должен соединяться по ssh");
+  assert.ok(fake.store.has("poison-press:room:SMALL1"));
+});
+
+test("ssh не нашёлся: скрипт говорит об этом и подсказывает команду вручную", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1") });
+  t.after(fake.close);
+
+  const result = await runCli(
+    ["delete", "SMALL1", "--apply", "--yes", "--ssh", "onitselfgm@example.test"],
+    { UPSTASH_REDIS_REST_URL: fake.url, VTT_SSH: "vtt-no-such-ssh-binary" },
+  );
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /SMALL1: звук на сервере не убрался/);
+  assert.match(result.output, /вручную: ssh onitselfgm@example\.test "rm -rf -- .*music\/SMALL1\/"/);
+  assert.ok(!fake.store.has("poison-press:room:SMALL1"), "ключи удалены, даже если звук не убрался");
+});
+
+test("show видит звук комнаты и путь к нему на сервере", { skip: !pythonReady && SKIP }, async (t) => {
+  const fake = await startFakeRedis({ SMALL1: roomDoc("SMALL1", { messages: 2 }) });
+  t.after(fake.close);
+  const musicRoot = tempDir("vtt-rooms-music-");
+  t.after(() => fs.rmSync(musicRoot, { recursive: true, force: true }));
+  const roomMusic = path.join(musicRoot, "SMALL1");
+  fs.mkdirSync(roomMusic, { recursive: true });
+  fs.writeFileSync(path.join(roomMusic, "a.mp3"), "12345", "utf8");
+
+  const result = await runCli(["show", "SMALL1"], {
+    UPSTASH_REDIS_REST_URL: fake.url,
+    VTT_MUSIC_DIR: musicRoot,
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /Звук: 1 файл, 5 Б/);
+  assert.match(result.output, /Звук на сервере: vtt_poison_press\/public_html\/python\/data\/rooms\/music\/SMALL1\//);
+});
+
