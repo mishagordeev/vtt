@@ -1049,8 +1049,10 @@ export function CharacterSheet({
   /**
    * Выбранные навыки или знания — всегда на виду, даже когда каталог скрыт:
    * в режиме чтения и в обычной правке листа видно, что у героя уже есть.
+   * Под названием идёт описание (6.5–6.7): без каталога иначе не вспомнить,
+   * что даёт навык, — а в режиме чтения каталога на экране нет вовсе.
    */
-  function chosenSkillChips(kind: "skill" | "knowledge") {
+  function chosenSkillRows(kind: "skill" | "knowledge") {
     const rows = draft.skills.filter((skill) =>
       kind === "knowledge" ? skill.kind === "knowledge" : skill.kind !== "knowledge",
     );
@@ -1062,23 +1064,48 @@ export function CharacterSheet({
       );
     }
     return (
-      <div className="flex flex-wrap gap-1">
-        {rows.map((skill) => (
-          <span
-            key={skill.name}
-            title={skill.source ? `Выдано происхождением: ${skill.source}` : undefined}
-            className={`rounded border px-1.5 py-0.5 text-[10px] ${
-              skill.kind === "knowledge"
-                ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-                : skill.kind === "combat"
-                  ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
-                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-            }`}
-          >
-            {skill.name} {rankLabel(skill.rank)}
-            {skill.source ? " ◆" : ""}
-          </span>
-        ))}
+      <div className="flex flex-col gap-1">
+        {rows.map((skill) => {
+          /** Своё уточнение вне каталога описания не имеет — тогда строка одна. */
+          const note = SKILL_NOTES[skill.name] ?? findSkill(skill.name)?.hint ?? "";
+          const sourceTitle = skill.source ? `Выдано происхождением: ${skill.source}` : undefined;
+          return (
+            <div
+              key={skill.name}
+              title={sourceTitle}
+              className={`rounded border px-2 py-1 ${
+                skill.kind === "knowledge"
+                  ? "border-sky-500/40 bg-sky-500/10"
+                  : skill.kind === "combat"
+                    ? "border-rose-500/40 bg-rose-500/10"
+                    : "border-emerald-500/40 bg-emerald-500/10"
+              }`}
+            >
+              <div className="flex flex-wrap items-baseline gap-x-1.5">
+                <span
+                  className={`text-[11px] font-semibold ${
+                    skill.kind === "knowledge"
+                      ? "text-sky-200"
+                      : skill.kind === "combat"
+                        ? "text-rose-200"
+                        : "text-emerald-200"
+                  }`}
+                >
+                  {skill.name}
+                </span>
+                <span className="font-mono text-[10px] text-zinc-400">{rankLabel(skill.rank)}</span>
+                {skill.source ? (
+                  <span className="text-[9px] text-violet-200">◆ от происхождения</span>
+                ) : null}
+              </div>
+              {note ? (
+                <p className="text-[10px] leading-snug text-zinc-400" title={note}>
+                  {note}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -1686,7 +1713,7 @@ export function CharacterSheet({
                   <b>{slotUsage.noncombat}/{slotBudget.noncombat}</b>
                 </span>
               </div>
-              {chosenSkillChips("skill")}
+              {chosenSkillRows("skill")}
               {skillEditing ? (
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1921,7 +1948,7 @@ export function CharacterSheet({
                   Занято <b>{slotUsage.knowledge}/{slotBudget.knowledge}</b>
                 </span>
               </div>
-              {chosenSkillChips("knowledge")}
+              {chosenSkillRows("knowledge")}
               {skillEditing ? (
                 <div className="space-y-3">
                   <input

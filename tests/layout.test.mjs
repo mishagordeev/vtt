@@ -150,6 +150,40 @@ test("особенности и изъяны на листе: видны тол�
     "после выбора каталог снова прячет невыбранные пункты",
   );
 });
+test("выбранные навыки и знания: под названием видно, что они дают", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  const rowsAt = sheet.indexOf("function chosenSkillRows");
+  const rowsSource = sheet.slice(rowsAt, sheet.indexOf('<div className="flex h-full min-h-0 flex-col">', rowsAt));
+  assert.ok(rowsAt > 0 && rowsSource.length > 0, "список выбранных навыков и знаний на месте");
+  assert.match(
+    sheet,
+    /\{chosenSkillRows\("skill"\)\}/,
+    "выбранные навыки рисуются списком с описаниями",
+  );
+  assert.match(
+    sheet,
+    /\{chosenSkillRows\("knowledge"\)\}/,
+    "выбранные знания рисуются списком с описаниями",
+  );
+  assert.match(
+    rowsSource,
+    /const note = SKILL_NOTES\[skill\.name\] \?\? findSkill\(skill\.name\)\?\.hint \?\? ""/,
+    "описание выбранного пункта берётся из каталога, а у своего уточнения — из подсказки",
+  );
+  assert.match(rowsSource, /\{note \? \(/, "вторая строка появляется только при описании");
+  assert.match(rowsSource, /title=\{note\}/, "полный текст описания виден в подсказке");
+  // Печатная версия листа (HTML и PDF) показывает то же описание.
+  const exportSource = read("lib", "characterExport.ts");
+  assert.match(exportSource, /<th>Что даёт<\/th>/, "в печатной таблице есть колонка с описанием");
+  assert.match(
+    exportSource,
+    /function skillNote\(name: string\): string \{\s*return SKILL_NOTES\[name\] \?\? findSkill\(name\)\?\.hint \?\? "";/,
+    "описание для печати берётся из тех же notes.ts",
+  );
+  // Раньше на листе были однострочные чипы: в них описание не помещалось.
+  assert.ok(!/chosenSkillChips/.test(sheet), "чипы без описаний убраны");
+});
+
 test("параметры снаряжения в руках: урон, КБ и бонус щита под названием", () => {
   const sheet = read("components", "CharacterSheet.tsx");
   // Числа берутся из правил и только для блока рук: в рюкзаке вторая строка не нужна.

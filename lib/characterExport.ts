@@ -4,9 +4,11 @@ import {
   carryCapacity,
   coinsGoldValue,
   derive,
+  findSkill,
   inventorySlots,
   languageLabel,
 } from "./rules";
+import { SKILL_NOTES } from "./notes";
 import type { Character } from "./types";
 
 const KIND_LABEL: Record<string, string> = {
@@ -14,6 +16,11 @@ const KIND_LABEL: Record<string, string> = {
   noncombat: "небоевой",
   knowledge: "знание",
 };
+
+/** Короткое описание навыка или знания — то же, что видно на листе (6.5–6.7). */
+function skillNote(name: string): string {
+  return SKILL_NOTES[name] ?? findSkill(name)?.hint ?? "";
+}
 
 function esc(value: unknown): string {
   return String(value ?? "")
@@ -105,12 +112,13 @@ export function characterToHtml(character: Character): string {
 
   const skills = (character.skills ?? []).filter((skill) => skill.rank > 0);
   const skillsHtml = skills.length
-    ? `<table><thead><tr><th>Навык</th><th>Тип</th><th>Ранг</th><th>Источник</th></tr></thead><tbody>
+    ? `<table><thead><tr><th>Навык</th><th>Тип</th><th>Ранг</th><th>Что даёт</th><th>Источник</th></tr></thead><tbody>
         ${skills
           .map(
             (skill) => `<tr><td>${esc(skill.name)}</td>
               <td>${esc(KIND_LABEL[skill.kind] ?? skill.kind)}</td>
               <td>${esc(skill.rank)}</td>
+              <td>${esc(skillNote(skill.name))}</td>
               <td>${esc(skill.source ?? "")}</td></tr>`,
           )
           .join("")}
