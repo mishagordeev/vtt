@@ -1,9 +1,18 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
+import {
+  ROOM_CODE_LENGTH,
+  forgetRoom,
+  normalizeRoomCode,
+  readRooms,
+  similarRooms,
+  type RememberedRoom,
+} from "@/lib/rooms";
 import { APP_VERSION } from "@/lib/version";
+import { RoomsMemory } from "@/components/RoomsMemory";
 
 /**
  * Переход в комнату — обычная загрузка страницы, а не клиентский переход:
@@ -18,6 +27,26 @@ export default function HomePage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<RememberedRoom[]>([]);
+
+  // Память комнат живёт в localStorage: на сервере её нет, поэтому читаем после
+  // гидратации. Заход пишется на странице стола, так что при возврате на главную
+  // (в том числе кнопкой «назад») список перечитывается — иначе он был бы старым.
+  useEffect(() => {
+    const refresh = () => setRooms(readRooms());
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, []);
+
+  const typed = useMemo(() => normalizeRoomCode(code), [code]);
+  const exact = useMemo(() => rooms.some((room) => room.code === typed), [rooms, typed]);
+  /** Комнаты, отличающиеся на одну букву: так выглядит потерянный символ в ссылке. */
+  const guesses = useMemo(() => similarRooms(typed, rooms), [typed, rooms]);
 
   async function createRoom() {
     setBusy(true);
@@ -33,12 +62,16 @@ export default function HomePage() {
 
   function joinRoom(event: FormEvent) {
     event.preventDefault();
-    const normalized = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (normalized.length < 4) {
-      setError("Код комнаты — 6 символов");
+    if (typed.length !== ROOM_CODE_LENGTH) {
+      setError(
+        guesses.length > 0
+          ? `Код комнаты — ${ROOM_CODE_LENGTH} символов. Может быть, это ${guesses[0].code}?`
+          : `Код комнаты — ${ROOM_CODE_LENGTH} символов, как в ссылке /r/A7K2QM`,
+      );
       return;
     }
-    openRoom(normalized);
+    setError(null);
+    openRoom(typed);
   }
 
   return (
@@ -83,26 +116,56 @@ export default function HomePage() {
                 Введите код комнаты или откройте присланную ссылку.
               </p>
             </div>
-            <div className="flex gap-2">
-              <input
-                value={code}
-                onChange={(event) => setCode(event.target.value.toUpperCase())}
-                maxLength={8}
-                placeholder="A7K2QM"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 font-mono text-sm uppercase tracking-widest text-zinc-100 outline-none transition focus:border-emerald-400/70 focus:ring-2 focus:ring-emerald-500/20"
-              />
-              <button
-                type="submit"
-                className="shrink-0 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
-              >
-                Войти
-              </button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  value={code}
+                  onChange={(event) => {
+                    // Ссылку `/r/PSWFWB` поле превращает в код: код всегда 6 символов.
+                    setCode(normalizeRoomCode(event.target.value).slice(0, ROOM_CODE_LENGTH));
+                    setError(null);
+                  }}
+                  placeholder="A7K2QM"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 font-mono text-sm uppercase tracking-widest text-zinc-100 outline-none transition focus:border-emerald-400/70 focus:ring-2 focus:ring-emerald-500/20"
+                />
+                <button
+                  type="submit"
+                  className="shrink-0 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
+                >
+                  Войти
+                </button>
+              </div>
+              {guesses.length > 0 && !exact ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">
+                    Похоже на сохранённый стол — код отличается на одну букву:
+                  </span>
+                  {guesses.map((room) => (
+                    <button
+                      key={room.code}
+                      type="button"
+                      onClick={() => openRoom(room.code)}
+                      className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 font-mono text-[11px] tracking-widest text-amber-200 transition hover:border-amber-300/70"
+                    >
+                      {room.code}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </form>
         </section>
       </div>
 
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+
+      <RoomsMemory
+        rooms={rooms}
+        suspect={exact ? "" : typed}
+        hint="Столы, которые открывались в этом браузере: код, ваше имя и время захода. Список хранится только здесь — на сервер он не уходит."
+        onOpen={openRoom}
+        onForget={(roomCode) => setRooms(forgetRoom(roomCode))}
+      />
     </main>
   );
 }

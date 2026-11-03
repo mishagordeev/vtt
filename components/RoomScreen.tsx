@@ -23,6 +23,7 @@ import {
   renameMusicAuthors,
 } from "@/lib/writes";
 import type { ChatMessage, Character, CharacterDraft, MapPing, MapState, MusicState, Player, RoomSnapshot, RoomWriteMeta, SnapshotRequest, WorldState } from "@/lib/types";
+import { forgetRoom, readRooms, rememberRoom, type RememberedRoom } from "@/lib/rooms";
 import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
 import { ChatFeed } from "./ChatFeed";
@@ -35,6 +36,7 @@ import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 import { MusicPlaylist } from "./MusicPlaylist";
 import { PlayerProfile } from "./PlayerProfile";
+import { RoomsMemory } from "./RoomsMemory";
 import { SheetDialog } from "./SheetDialog";
 
 const EMPTY_MAP: MapState = { strokes: [], texts: [], cursors: {}, pings: [], updatedAt: 0 };
@@ -123,6 +125,8 @@ export default function RoomScreen({ code }: { code: string }) {
   const [bootSlow, setBootSlow] = useState(false);
   /** Имя, с которым входили: экран входа показывает его после неудачной попытки. */
   const [attemptName, setAttemptName] = useState("");
+  /** Комнаты из localStorage — их видно на экране «Комната не найдена». */
+  const [remembered, setRemembered] = useState<RememberedRoom[]>([]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(MUSIC_VOLUME_KEY);
@@ -441,6 +445,23 @@ export default function RoomScreen({ code }: { code: string }) {
       window.removeEventListener("focus", onFocus);
     };
   }, [phase, load]);
+
+  /**
+   * Заход запоминается на этом устройстве: код, имя, мастер и время. Главная
+   * покажет «Ваши комнаты», а если в ссылке потерялась буква — тот же список
+   * виден прямо на экране «Комната не найдена», с пометкой «одна буква?».
+   * Имя и мастер приходят после входа, поэтому эффект ждёт их, а не только фазу.
+   */
+  useEffect(() => {
+    if (phase !== "room" || !me.trim()) return;
+    rememberRoom({ code, name: me, gm });
+  }, [code, me, gm, phase]);
+
+  // Экран 404 читает список из localStorage: страница статическая, на сервере его нет.
+  useEffect(() => {
+    if (phase !== "missing") return;
+    setRemembered(readRooms());
+  }, [phase]);
 
   // Открытие и закрытие карточек поверх стола (лист, список персонажей, музыка) —
   // тоже действие игрока: вернувшись к столу, читаем комнату один раз.
@@ -857,6 +878,18 @@ export default function RoomScreen({ code }: { code: string }) {
         >
           На главную
         </Link>
+        {/* Чаще всего код в адресе отличается на одну букву — список помнит верный. */}
+        {remembered.length > 0 ? (
+          <div className="w-full max-w-lg text-left">
+            <RoomsMemory
+              rooms={remembered}
+              suspect={code}
+              hint="Может быть, в ссылке потерялась буква — вот столы, которые открывались в этом браузере."
+              onOpen={(roomCode) => window.location.assign(`/r/${roomCode}`)}
+              onForget={(roomCode) => setRemembered(forgetRoom(roomCode))}
+            />
+          </div>
+        ) : null}
       </main>
     );
   }
