@@ -14,6 +14,7 @@ import {
   SKILLS,
   TRAITS,
   AGE_MAX,
+  MAX_XP,
   abilityMod,
   ageBand,
   ageModTotals,
@@ -35,6 +36,7 @@ import {
   itemParams,
   itemSlots,
   languageSlots,
+  levelFromXp,
   overloadedIds,
   rankLabel,
   rollAbilityScores,
@@ -49,6 +51,7 @@ import {
   skillsSlotUsage,
   starterKit,
   stashSlots,
+  xpToNextLevel,
   zeroSlotCount,
   type AbilityMethod,
   type AgeRoll,
@@ -532,9 +535,6 @@ export function CharacterSheet({
   /** Результат последнего броска возраста и стартовых монет — только для показа. */
   const [ageRoll, setAgeRoll] = useState<AgeRoll | null>(null);
   const [coinsRoll, setCoinsRoll] = useState<CoinsRoll | null>(null);
-  /** Навыки и знания выбираются только при создании и на подъёме уровня. */
-  const [levelUpOpen, setLevelUpOpen] = useState(false);
-
   // Постоянной кнопки «Сохранить» нет: в режим правки входим кнопкой «Править»,
   // а все поля внутри сохраняются сами — по вводу, с паузой.
   const editing = mode === "create" || (canEdit && mode === "edit");
@@ -542,15 +542,11 @@ export function CharacterSheet({
    * Живая правка за столом — то, что меняется по ходу игры: ОЗ, монеты, заметки,
    * снаряжение и тайники. Доступна владельцу и назначенным игрокам сразу, без
    * кнопки «Править»; мастер так правит любой лист (`canEdit`). Остальное —
-   * характеристики, народ, навыки, портрет, уровень — по-прежнему в режиме правки.
+   * характеристики, народ, навыки, опыт и портрет — по-прежнему в режиме правки.
    */
   const live = mode === "create" || canEdit;
-  const skillEditing = editing && (mode === "create" || levelUpOpen);
-  /** К блоку навыков прокручиваем после «Повысить уровень» — там же выбор навыка. */
-  const skillsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setConfirmDelete(false);
-    setLevelUpOpen(false);
   }, [mode]);
   useEffect(() => {
     if (!notice) return;
@@ -562,10 +558,10 @@ export function CharacterSheet({
       derive({
         stats: draft.stats,
         fields: draft.fields,
-        level: draft.level,
+        xp: draft.xp,
         inventory: draft.inventory,
       }),
-    [draft.stats, draft.fields, draft.level, draft.inventory],
+    [draft.stats, draft.fields, draft.xp, draft.inventory],
   );
   const capacity = carryCapacity(draft.stats);
   const used = inventorySlots(draft.inventory);
@@ -594,7 +590,11 @@ export function CharacterSheet({
   const visibleTraits = sheetFeatures(TRAITS, draft.traits, traitsOpen);
   const visibleFlaws = sheetFeatures(FLAWS, draft.flaws, flawsOpen);
   const languageBudget = languageSlots(draft.stats);
-  const slotBudget = skillSlotBudget(draft.level, draft.stats);
+  /** Уровень по опыту (1.6.1): отдельного поля уровня на листе нет. */
+  const level = levelFromXp(draft.xp);
+  /** Сколько опыта осталось до следующего уровня; null — таблица кончилась на десятом. */
+  const xpLeft = xpToNextLevel(draft.xp);
+  const slotBudget = skillSlotBudget(level, draft.stats);
   const slotUsage = skillsSlotUsage(draft.skills);
   const hp = draft.resources.hp ?? { current: derived.hpSuggested, max: derived.hpSuggested };
   const selectedSkills = useMemo(
@@ -1040,31 +1040,6 @@ export function CharacterSheet({
     setNotice(`Стартовые монеты: ${roll.coins} зм — ${roll.formula}.`);
   }
 
-  function levelUp() {
-    if (!editing) return;
-    if (draft.level >= 10) {
-      setNotice("Уровень 10 — максимум.");
-      return;
-    }
-    setLevelUpOpen(true);
-    skillsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    const nextLevel = draft.level + 1;
-    const conMod = abilityMod(draft.stats.con ?? 10);
-    const roll = nextLevel === 10 ? 3 : Math.floor(Math.random() * 8) + 1;
-    const gain = Math.max(1, roll + (nextLevel === 10 ? 0 : conMod));
-    const hp = draft.resources.hp ?? { current: derived.hpSuggested, max: derived.hpSuggested };
-    const nextMax = Math.min(999, hp.max + gain);
-    const nextCurrent = Math.min(nextMax, hp.current + gain);
-    patch({
-      level: nextLevel,
-      resources: { ...draft.resources, hp: { current: nextCurrent, max: nextMax } },
-    });
-    setNotice(
-      `Уровень ${nextLevel}: +${gain} ОЗ${nextLevel === 10 ? " (вместо броска +3)" : ` (d8: ${roll}, Тел ${formatMod(conMod)})`}.` +
-        (nextLevel === 4 || nextLevel === 8 || nextLevel === 10 ? " Не забудьте +1 к характеристике." : ""),
-    );
-  }
-
   function setHp(current: number, max: number) {
     if (!live) return;
     const nextMax = Math.max(1, Math.min(999, Math.round(max) || 1));
@@ -1452,20 +1427,31 @@ export function CharacterSheet({
               )}
               <label
                 className="flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
-                title="Уровень героя: 1–10"
+                title={`Очки опыта: уровень, ОЗ, слоты и бонус испытаний считаются по опыту (1.6.1). ${
+                  xpLeft === null
+                    ? "Десятый уровень — предел таблицы."
+                    : `До ${level + 1} уровня — ${xpLeft} ОО.`
+                }`}
               >
-                Ур.
+                Опыт
                 <input
                   type="number"
-                  min={1}
-                  max={10}
+                  min={0}
+                  max={MAX_XP}
+                  step={50}
                   disabled={!editing}
-                  value={draft.level}
+                  value={draft.xp}
                   onChange={(event) =>
-                    patch({ level: Math.min(10, Math.max(1, Number(event.target.value) || 1)) })
+                    patch({
+                      xp: Math.min(
+                        MAX_XP,
+                        Math.max(0, Math.round(Number(event.target.value) || 0)),
+                      ),
+                    })
                   }
-                  className="w-10 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-emerald-200 outline-none focus:border-emerald-400/60 disabled:opacity-70"
+                  className="w-16 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-emerald-200 outline-none focus:border-emerald-400/60 disabled:opacity-70"
                 />
+                <span className="whitespace-nowrap font-mono text-zinc-500">→ ур. {level}</span>
               </label>
             </div>
 
@@ -1564,9 +1550,9 @@ export function CharacterSheet({
             {live && mode === "view" ? (
               // Владелец, назначенные игроки и мастер правят ОЗ, монеты, заметки
               // и снаряжение сразу: «Править» осталась только для характеристик,
-              // народа, навыков, уровня и портрета.
+              // народа, навыков, опыта и портрета.
               <span
-                title="Очки здоровья, монеты, заметки, снаряжение и тайники сохраняются сами. «Править» — характеристики, народ, навыки, уровень и портрет."
+                title="Очки здоровья, монеты, заметки, снаряжение и тайники сохраняются сами. «Править» — характеристики, народ, навыки, опыт и портрет."
                 className="hidden text-[11px] text-zinc-500 sm:inline"
               >
                 {busy ? "Сохраняю…" : savedAt ? `Сохранено в ${savedAt}` : "Правка сразу"}
@@ -1576,7 +1562,7 @@ export function CharacterSheet({
               <button
                 type="button"
                 onClick={onEdit}
-                title="Характеристики, народ, навыки, уровень и портрет: ОЗ, монеты, заметки и снаряжение правятся и без этой кнопки"
+                title="Характеристики, народ, навыки, опыт и портрет: ОЗ, монеты, заметки и снаряжение правятся и без этой кнопки"
                 className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-emerald-400/60 hover:text-emerald-200"
               >
                 Править
@@ -1594,15 +1580,6 @@ export function CharacterSheet({
             ) : null}
             {editing ? (
               <>
-                <button
-                  type="button"
-                  onClick={levelUp}
-                  disabled={busy || draft.level >= 10}
-                  title="Бросить d8 + модификатор Телосложения, добавить ОЗ и выбрать новый навык"
-                  className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-400 disabled:opacity-40"
-                >
-                  Повысить уровень
-                </button>
                 {mode === "create" ? (
                   <button
                     type="button"
@@ -1899,7 +1876,7 @@ export function CharacterSheet({
                   </div>
                   <p className="text-[10px] leading-snug text-zinc-600">
                     0 — без чувств, −10 — смерть. Рекомендованный максимум: {derived.hpSuggested}
-                    {" "}(8 + Тел, далее d8 за уровень).
+                    {" "}(8 + Тел, далее d8 за уровень; на новом уровне прибавьте бросок к максимуму).
                   </p>
                   {editing ? (
                     <button
@@ -2004,7 +1981,7 @@ export function CharacterSheet({
             </section>
           </div>
 
-            <div ref={skillsRef} className="scroll-mt-2 space-y-3">
+            <div className="scroll-mt-2 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                   Навыки
@@ -2015,7 +1992,7 @@ export function CharacterSheet({
                 </span>
               </div>
               {chosenSkillRows("skill")}
-              {skillEditing ? (
+              {editing ? (
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <input
@@ -2250,7 +2227,7 @@ export function CharacterSheet({
                 </span>
               </div>
               {chosenSkillRows("knowledge")}
-              {skillEditing ? (
+              {editing ? (
                 <div className="space-y-3">
                   <input
                     value={knowledgeQuery}

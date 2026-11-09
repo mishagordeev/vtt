@@ -83,8 +83,8 @@ export interface Character {
   /** Игроки (имена), которым назначен лист: обратная сторона `player.characterIds`. */
   players?: string[];
   name: string;
-  /** Уровень 1–10. */
-  level: number;
+  /** Очки опыта (ОО): уровень, ОЗ и слоты считаются по таблице 1.6.1. */
+  xp: number;
   /** Происхождение: народ Кас-Хатара (1.2). */
   origin: string;
   /** Обрезанный круглый портрет (data URL). */
@@ -112,7 +112,8 @@ export interface Character {
 
 export interface CharacterDraft {
   name: string;
-  level: number;
+  /** Очки опыта (ОО). */
+  xp: number;
   origin: string;
   portrait: string;
   portraitFull: string;

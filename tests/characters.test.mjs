@@ -9,7 +9,7 @@ function character(fields = {}) {
     id: "chr-test",
     owner: "Миша",
     name: "Тархун",
-    level: 1,
+    xp: 0,
     origin: "",
     portrait: "",
     portraitFull: "",
@@ -68,6 +68,20 @@ test("чужие ключи и нестроковые значения поле�
   assert.equal(draft.fields.birth, "");
   assert.equal(draft.fields.age, "34");
   assert.equal(Object.hasOwn(draft.fields, "extra"), false);
+});
+
+test("уровень ушёл в опыт: старый лист читается по порогу 1.6.1", () => {
+  const legacy = character();
+  delete legacy.xp;
+  legacy.level = 4;
+  assert.equal(draftFromCharacter(legacy).xp, 5000, "уровень 4 — это 5 000 ОО");
+
+  const draft = normalizeDraft({ name: "Тархун", xp: 2600 });
+  assert.equal(draft.xp, 2600);
+  assert.equal(Object.hasOwn(draft, "level"), false, "поле уровня больше не пишется");
+
+  const fromLevel = normalizeDraft({ name: "Тархун", level: 2 });
+  assert.equal(fromLevel.xp, 1250, "старый клиент с уровнем не сбрасывает героя на первый");
 });
 
 test("первая особенность бесплатна, вторая требует изъяна (1.3.1)", () => {

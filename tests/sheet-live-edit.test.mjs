@@ -30,7 +30,7 @@ test("живая правка включается правами на лист,
   assert.match(
     sheet,
     /const editing = mode === "create" \|\| \(canEdit && mode === "edit"\);/,
-    "характеристики, народ, навыки, уровень и портрет по-прежнему за кнопкой «Править»",
+    "характеристики, народ, навыки, опыт и портрет по-прежнему за кнопкой «Править»",
   );
   assert.match(
     sheet,
@@ -39,9 +39,18 @@ test("живая правка включается правами на лист,
   );
   assert.match(
     sheet,
-    /function levelUp\(\) \{\s+if \(!editing\) return;/,
-    "«Повысить уровень» остаётся в полной правке",
+    /disabled=\{!editing\}[\s\S]{0,40}?value=\{draft\.xp\}/,
+    "очки опыта правятся в полной правке",
   );
+});
+
+test("уровень ушёл в опыт: поля уровня нет, есть очки опыта", () => {
+  const sheet = read("components", "CharacterSheet.tsx");
+  assert.match(sheet, /const level = levelFromXp\(draft\.xp\);/, "уровень считается по опыту (1.6.1)");
+  assert.match(sheet, /const slotBudget = skillSlotBudget\(level, draft\.stats\);/, "слоты навыков идут от уровня по опыту");
+  assert.ok(!/draft\.level/.test(sheet), "поле уровня на листе больше не читается");
+  assert.ok(!/function levelUp\(/.test(sheet), "ручного «Повысить уровень» больше нет");
+  assert.ok(!/Повысить уровень/.test(sheet), "кнопки «Повысить уровень» больше нет");
 });
 
 test("ОЗ, монеты и заметки правятся сразу", () => {

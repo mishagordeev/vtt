@@ -33,7 +33,7 @@ function sheet(id, portrait, updatedAt = 100) {
     id,
     owner: "Игрок",
     name: `Лист ${id}`,
-    level: 1,
+    xp: 0,
     origin: "Кас-Хатарец",
     portrait,
     portraitFull: "",

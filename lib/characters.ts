@@ -3,6 +3,8 @@ import {
   FIELDS,
   FLAWS,
   LANGUAGES,
+  LEVEL_XP,
+  MAX_XP,
   ORIGINS,
   RULES,
   STARTER_KITS,
@@ -13,6 +15,7 @@ import {
   findItem,
   findSkill,
   skillKind,
+  xpForLevel,
 } from "./rules.ts";
 import type { Character, CharacterDraft, InventoryItem, ItemLocation, ResourceState, Skill, SkillKind, Stash } from "./types";
 
@@ -142,14 +145,14 @@ export function emptyDraft(): CharacterDraft {
   const fields: Record<string, string> = {};
   for (const field of FIELDS) fields[field.key] = defaultFieldValue(field);
 
-  const hp = derive({ stats, fields, level: 1 }).hpSuggested;
+  const hp = derive({ stats, fields, xp: 0 }).hpSuggested;
   const resources: Record<string, ResourceState> = {
     hp: { current: hp, max: hp },
   };
 
   return {
     name: "",
-    level: 1,
+    xp: 0,
     origin: "",
     portrait: "",
     portraitFull: "",
@@ -172,11 +175,18 @@ export function draftFromCharacter(character: Character): CharacterDraft {
     stats[stat.key] = Number.isFinite(value) ? value : stat.defaultValue;
   }
 
-  const rawLevel = Number(character.level);
-  const level = Number.isFinite(rawLevel) ? Math.min(10, Math.max(1, Math.round(rawLevel))) : 1;
+  // Старые листы хранили уровень числом: опыт берём по порогу 1.6.1, иначе
+  // герой после перехода на очки опыта потерял бы свой уровень.
+  const rawXp = Number(character.xp);
+  const legacyLevel = Number((character as { level?: number }).level);
+  const xp = Number.isFinite(rawXp)
+    ? clamp(rawXp, 0, MAX_XP)
+    : Number.isFinite(legacyLevel)
+      ? xpForLevel(legacyLevel)
+      : 0;
 
   const hpSource = character.resources?.hp ?? character.resources?.health;
-  const hpSuggested = derive({ stats, fields: {}, level }).hpSuggested;
+  const hpSuggested = derive({ stats, fields: {}, xp }).hpSuggested;
   const hpMax = Number.isFinite(Number(hpSource?.max)) ? Number(hpSource?.max) : hpSuggested;
   const hpCurrent = Number.isFinite(Number(hpSource?.current)) ? Number(hpSource?.current) : hpMax;
 
@@ -274,7 +284,7 @@ export function draftFromCharacter(character: Character): CharacterDraft {
 
   return {
     name: character.name,
-    level,
+    xp,
     origin: origin?.name ?? "",
     portrait: cleanImage(character.portrait, MAX_PORTRAIT),
     portraitFull: cleanImage(character.portraitFull, MAX_PORTRAIT_FULL),
@@ -307,7 +317,15 @@ export function normalizeDraft(input: unknown): CharacterDraft {
   const raw = input as Partial<CharacterDraft> & Record<string, unknown>;
 
   draft.name = cleanText(raw.name, 60);
-  draft.level = clamp(Number(raw.level ?? 1), 1, 10);
+  // Старый клиент или старая комната могли прислать уровень: переводим его
+  // в порог опыта, чтобы уровень героя не сбросился на первый.
+  const rawXp = Number(raw.xp);
+  const legacyLevel = Number(raw.level);
+  draft.xp = Number.isFinite(rawXp)
+    ? clamp(rawXp, 0, MAX_XP)
+    : Number.isFinite(legacyLevel)
+      ? xpForLevel(Math.min(LEVEL_XP.length, Math.max(1, Math.round(legacyLevel))))
+      : 0;
   draft.origin = ORIGINS.some((origin) => origin.name === raw.origin) ? String(raw.origin) : "";
 
   const rawTraits = Array.isArray(raw.traits) ? raw.traits : raw.trait ? [raw.trait] : [];
@@ -335,7 +353,7 @@ export function normalizeDraft(input: unknown): CharacterDraft {
       : stat.defaultValue;
   }
 
-  const suggestedHp = derive({ stats: draft.stats, fields: {}, level: draft.level }).hpSuggested;
+  const suggestedHp = derive({ stats: draft.stats, fields: {}, xp: draft.xp }).hpSuggested;
   const rawResources = (raw.resources ?? {}) as Record<string, Partial<ResourceState> | undefined>;
   for (const resource of RULES.resources) {
     const incoming = rawResources[resource.key];

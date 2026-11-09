@@ -14,6 +14,7 @@ import {
   ageBand,
   ageModTotals,
   carryCapacity,
+  characterLevel,
   coinCount,
   coinSlotsFor,
   decodeMods,
@@ -28,6 +29,7 @@ import {
   inventoryBlockReason,
   inventorySlots,
   languageSlots,
+  levelFromXp,
   overloadedIds,
   proficiencyBonus,
   rankBonus,
@@ -41,6 +43,8 @@ import {
   skillSlotBudget,
   skillsSlotUsage,
   stashSlots,
+  xpForLevel,
+  xpToNextLevel,
   zeroSlotCount,
 } from "../lib/rules.ts";
 import { FLAW_NOTES, SKILL_NOTES, TRAIT_NOTES } from "../lib/notes.ts";
@@ -73,10 +77,32 @@ test("бонус испытаний растёт на 5 и 9 уровнях", ()
   assert.equal(proficiencyBonus(10), 4);
 });
 
+test("уровень считается по очкам опыта (1.6.1)", () => {
+  assert.equal(levelFromXp(0), 1);
+  assert.equal(levelFromXp(1249), 1);
+  assert.equal(levelFromXp(1250), 2);
+  assert.equal(levelFromXp(2499), 2);
+  assert.equal(levelFromXp(2500), 3);
+  assert.equal(levelFromXp(10000), 5);
+  assert.equal(levelFromXp(319999), 9);
+  assert.equal(levelFromXp(320000), 10);
+  assert.equal(levelFromXp(999999), 10);
+  assert.equal(xpForLevel(1), 0);
+  assert.equal(xpForLevel(4), 5000);
+  assert.equal(xpForLevel(99), 320000);
+  assert.equal(xpToNextLevel(0), 1250);
+  assert.equal(xpToNextLevel(1250), 1250);
+  assert.equal(xpToNextLevel(300000), 20000);
+  assert.equal(xpToNextLevel(320000), null);
+  // Старые листы по-прежнему читаются по сохранённому уровню, а опыт важнее.
+  assert.equal(characterLevel({ level: 7 }), 7);
+  assert.equal(characterLevel({ xp: 5000, level: 9 }), 4);
+});
+
 test("производные числа: ОЗ, КБ, испытания", () => {
   const derived = derive({
     stats: { str: 16, dex: 16, con: 14, int: 10, wis: 12, cha: 8 },
-    level: 1,
+    xp: 0,
     inventory: [
       { id: "a", name: "Кольчужная рубаха", location: "hands" },
       { id: "b", name: "Круглый пехотный щит", location: "hands" },
@@ -110,7 +136,7 @@ test("вес предметов дробный, монеты — по метал
 test("тяжёлый доспех ограничивает Ловкость, уровень повышает ОЗ", () => {
   const derived = derive({
     stats: { str: 18, dex: 18, con: 16, int: 10, wis: 10, cha: 10 },
-    level: 3,
+    xp: xpForLevel(3),
     inventory: [{ id: "a", name: "Пластинчатый панцирь", location: "hands" }],
   });
   assert.equal(derived.ac, 17);

@@ -311,6 +311,49 @@ export function skillsSlotUsage(skills: Skill[]): SkillSlotBudget {
   return used;
 }
 
+/**
+ * Порог опыта уровня по 1.6.1 «Вторых». На листе теперь очки опыта (ОО),
+ * а уровень считается по этой таблице — отдельного поля «уровень» нет.
+ */
+export const LEVEL_XP = [0, 1250, 2500, 5000, 10000, 20000, 40000, 80000, 160000, 320000] as const;
+
+/** Предел опыта на листе: как у ресурсов, чтобы ввод не уносил счёт в бесконечность. */
+export const MAX_XP = 999_999;
+
+/** Уровень по очкам опыта: 0 → 1, 1 250 → 2, …, 320 000 → 10. */
+export function levelFromXp(xp: number): number {
+  const value = Math.max(0, Number(xp) || 0);
+  let level = 1;
+  for (let index = 0; index < LEVEL_XP.length; index += 1) {
+    if (value >= LEVEL_XP[index]) level = index + 1;
+  }
+  return level;
+}
+
+/** Порог опыта уровня: 1 → 0, 2 → 1 250, …, 10 → 320 000. */
+export function xpForLevel(level: number): number {
+  const index = Math.max(0, Math.min(LEVEL_XP.length - 1, Math.round(Number(level) || 1) - 1));
+  return LEVEL_XP[index];
+}
+
+/** Сколько опыта осталось до следующего уровня; null — таблица кончилась на десятом. */
+export function xpToNextLevel(xp: number): number | null {
+  const level = levelFromXp(xp);
+  if (level >= LEVEL_XP.length) return null;
+  return LEVEL_XP[level] - Math.max(0, Number(xp) || 0);
+}
+
+/**
+ * Уровень листа: по опыту, а у старых листов — по сохранённому числу.
+ * Поле `level` больше не пишется, но комнаты, созданные до опыта, его хранят.
+ */
+export function characterLevel(character: { xp?: number; level?: number }): number {
+  const xp = Number(character.xp);
+  if (Number.isFinite(xp)) return levelFromXp(xp);
+  const legacy = Math.round(Number(character.level ?? 1));
+  return Number.isFinite(legacy) ? Math.max(1, Math.min(LEVEL_XP.length, legacy)) : 1;
+}
+
 
 /** Каталог снаряжения (7.3–7.5): слоты, цена, короткое описание. */
 export const ITEMS: ItemDef[] = [
@@ -1253,6 +1296,9 @@ export function statValue(stats: Record<string, number>, key: StatKey): number {
 export interface DerivableCharacter {
   stats: Record<string, number>;
   fields?: Record<string, string>;
+  /** Очки опыта: уровень, ОЗ и слоты считаются по таблице 1.6.1. */
+  xp?: number;
+  /** Старые листы хранили уровень числом — читаем его, только если опыта нет. */
   level?: number;
   inventory?: InventoryItem[];
 }
@@ -1305,7 +1351,7 @@ function equippedShield(
 
 /** Производные числа по 1.5: ОЗ, КБ, испытания, скорость, слоты, предел соратников. */
 export function derive(character: DerivableCharacter): DerivedStats {
-  const level = Math.max(1, Math.min(10, Math.round(character.level ?? 1)));
+  const level = characterLevel(character);
   const stats = character.stats ?? {};
   const dexMod = abilityMod(statValue(stats, "dex"));
   const conMod = abilityMod(statValue(stats, "con"));

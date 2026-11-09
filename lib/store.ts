@@ -18,7 +18,7 @@ import {
   findMapTab,
   nextMapTabName,
 } from "./mapTabs.ts";
-import { RULES } from "./rules";
+import { RULES, xpForLevel } from "./rules";
 import { emptySnapshotRequest, portraitKey } from "./snapshot";
 import { deleteTrack, newTrackId, purgeTracks, trackLimits } from "./tracks.ts";
 import { fetchYouTubeTitle, parseYouTubeId, youtubeWatchUrl } from "./youtube";
@@ -1090,6 +1090,18 @@ function livePings(doc: RoomState, now: number): MapPing[] {
 }
 
 /**
+ * Лист с очками опыта: у старых листов опыт считается по сохранённому уровню
+ * (1.6.1), а поле `level` в ответ клиенту больше не уходит.
+ */
+function withXp(character: Character): Character {
+  const copy = { ...character } as Character & { level?: number };
+  const xp = Number(copy.xp);
+  if (!Number.isFinite(xp)) copy.xp = xpForLevel(copy.level ?? 1);
+  delete copy.level;
+  return copy;
+}
+
+/**
  * Листы, которые клиенту нужно обновить: изменённые после его метки.
  *
  * Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
@@ -1114,7 +1126,7 @@ async function changedCharacters(
     const known = portraits ? portraits[character.id] : undefined;
     const portrait =
       known === key ? "" : ((await readPortrait(code, character.id))?.portrait ?? "");
-    result.push({ ...character, portrait, portraitFull: "", portraitKey: key });
+    result.push(withXp({ ...character, portrait, portraitFull: "", portraitKey: key }));
   }
   return result;
 }
@@ -1284,7 +1296,7 @@ export async function createCharacter(
       owner,
       players: [owner],
       name: draft.name,
-      level: draft.level,
+      xp: draft.xp,
       origin: draft.origin,
       // Картинка уезжает в свой ключ, в документе остаётся её подпись.
       portrait: "",
@@ -1332,7 +1344,7 @@ function asRecord(value: unknown): Record<string, unknown> {
  * имеет его у себя, а в документе комнаты он остаётся целиком.
  */
 function lightCharacter(character: Character): Character {
-  return { ...character, portrait: "", portraitFull: "" };
+  return withXp({ ...character, portrait: "", portraitFull: "" });
 }
 
 export async function updateCharacter(
@@ -1380,7 +1392,7 @@ export async function updateCharacter(
 
     const normalized = normalizeDraft({
       name: patch.name ?? current.name,
-      level: patch.level ?? current.level,
+      xp: patch.xp ?? current.xp,
       origin: patch.origin ?? current.origin,
       portrait: current.portrait,
       portraitFull: current.portraitFull,
@@ -1410,7 +1422,9 @@ export async function updateCharacter(
     }
 
     character.name = normalized.name;
-    character.level = normalized.level;
+    character.xp = normalized.xp;
+    // Поле `level` из старых комнат больше не нужно: уровень считается по опыту.
+    delete (character as Character & { level?: number }).level;
     character.origin = normalized.origin;
     character.traits = normalized.traits;
     character.flaws = normalized.flaws;

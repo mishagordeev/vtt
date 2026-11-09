@@ -15,7 +15,7 @@ import time
 import uuid
 
 from . import data, dice, storage, tracks, convert
-from .characters import can_edit, draft_from_character, normalize_draft
+from .characters import can_edit, draft_from_character, normalize_draft, xp_for_level
 from .js import as_dict, as_list, clean_text, number_or, to_number
 from .web import AppError, ROOM_NOT_FOUND
 from .world import world_clock
@@ -716,7 +716,7 @@ def changed_characters(code, characters, marks):
         copy["portrait"] = "" if known == key else load_portrait(code, character.get("id"))
         copy["portraitFull"] = ""
         copy["portraitKey"] = key
-        changed.append(copy)
+        changed.append(with_xp(copy))
     return changed
 
 
@@ -840,6 +840,16 @@ def heartbeat(code, raw_name):
     with_room(code, handler)
 
 
+def with_xp(character):
+    """Лист с очками опыта: старым листам опыт считается по уровню (1.6.1)."""
+    copy = dict(character)
+    if to_number(copy.get("xp")) is None:
+        copy["xp"] = xp_for_level(copy.get("level", 1))
+    # Поле `level` больше не уходит клиенту: уровень считается по опыту.
+    copy.pop("level", None)
+    return copy
+
+
 def light_character(character):
     """Лист для ответа на запись — без картинок.
 
@@ -851,7 +861,7 @@ def light_character(character):
     copy = dict(character)
     copy["portrait"] = ""
     copy["portraitFull"] = ""
-    return copy
+    return with_xp(copy)
 
 
 def post_message(code, raw_author, raw_text):
@@ -919,7 +929,7 @@ def create_character(code, raw_owner, raw_draft):
             "owner": owner,
             "players": [owner],
             "name": draft["name"],
-            "level": draft["level"],
+            "xp": draft["xp"],
             "origin": draft["origin"],
             # Картинка уезжает в свой ключ, в документе остаётся её подпись.
             "portraitKey": portrait_key(draft["portrait"]),
@@ -1014,7 +1024,7 @@ def update_character(code, character_id, raw_actor, raw_patch):
         normalized = normalize_draft(
             {
                 "name": _patch_value(patch, "name", current["name"]),
-                "level": _patch_value(patch, "level", current["level"]),
+                "xp": _patch_value(patch, "xp", current["xp"]),
                 "origin": _patch_value(patch, "origin", current["origin"]),
                 "portrait": current["portrait"],
                 "portraitFull": current["portraitFull"],
@@ -1045,7 +1055,7 @@ def update_character(code, character_id, raw_actor, raw_patch):
 
         for key in (
             "name",
-            "level",
+            "xp",
             "origin",
             "traits",
             "flaws",
@@ -1058,6 +1068,8 @@ def update_character(code, character_id, raw_actor, raw_patch):
             "fields",
         ):
             character[key] = normalized[key]
+        # Поле `level` из старых комнат больше не нужно: уровень считается по опыту.
+        character.pop("level", None)
         # Портрет и полная картинка живут своим ключом: в документе остаётся
         # только подпись, по которой клиент понимает, что картинка новая.
         if portrait_saved:

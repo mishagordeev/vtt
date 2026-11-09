@@ -19,7 +19,7 @@ function initials(name: string): string {
 
 /**
  * Карточка листа в списках: портрет, имя и одна моно-строка чисел
- * «игрок · ур. · ОЗ · навыков» — как в макете панели. Одна и та же карточка
+ * «игрок · опыт · ОЗ · навыков» — как в макете панели. Одна и та же карточка
  * стоит в правой панели комнаты и в полном списке персонажей — так они не
  * расходятся.
  */
@@ -28,7 +28,7 @@ export function CharacterCard({ character, active, onOpen }: CharacterCardProps)
   const assigned = character.players ?? [];
   const meta = [
     assigned.length > 0 ? assigned.join(" · ") : character.owner,
-    `ур. ${character.level ?? 1}`,
+    `опыта ${character.xp ?? 0}`,
     hp ? `ОЗ ${hp.current}/${hp.max}` : "",
     (character.skills?.length ?? 0) > 0 ? `навыков ${character.skills.length}` : "",
   ]

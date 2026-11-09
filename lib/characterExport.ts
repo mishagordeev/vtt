@@ -99,7 +99,7 @@ export function characterToHtml(character: Character): string {
   const derived = derive({
     stats,
     fields: character.fields ?? {},
-    level: character.level ?? 1,
+    xp: character.xp ?? 0,
     inventory: character.inventory,
   });
   const hp = character.resources?.hp ?? character.resources?.health;
@@ -222,7 +222,7 @@ export function characterToHtml(character: Character): string {
     <div>
       <h1>${esc(character.name)}</h1>
       <div class="meta">
-        ${esc(RULES.game)} · уровень ${esc(character.level ?? 1)} · ${esc(character.origin || "происхождение не выбрано")}
+        ${esc(RULES.game)} · опыт ${esc(character.xp ?? 0)} · ${esc(character.origin || "происхождение не выбрано")}
         <br>${esc(
           (character.players ?? []).length > 0
             ? (character.players ?? []).join(", ")

@@ -48,7 +48,7 @@ function roomDoc(code, { messages = 1, characters = 0, textLength = 20 } = {}) {
           id: `${code}-chr${index}`,
           owner: "Мастер",
           name: `Тест ${index}`,
-          level: 1,
+          xp: 0,
         }))
       : [],
     seq: messages + 1,

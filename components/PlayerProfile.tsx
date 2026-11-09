@@ -196,7 +196,7 @@ export function PlayerProfile({
                         {character.name}
                       </span>
                       <span className="shrink-0 text-[10px] text-zinc-500">
-                        ур. {character.level}
+                        опыта {character.xp ?? 0}
                       </span>
                     </label>
                   );

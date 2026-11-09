@@ -46,7 +46,7 @@ function sheet(id, portrait, updatedAt = 100) {
     id,
     owner: "Игрок",
     name: `Лист ${id}`,
-    level: 1,
+    xp: 0,
     origin: "Кас-Хатарец",
     portrait,
     portraitFull: "",
@@ -221,7 +221,7 @@ test("сервер отдаёт части только при изменени�
   );
   assert.match(
     store,
-    /result\.push\(\{ \.\.\.character, portrait, portraitFull: "", portraitKey: key \}\)/,
+    /result\.push\(withXp\(\{ \.\.\.character, portrait, portraitFull: "", portraitKey: key \}\)\)/,
     "портрет вырезается, когда подпись у клиента та же",
   );
   assert.match(

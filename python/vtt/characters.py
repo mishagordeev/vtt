@@ -17,6 +17,9 @@ MAX_PORTRAIT_FULL = 560_000
 MAX_NAMES = 2
 KINDS = ("combat", "noncombat", "knowledge")
 LOCATIONS = ("hands", "backpack", "stash")
+# Уровень считается по опыту (1.6.1): отдельного поля «уровень» на листе нет.
+LEVEL_XP = (0, 1250, 2500, 5000, 10000, 20000, 40000, 80000, 160000, 320000)
+MAX_XP = 999_999
 # Тайники: не больше двенадцати вкладок, название короткое, описание — абзац.
 MAX_STASHES = 12
 MAX_STASH_NAME = 24
@@ -43,6 +46,33 @@ def ability_mod(value):
 def stat_value(stats, key):
     number = to_number(stats.get(key)) if isinstance(stats, dict) else None
     return 10 if number is None else number
+
+
+def level_from_xp(xp):
+    """Уровень по очкам опыта: 0 → 1, 1 250 → 2, …, 320 000 → 10 (1.6.1)."""
+    number = to_number(xp)
+    number = 0 if number is None else max(0, number)
+    level = 1
+    for index, threshold in enumerate(LEVEL_XP):
+        if number >= threshold:
+            level = index + 1
+    return level
+
+
+def xp_for_level(level):
+    """Порог опыта уровня: 1 → 0, 2 → 1 250, …, 10 → 320 000."""
+    number = to_number(level)
+    index = 1 if number is None else _js_round(number)
+    index = max(1, min(len(LEVEL_XP), index))
+    return LEVEL_XP[index - 1]
+
+
+def _level_of(character):
+    """Уровень листа: по опыту, а у старых листов — по сохранённому числу."""
+    xp = to_number(character.get("xp"))
+    if xp is not None:
+        return level_from_xp(xp)
+    return _clamp(character.get("level", 1), 1, len(LEVEL_XP))
 
 
 def default_field_value(field):
@@ -205,7 +235,7 @@ def equipped_shield(inventory, legacy_name):
 def derive(character):
     """Производные числа листа: ОЗ, КБ, испытания, слоты, предел соратников."""
     character = as_dict(character)
-    level = _clamp(character.get("level", 1), 1, 10)
+    level = _level_of(character)
     stats = as_dict(character.get("stats"))
     fields = as_dict(character.get("fields"))
     inventory = character.get("inventory") if isinstance(character.get("inventory"), list) else []
@@ -240,10 +270,10 @@ def empty_draft():
     """Пустой лист по схеме правил: характеристики по умолчанию и 100 зм."""
     stats = {stat["key"]: stat["defaultValue"] for stat in data.STATS}
     fields = {field["key"]: default_field_value(field) for field in data.FIELDS}
-    hp = derive({"stats": stats, "fields": fields, "level": 1})["hpSuggested"]
+    hp = derive({"stats": stats, "fields": fields, "xp": 0})["hpSuggested"]
     return {
         "name": "",
-        "level": 1,
+        "xp": 0,
         "origin": "",
         "portrait": "",
         "portraitFull": "",
@@ -257,13 +287,6 @@ def empty_draft():
         "stashes": [],
         "fields": fields,
     }
-
-
-def _level_of(value):
-    number = to_number(value)
-    if number is None:
-        return 1
-    return max(1, min(10, _js_round(number)))
 
 
 def _has_kind(inventory, kind):
@@ -283,14 +306,21 @@ def draft_from_character(character):
         value = to_number(raw_stats.get(stat["key"]))
         stats[stat["key"]] = stat["defaultValue"] if value is None else value
 
-    level = _level_of(character.get("level"))
+    # Уровень больше не хранится: опыт либо лежит в листе, либо считается
+    # по сохранённому уровню старого листа (1.6.1).
+    raw_xp = to_number(character.get("xp"))
+    xp = (
+        xp_for_level(_clamp(character.get("level", 1), 1, len(LEVEL_XP)))
+        if raw_xp is None
+        else _clamp(raw_xp, 0, MAX_XP)
+    )
 
     resources = as_dict(character.get("resources"))
     hp_source = resources.get("hp")
     if hp_source is None:
         hp_source = resources.get("health")
     hp_source = as_dict(hp_source)
-    hp_suggested = derive({"stats": stats, "fields": {}, "level": level})["hpSuggested"]
+    hp_suggested = derive({"stats": stats, "fields": {}, "xp": xp})["hpSuggested"]
     hp_max = to_number(hp_source.get("max"))
     hp_max = hp_suggested if hp_max is None else hp_max
     hp_current = to_number(hp_source.get("current"))
@@ -417,7 +447,7 @@ def draft_from_character(character):
 
     return {
         "name": character.get("name"),
-        "level": level,
+        "xp": xp,
         "origin": origin["name"] if origin else "",
         "portrait": clean_image(character.get("portrait"), MAX_PORTRAIT),
         "portraitFull": clean_image(character.get("portraitFull"), MAX_PORTRAIT_FULL),
@@ -489,7 +519,14 @@ def normalize_draft(raw):
         return draft
 
     draft["name"] = clean_text(raw.get("name"), 60)
-    draft["level"] = _clamp(number_or(raw.get("level"), 1), 1, 10)
+    # Старый клиент или старая комната могли прислать уровень: переводим его
+    # в порог опыта, чтобы уровень героя не сбросился на первый.
+    raw_xp = to_number(raw.get("xp"))
+    draft["xp"] = (
+        xp_for_level(number_or(raw.get("level"), 1))
+        if raw_xp is None
+        else _clamp(raw_xp, 0, MAX_XP)
+    )
     draft["origin"] = (
         str(raw.get("origin"))
         if any(origin["name"] == raw.get("origin") for origin in data.ORIGINS)
@@ -527,7 +564,7 @@ def normalize_draft(raw):
             stat["defaultValue"] if value is None else _clamp(value, stat["min"], stat["max"])
         )
 
-    suggested_hp = derive({"stats": draft["stats"], "fields": {}, "level": draft["level"]})[
+    suggested_hp = derive({"stats": draft["stats"], "fields": {}, "xp": draft["xp"]})[
         "hpSuggested"
     ]
     raw_resources = as_dict(raw.get("resources"))

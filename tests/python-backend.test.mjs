@@ -240,7 +240,7 @@ test("Python-сервер: комната, чат с броском, лист, �
     owner: "Игрок",
     character: {
       name: "Тестовый герой",
-      level: 3,
+      xp: 2500,
       origin: rules.origins[0].name,
       stats: { str: 12, dex: 14, con: 13, int: 10, wis: 11, cha: 9 },
       skills: [{ name: skill.name, rank: 2 }],
@@ -812,7 +812,7 @@ test("Python-сервер: частичное чтение отдаёт толь
   const portrait = (letter) => `data:image/png;base64,${letter.repeat(8000)}`;
   const draft = (name, image) => ({
     name,
-    level: 1,
+    xp: 0,
     origin: rules.origins[0].name,
     portrait: image,
     portraitFull: image,
@@ -1036,7 +1036,7 @@ test("Python-сервер: мутация возвращает rev и метки
     owner: "Мастер",
     character: {
       name: "С картинкой",
-      level: 1,
+      xp: 0,
       origin: rules.origins[0].name,
       portrait,
       portraitFull: portrait,
@@ -1173,12 +1173,12 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
     { name: "Пустой" },
     {
       name: "  Обрезанное имя  ",
-      level: 99,
+      xp: 999999,
       stats: { str: 25, dex: -5, con: "12", int: "нет" },
     },
     {
       name: "Полный",
-      level: 5,
+      xp: 10000,
       origin: rules.origins[1].name,
       stats: { str: 15, dex: 16, con: 14, int: 12, wis: 10, cha: 13 },
       skills: [
@@ -1211,6 +1211,7 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
     },
     {
       name: "Легаси",
+      level: 2,
       money: 42,
       gear: "верёвка",
       trait: rules.traits[0],
@@ -1221,7 +1222,7 @@ test("Python-лист совпадает с lib/characters.ts", async (t) => {
 
   const draftKeys = [
     "name",
-    "level",
+    "xp",
     "origin",
     "portrait",
     "portraitFull",
@@ -1419,7 +1420,7 @@ test("Python-сервер: лента и портреты лежат своим�
     owner: "Мастер",
     character: {
       name: "С портретом",
-      level: 1,
+      xp: 0,
       origin: rules.origins[0].name,
       portrait,
       portraitFull: portrait,
@@ -1499,6 +1500,9 @@ test("Python-сервер: лента и портреты лежат своим�
   assert.equal(legacyState.payload.seq, 2, "номер сообщений старого документа потерялся");
   const legacySheet = legacyState.payload.characters.find((entry) => entry.id === "chr_old");
   assert.equal(legacySheet.portrait, legacyPortrait, "портрет старого документа потерялся");
+  // Лист из старой комнаты приезжает с опытом: уровень 1 — это 0 ОО (1.6.1).
+  assert.equal(legacySheet.xp, 0, "старому листу не посчитан опыт");
+  assert.equal("level" in legacySheet, false, "поле уровня всё ещё уходит клиенту");
 
   const migrated = readJson(`${legacyCode}.json`);
   assert.equal("messages" in migrated, false, "старый документ не разложен: лента внутри");
