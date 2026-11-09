@@ -835,8 +835,8 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
                         мастера или подсказкой только для выбранных персонажей. */}
                     <details className="relative" data-map-audience>
                       <summary
-                        title="Кому видна запись: всем за столом, только выбранным персонажам или только мастеру"
-                        className={`cursor-pointer list-none rounded border px-1 py-0.5 text-[10px] ${
+                        title={audienceLabel(textAudience)}
+                        className={`max-w-[9rem] cursor-pointer list-none truncate rounded border px-1 py-0.5 text-[10px] ${
                           textAudience === undefined
                             ? "border-zinc-700 bg-zinc-900 text-zinc-300"
                             : "border-amber-400/70 bg-amber-500/10 text-amber-200"
@@ -846,7 +846,12 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
                           ? "Видят: все"
                           : textAudience.length === 0
                             ? "Видят: мастер"
-                            : `Видят: ${textAudience.length}`}
+                            : textAudience.length === 1
+                              ? `Видят: ${
+                                  characters.find((character) => character.id === textAudience[0])
+                                    ?.name ?? "лист"
+                                }`
+                              : `Видят: ${textAudience.length}`}
                       </summary>
                       <div
                         className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-zinc-700 bg-zinc-950/95 p-1 shadow-xl"
@@ -887,7 +892,11 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
                         <p className="px-1 py-0.5 text-[10px] text-zinc-500">
                           {characters.length === 0
                             ? "Листов в комнате нет — запись видна всем."
-                            : "Ничего не выбрано — видит только мастер."}
+                            : textAudience === undefined
+                              ? "Запись видна всем за столом."
+                              : textAudience.length === 0
+                                ? "Ничего не выбрано — видит только мастер."
+                                : audienceLabel(textAudience)}
                         </p>
                       </div>
                     </details>
