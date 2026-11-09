@@ -228,8 +228,12 @@ export default function RoomScreen({ code }: { code: string }) {
       // Полная перечитка (since=0) приносит всю историю: её броски не показываем заново.
       const request = syncRef.current;
       const fullReload = request.since === 0;
+      // Кто читает: по имени сервер решает, какие закрытые записи карты показывать.
+      const viewer = meRef.current.trim();
       const snapshot = await api<RoomSnapshot>(
-        `/api/rooms/${code}/state?${snapshotQuery(request)}`,
+        `/api/rooms/${code}/state?${snapshotQuery(request)}${
+          viewer ? `&viewer=${encodeURIComponent(viewer)}` : ""
+        }`,
       );
       // Метки берём из ответа: сервер знает настоящий момент изменения,
       // а клиент видит только пришедшие ему части.

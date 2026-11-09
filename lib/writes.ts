@@ -5,7 +5,6 @@ import type {
   MapState,
   MusicState,
   RoomWriteMeta,
-  SnapshotMarks,
   SnapshotRequest,
 } from "./types";
 
@@ -23,7 +22,7 @@ import type {
  */
 
 /** Части снимка, метку которых можно подвинуть после своей записи. */
-export type MarkPart = keyof SnapshotMarks;
+export type MarkPart = "chars" | "map" | "music" | "world" | "players" | "pings";
 
 /**
  * Метки после своей записи.

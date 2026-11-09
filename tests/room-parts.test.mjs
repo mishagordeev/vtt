@@ -102,6 +102,17 @@ test("запрос /state собирается из меток и разбира
   assert.equal(parsed.players, request.players, "метка игроков больше 2^32 — целое");
   assert.equal(parsed.pings, request.pings, "у меток на карте своя метка времени");
   assert.deepEqual(parsed.portraits, request.portraits, "подписи портретов едут в запросе");
+
+  // Подпись смотрящего: пустая строка — «игрок без листов», а не «не присылали».
+  assert.equal(parsed.mapAudience, undefined, "без параметра — старый клиент");
+  const withAudience = parseSnapshotMarks(
+    new URLSearchParams(snapshotQuery({ ...request, mapAudience: "chr_b,chr_a" })),
+  );
+  assert.equal(withAudience.mapAudience, "chr_b,chr_a", "подпись смотрящего едет в запросе");
+  const emptyAudience = parseSnapshotMarks(
+    new URLSearchParams(snapshotQuery({ ...request, mapAudience: "" })),
+  );
+  assert.equal(emptyAudience.mapAudience, "", "пустая подпись не теряется");
 });
 
 test("параметры `/state` прощают мусор и пустые значения", () => {
@@ -236,12 +247,16 @@ test("сервер отдаёт части только при изменени�
 test("адрес /state разбирает метки частей, а не только since", () => {
   const route = read("app", "api", "rooms", "[code]", "state", "route.node.ts");
 
-  assert.match(route, /parseSnapshotMarks\(request\.nextUrl\.searchParams\)/);
+  assert.match(route, /parseSnapshotMarks\(params\)/);
   assert.ok(
     !route.includes('searchParams.get("since")'),
     "разбор параметров живёт в lib/snapshot.ts, а не в роуте",
   );
-  assert.match(route, /getRoomSnapshot\(code\.toUpperCase\(\), marks\)/, "метки идут в снимок");
+  assert.match(
+    route,
+    /getRoomSnapshot\(code\.toUpperCase\(\), marks, params\.get\("viewer"\) \?\? ""\)/,
+    "метки и имя читателя идут в снимок",
+  );
   assert.match(route, /NO_STORE/, "частичный снимок не кэшируется");
 });
 
@@ -255,7 +270,7 @@ test("Python-версия повторяет частичное чтение и 
   assert.match(store, /def players_mark\(doc\):/);
   assert.match(store, /return mark \* 100 \+ len\(players\)/, "уход игрока тоже меняет метку");
   assert.match(store, /def _part_changed\(mark, since\):[\s\S]{0,200}since <= 0 or mark != since/);
-  assert.match(store, /def get_room_snapshot\(code, marks=None\):/, "снимок принимает метки");
+  assert.match(store, /def get_room_snapshot\(code, marks=None, viewer=""\):/, "снимок принимает метки");
   assert.match(store, /"characterIds": \[entry\.get\("id"\)/, "id листов приходят всегда");
   assert.match(store, /snapshot\["characters"\] = changed_characters/, "листы приходят по изменению");
   assert.match(
@@ -271,7 +286,11 @@ test("Python-версия повторяет частичное чтение и 
   assert.match(store, /character\["updatedAt"\] = _now\(\)/, "переименование обновляет лист");
 
   assert.match(wsgi, /def _state_marks\(params\):/, "метки разбираются в wsgi");
-  assert.match(wsgi, /store\.get_room_snapshot\(code, _state_marks\(params\)\)/);
+  assert.match(
+    wsgi,
+    /store\.get_room_snapshot\(\s*code, _state_marks\(params\), params\.get\("viewer", ""\)\s*\)/,
+    "снимок знает, кто читает",
+  );
   assert.match(wsgi, /"chars": _since\(params\.get\("charsSince"\)\)/);
   assert.match(wsgi, /"portraits": _portraits\(params\.get\("portraits"\)\)/);
 });

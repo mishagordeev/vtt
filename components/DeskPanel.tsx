@@ -145,7 +145,14 @@ export function DeskPanel({
       <div className="space-y-5">
         <WorldClock world={world} clockOffset={clockOffset} gm={isGM} onAction={onWorldAction} />
 
-        <MapBoard me={me} gm={gm} map={map} pingColor={myColor} onAction={onMapAction} />
+        <MapBoard
+          me={me}
+          gm={gm}
+          map={map}
+          characters={characters}
+          pingColor={myColor}
+          onAction={onMapAction}
+        />
 
         <section className="space-y-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">

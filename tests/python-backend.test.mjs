@@ -851,9 +851,10 @@ test("Python-сервер: частичное чтение отдаёт толь
   }
   assert.deepEqual(
     Object.keys(full.payload.marks).sort(),
-    ["chars", "map", "music", "pings", "players", "world"],
-    "снимок отдаёт метки частей, включая метки на карте",
+    ["chars", "map", "mapAudience", "music", "pings", "players", "world"],
+    "снимок отдаёт метки частей, включая метки на карте и подпись смотрящего",
   );
+  assert.equal(full.payload.marks.mapAudience, "", "гость без имени видит только общие записи");
   const ids = full.payload.characters.map((character) => character.id).sort();
   assert.deepEqual(full.payload.characterIds.slice().sort(), ids, "id листов приходят всегда");
 
@@ -1527,5 +1528,138 @@ test("Python-сервер: лента и портреты лежат своим�
     before,
     "чтение переписывает уже разложенный документ",
   );
+});
+
+test("Python-сервер: закрытую точку видит только адресованный персонаж", async (t) => {
+  if (!server) return t.skip(SKIP);
+  const { baseUrl } = server;
+
+  const created = await call(baseUrl, "POST", "/api/rooms");
+  assert.equal(created.status, 200, server.log());
+  const code = created.payload.code;
+  for (const name of ["Мастер", "Игрок", "Сосед"]) {
+    const joined = await call(baseUrl, "POST", `/api/rooms/${code}/join`, { name });
+    assert.equal(joined.status, 200, server.log());
+  }
+
+  const sheet = await call(baseUrl, "POST", `/api/rooms/${code}/characters`, {
+    owner: "Игрок",
+    character: { name: "Разведчик", xp: 0, origin: rules.origins[0].name },
+  });
+  assert.equal(sheet.status, 200, server.log());
+  const character = sheet.payload.character;
+
+  // Точка для одного листа; чужой id в аудитории не сохраняется.
+  const point = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "text",
+    kind: "point",
+    text: "Тайник под мостом",
+    x: 0.42,
+    y: 0.58,
+    audience: [character.id, "chr_чужой"],
+  });
+  assert.equal(point.status, 200, server.log());
+  const secret = point.payload.map.texts.find((entry) => entry.text === "Тайник под мостом");
+  assert.deepEqual(secret.audience, [character.id], "чужой id листа не сохранился");
+
+  const state = async (viewer) => {
+    const suffix = viewer ? `?viewer=${encodeURIComponent(viewer)}` : "";
+    const response = await call(baseUrl, "GET", `/api/rooms/${code}/state${suffix}`);
+    assert.equal(response.status, 200, server.log());
+    return response.payload;
+  };
+
+  const asGM = await state("Мастер");
+  assert.equal(asGM.map.texts.length, 1, "мастер видит закрытую точку");
+  assert.equal(asGM.marks.mapAudience, "*", "у мастера своя подпись смотрящего");
+
+  const asOwner = await state("Игрок");
+  assert.equal(asOwner.map.texts.length, 1, "адресованному персонажу точка видна");
+  assert.equal(asOwner.marks.mapAudience, character.id, "подпись — id его листа");
+
+  const asNeighbour = await state("Сосед");
+  assert.equal(asNeighbour.map.texts.length, 0, "чужому игроку точка не уходит");
+  assert.equal(asNeighbour.marks.mapAudience, "", "у игрока без листов пустая подпись");
+
+  const asGuest = await state("");
+  assert.equal(asGuest.map.texts.length, 0, "гость без имени видит только общие записи");
+
+  // Своя линия возвращает карту — она тоже отфильтрована под писавшего.
+  const stroke = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Сосед",
+    action: "stroke",
+    points: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.2, y: 0.2 },
+    ],
+  });
+  assert.equal(stroke.status, 200, server.log());
+  assert.equal(stroke.payload.map.texts.length, 0, "чужая линия не приносит закрытую запись");
+
+  const neighbourNow = await state("Сосед");
+  const neighbourQuery = `mapSince=${neighbourNow.marks.map}&mapAudience=${encodeURIComponent(
+    neighbourNow.marks.mapAudience,
+  )}&viewer=${encodeURIComponent("Сосед")}`;
+  const sameAudience = await call(baseUrl, "GET", `/api/rooms/${code}/state?${neighbourQuery}`);
+  assert.equal(sameAudience.status, 200, server.log());
+  assert.equal("map" in sameAudience.payload, false, "та же подпись — карту зря не гоняем");
+
+  // Лист назначили соседу: карта не менялась, но приходит заново по подписи.
+  const linked = await call(
+    baseUrl,
+    "PATCH",
+    `/api/rooms/${code}/characters/${character.id}/players`,
+    { actor: "Мастер", players: ["Игрок", "Сосед"] },
+  );
+  assert.equal(linked.status, 200, server.log());
+  const afterLink = await call(baseUrl, "GET", `/api/rooms/${code}/state?${neighbourQuery}`);
+  assert.equal(afterLink.status, 200, server.log());
+  assert.ok("map" in afterLink.payload, "после привязки карта пришла заново");
+  assert.equal(afterLink.payload.map.texts.length, 1, "точка стала видна соседу");
+  assert.equal(
+    afterLink.payload.marks.mapAudience,
+    character.id,
+    "подпись смотрящего сменилась",
+  );
+
+  // Явный null возвращает запись столу, пустой список оставляет её мастеру.
+  const shared = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textUpdate",
+    id: secret.id,
+    audience: null,
+  });
+  assert.equal(shared.status, 200, server.log());
+  assert.equal("audience" in shared.payload.map.texts[0], false, "ограничение снято");
+  assert.equal((await state("")).map.texts.length, 1, "теперь точка общая");
+
+  const masterOnly = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textUpdate",
+    id: secret.id,
+    audience: [],
+  });
+  assert.equal(masterOnly.status, 200, server.log());
+  assert.deepEqual(masterOnly.payload.map.texts[0].audience, [], "пустая аудитория сохранена");
+  assert.equal((await state("Игрок")).map.texts.length, 0, "пустая аудитория — только мастер");
+
+  // Удалённый лист уходит из аудиторий: запись не становится общей.
+  const back = await call(baseUrl, "POST", `/api/rooms/${code}/map`, {
+    actor: "Мастер",
+    action: "textUpdate",
+    id: secret.id,
+    audience: [character.id],
+  });
+  assert.deepEqual(back.payload.map.texts[0].audience, [character.id]);
+  const removed = await call(
+    baseUrl,
+    "DELETE",
+    `/api/rooms/${code}/characters/${character.id}?actor=${encodeURIComponent("Мастер")}`,
+  );
+  assert.equal(removed.status, 200, server.log());
+  const afterDelete = await state("Мастер");
+  assert.deepEqual(afterDelete.map.texts[0].audience, [], "id удалённого листа ушёл из аудитории");
+  assert.equal((await state("Игрок")).map.texts.length, 0, "после удаления запись не стала общей");
 });
 

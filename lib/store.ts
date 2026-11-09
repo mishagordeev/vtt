@@ -5,6 +5,9 @@ import { AppError, ROOM_NOT_FOUND } from "./errors";
 import { roomCode, uid } from "./ids";
 import {
   MAP_TEXT_LIMIT,
+  mapAudienceKey,
+  mapTextVisibleTo,
+  normalizeMapAudience,
   normalizeMapFont,
   normalizeMapTextKind,
   normalizeMapTextSize,
@@ -1090,6 +1093,42 @@ function livePings(doc: RoomState, now: number): MapPing[] {
 }
 
 /**
+ * Чьи листы видит смотрящий: `null` — мастер, он видит всё.
+ *
+ * `/state` знает о читателе только имя, поэтому гость без имени и игрок без
+ * листов получают лишь общие записи карты. Берём привязки игрока
+ * (`player.characterIds`) и, на всякий случай, обратную сторону листа.
+ */
+function viewerCharacters(doc: RoomState, viewer: string | undefined): string[] | null {
+  const name = normalizeName(viewer);
+  if (!name) return [];
+  if (isGm(doc, name)) return null;
+  const ids: string[] = [];
+  for (const id of findPlayer(doc, name)?.characterIds ?? []) {
+    if (!ids.includes(id)) ids.push(id);
+  }
+  for (const character of doc.characters) {
+    if (ids.includes(character.id)) continue;
+    const linked = (character.players ?? []).some(
+      (entry) => entry.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (linked) ids.push(character.id);
+  }
+  return ids;
+}
+
+/**
+ * Карта для смотрящего: записи с аудиторией уходят только тем, кому назначен
+ * хотя бы один из выбранных листов. Линии, вкладки и метки остаются общими.
+ */
+function mapForViewer(map: MapState, characterIds: string[] | null): MapState {
+  if (characterIds === null) return map;
+  const texts = (map.texts ?? []).filter((entry) => mapTextVisibleTo(entry, characterIds));
+  if (texts.length === (map.texts ?? []).length) return map;
+  return { ...map, texts };
+}
+
+/**
  * Лист с очками опыта: у старых листов опыт считается по сохранённому уровню
  * (1.6.1), а поле `level` в ответ клиенту больше не уходит.
  */
@@ -1137,10 +1176,14 @@ async function changedCharacters(
  * Части, которые не менялись, в ответ не попадают: клиент берёт их из своего
  * состояния (см. `lib/snapshot.ts`). Лента, номера и id листов приходят всегда,
  * иначе клиент не узнает об удалённом листе.
+ *
+ * `viewer` — имя читателя: по нему видно, какие закрытые записи карты ему
+ * показывать. Без имени и не мастеру уходят только общие записи.
  */
 export async function getRoomSnapshot(
   code: string,
   request: SnapshotRequest = emptySnapshotRequest(),
+  viewer = "",
 ): Promise<RoomSnapshot> {
   const doc = await readDoc(code);
   if (!doc) throw new AppError(404, ROOM_NOT_FOUND);
@@ -1151,7 +1194,8 @@ export async function getRoomSnapshot(
       // Если запись не удалась, состояние всё равно отдаём без дублей.
     }
   }
-  const marks = snapshotMarks(doc);
+  const viewerIds = viewerCharacters(doc, viewer);
+  const marks: SnapshotMarks = { ...snapshotMarks(doc), mapAudience: mapAudienceKey(viewerIds) };
   // Лента читается своим ключом: в документе её больше нет, иначе `/state`
   // тянул бы историю вместе с каждой правкой листа.
   const feed = ensureFeed(await readFeed(code));
@@ -1175,7 +1219,12 @@ export async function getRoomSnapshot(
   if (partChanged(marks.chars, request.chars)) {
     snapshot.characters = await changedCharacters(code, doc.characters, request);
   }
-  if (partChanged(marks.map, request.map)) snapshot.map = doc.map;
+  if (partChanged(marks.map, request.map)) snapshot.map = mapForViewer(doc.map, viewerIds);
+  // Читателю переставили персонажей: карта та же, но закрытые записи в ней уже
+  // другие — присылаем её заново, не дожидаясь правки самой карты.
+  else if (request.mapAudience !== undefined && request.mapAudience !== marks.mapAudience) {
+    snapshot.map = mapForViewer(doc.map, viewerIds);
+  }
   // Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
   // до 179 КБ у всех, кто в этот момент читает комнату.
   if (partChanged(marks.pings, request.pings)) {
@@ -1468,6 +1517,13 @@ export async function deleteCharacter(
       player.characterIds = (player.characterIds ?? []).filter((entry) => entry !== id);
     }
     rebuildCharacterPlayers(doc);
+    // Из аудиторий записей карты id удалённого листа уходит. Запись, у которой
+    // не осталось зрителей, остаётся у мастера, а не становится общей.
+    for (const entry of doc.map?.texts ?? []) {
+      if (Array.isArray(entry.audience) && entry.audience.includes(id)) {
+        entry.audience = entry.audience.filter((item) => item !== id);
+      }
+    }
     // Портрет удалённого листа не должен остаться в базе до конца срока.
     await deletePortrait(code, id);
     return id;
@@ -1579,6 +1635,8 @@ function distanceToSegment(point: MapPoint, start: MapPoint, end: MapPoint): num
  * Метка живёт три секунды, а карта весит до 179 КБ, поэтому на `ping` клиент
  * просит лёгкий ответ (`only: "ping"`) и получает только её. Без `only`
  * приходит карта, как раньше: так работает открытая старая страница.
+ * Карта в ответе отфильтрована под того, кто писал: закрытые записи игроку
+ * не уходят даже с его собственным штрихом.
  */
 export interface MapWrite extends RoomWriteMeta {
   map?: MapState;
@@ -1612,6 +1670,9 @@ export async function updateMap(
     // К какой вкладке относится действие: рисование, метка, надпись и очистка
     // работают только с выбранной картой, остальные вкладки не трогаются.
     const tab = mapTabId(tabs, action.tab);
+    // Кому видна каждая запись, решает мастер; id сверяем с листами комнаты,
+    // иначе запись могла бы «смотреть» на удалённый лист и пропасть у всех.
+    const knownCharacters = doc.characters.map((character) => character.id);
 
     if (kind === "ping") {
       const x = mapCoord(action.x);
@@ -1676,6 +1737,8 @@ export async function updateMap(
           kind: normalizeMapTextKind(action.kind),
           tab,
         };
+        const audience = normalizeMapAudience(action.audience, knownCharacters);
+        if (audience !== undefined) entry.audience = audience;
         map.texts.push(entry);
         if (map.texts.length > MAP_TEXT_LIMIT) {
           map.texts.splice(0, map.texts.length - MAP_TEXT_LIMIT);
@@ -1698,6 +1761,12 @@ export async function updateMap(
           if (action.font !== undefined) entry.font = normalizeMapFont(action.font);
           if (action.size !== undefined) entry.size = normalizeMapTextSize(action.size);
           if (action.kind !== undefined) entry.kind = normalizeMapTextKind(action.kind);
+          // `null` в `audience` снимает ограничение: запись снова видят все.
+          if (action.audience !== undefined) {
+            const audience = normalizeMapAudience(action.audience, knownCharacters);
+            if (audience === undefined) delete entry.audience;
+            else entry.audience = audience;
+          }
           const nextX = action.x === undefined ? entry.x : mapCoord(action.x);
           const nextY = action.y === undefined ? entry.y : mapCoord(action.y);
           if (nextX === null || nextY === null) {
@@ -1749,7 +1818,9 @@ export async function updateMap(
     if (ping) map.pingsAt = now;
     else if (map.pings.length !== pingsBefore) map.pingsAt = now;
     if (!ping) map.updatedAt = now;
-    return { map, ping };
+    // Ответ фильтруем под того, кто писал: игроку закрытые записи не уходят
+    // даже картой после своего штриха или метки.
+    return { map: mapForViewer(map, viewerCharacters(doc, actor)), ping };
   });
   // Лёгкий ответ: только сама метка. Без `only` карта приходит целиком, как раньше.
   if (only === "ping" && write.value.ping) {

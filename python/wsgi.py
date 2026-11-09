@@ -105,7 +105,7 @@ def _portraits(raw):
 
 def _state_marks(params):
     """Метки частей снимка: с ними `/state` отдаёт только изменившееся."""
-    return {
+    marks = {
         "since": _since(params.get("since")),
         "chars": _since(params.get("charsSince")),
         "map": _since(params.get("mapSince")),
@@ -115,6 +115,11 @@ def _state_marks(params):
         "pings": _since(params.get("pingsSince")),
         "portraits": _portraits(params.get("portraits")),
     }
+    # Подпись смотрящего отличаем от «не присылали»: пустая строка значит
+    # «игрок без листов», отсутствие параметра — старый клиент.
+    if params.get("mapAudience") is not None:
+        marks["mapAudience"] = params.get("mapAudience")
+    return marks
 
 
 def apply(environ, start_response, method):
@@ -165,7 +170,11 @@ def apply(environ, start_response, method):
     if resource == "state" and not entry_id:
         if method != "GET":
             return respond(start_response, 405, {"error": "Метод не поддерживается"})
-        snapshot = store.get_room_snapshot(code, _state_marks(params))
+        # `viewer` — имя читателя: по нему видно, какие закрытые записи карты ему
+        # показывать. Без имени уходят только общие записи.
+        snapshot = store.get_room_snapshot(
+            code, _state_marks(params), params.get("viewer", "")
+        )
         return respond(start_response, 200, snapshot)
 
     if resource == "players" and not entry_id:

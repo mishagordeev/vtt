@@ -28,6 +28,8 @@ MAX_PING_AGE = 3_500
 MAX_PINGS = 40
 MAX_MAP_POINTS = 600
 MAX_MAP_TEXTS = 60
+# Сколько листов можно выбрать в аудитории записи (как MAP_TEXT_AUDIENCE_LIMIT в Node).
+MAX_MAP_AUDIENCE = 24
 MAP_TEXT_MAX_LENGTH = 120
 MAP_TEXT_MIN_SIZE = 0.008
 MAP_TEXT_MAX_SIZE = 0.06
@@ -275,6 +277,12 @@ def ensure_map(doc):
                 tab_id = str(item.get("tab") or "").strip()
                 if tab_id:
                     entry["tab"] = tab_id
+                # Кому видна запись: нет поля — всем, [] — только мастеру.
+                # id здесь не сверяем с листами: удалённый лист не должен
+                # делать закрытую запись общей.
+                audience = _map_audience(item.get("audience"))
+                if audience is not None:
+                    entry["audience"] = audience
                 texts.append(entry)
             state["texts"] = texts
     return doc
@@ -729,12 +737,15 @@ def load_portrait(code, character_id):
     return value if isinstance(value, str) else ""
 
 
-def get_room_snapshot(code, marks=None):
+def get_room_snapshot(code, marks=None, viewer=""):
     """Снимок комнаты: полный — без меток, частичный — по меткам.
 
     Части, которые не менялись, в ответ не попадают: клиент берёт их из своего
     состояния (см. `lib/snapshot.ts`). Лента, номера и id листов приходят всегда,
     иначе клиент не узнает об удалённом листе.
+
+    `viewer` — имя читателя: по нему видно, какие закрытые записи карты ему
+    показывать. Без имени и не мастеру уходят только общие записи.
     """
     request = dict(marks) if isinstance(marks, dict) else {}
     doc = read_doc(code)
@@ -746,7 +757,9 @@ def get_room_snapshot(code, marks=None):
         except (AppError, OSError):
             pass  # если запись не удалась, состояние всё равно отдаём без дублей
 
+    viewer_ids = viewer_characters(doc, viewer)
     counters = snapshot_marks(doc)
+    counters["mapAudience"] = map_audience_key(viewer_ids)
     # Лента читается своим ключом: в документе её больше нет, иначе `/state`
     # тянул бы историю вместе с каждой правкой листа.
     feed = load_feed(code)
@@ -772,7 +785,11 @@ def get_room_snapshot(code, marks=None):
     if _part_changed(counters["chars"], request.get("chars")):
         snapshot["characters"] = changed_characters(code, as_list(doc.get("characters")), request)
     if _part_changed(counters["map"], request.get("map")):
-        snapshot["map"] = doc.get("map")
+        snapshot["map"] = map_for_viewer(doc.get("map"), viewer_ids)
+    elif "mapAudience" in request and request.get("mapAudience") != counters["mapAudience"]:
+        # Читателю переставили персонажей: карта та же, но закрытые записи в ней
+        # уже другие — присылаем заново, не дожидаясь правки самой карты.
+        snapshot["map"] = map_for_viewer(doc.get("map"), viewer_ids)
     # Метки на карте едут отдельной мелкой частью: иначе щелчок по карте стоил бы
     # до 179 КБ у всех, кто в этот момент читает комнату.
     if _part_changed(counters["pings"], request.get("pings")):
@@ -1107,6 +1124,12 @@ def delete_character(code, character_id, raw_actor):
             linked = [entry for entry in as_list(player.get("characterIds")) if entry != character_id]
             player["characterIds"] = linked
         rebuild_character_players(doc)
+        # Из аудиторий записей карты id удалённого листа уходит. Запись, у которой
+        # не осталось зрителей, остаётся у мастера, а не становится общей.
+        for entry in as_list(as_dict(doc.get("map")).get("texts")):
+            audience = as_dict(entry).get("audience")
+            if isinstance(audience, list) and character_id in audience:
+                entry["audience"] = [item for item in audience if item != character_id]
         # Портрет удалённого листа не должен остаться в базе до конца срока.
         try:
             storage.delete_portrait(code, character_id)
@@ -1243,6 +1266,93 @@ def _find_map_text(state, text_id):
     return None
 
 
+def _map_audience(value):
+    """Кому видна запись: None — всем, [] — только мастеру, иначе id листов.
+
+    Повторяет `normalizeMapAudience` из `lib/mapText.ts`: мусор и повторные id
+    отбрасываются, длина списка ограничена.
+    """
+    if not isinstance(value, list):
+        return None
+    ids = []
+    for raw in value:
+        if not isinstance(raw, str):
+            continue
+        item = raw.strip()
+        if not item or item in ids:
+            continue
+        ids.append(item)
+        if len(ids) >= MAX_MAP_AUDIENCE:
+            break
+    return ids
+
+
+def _map_audience_for(doc, value):
+    """Аудитория записи с проверкой по листам комнаты: чужие id не сохраняем."""
+    audience = _map_audience(value)
+    if audience is None:
+        return None
+    known = {as_dict(character).get("id") for character in as_list(doc.get("characters"))}
+    return [item for item in audience if item in known]
+
+
+def map_text_visible_to(entry, character_ids):
+    """Видна ли запись смотрящему (`mapTextVisibleTo` из lib/mapText.ts).
+
+    `character_ids` — None у мастера: он видит всё. Запись без поля аудитории
+    видна всем, с пустой аудиторией — только мастеру.
+    """
+    if character_ids is None:
+        return True
+    audience = as_dict(entry).get("audience")
+    if not isinstance(audience, list):
+        return True
+    return any(item in character_ids for item in audience)
+
+
+def map_audience_key(character_ids):
+    """Подпись смотрящего для метки карты: `*` у мастера, иначе id листов."""
+    if character_ids is None:
+        return "*"
+    return ",".join(sorted(character_ids))
+
+
+def viewer_characters(doc, viewer):
+    """Чьи листы видит смотрящий: None — мастер, он видит всё.
+
+    `/state` знает о читателе только имя, поэтому гость без имени и игрок без
+    листов получают лишь общие записи карты.
+    """
+    name = normalize_name(viewer)
+    if not name:
+        return []
+    if str(doc.get("gm") or "").strip().lower() == name.lower():
+        return None
+    ids = []
+    player = find_player(doc, name)
+    for character_id in as_list(as_dict(player).get("characterIds")) if player else []:
+        if isinstance(character_id, str) and character_id and character_id not in ids:
+            ids.append(character_id)
+    lowered = name.lower()
+    for character in as_list(doc.get("characters")):
+        item = as_dict(character)
+        linked = [str(entry).strip().lower() for entry in as_list(item.get("players"))]
+        if lowered in linked and item.get("id") not in ids:
+            ids.append(item.get("id"))
+    return ids
+
+
+def map_for_viewer(state, character_ids):
+    """Карта для смотрящего: закрытые записи ему не уходят."""
+    if character_ids is None or not isinstance(state, dict):
+        return state
+    texts = as_list(state.get("texts"))
+    visible = [entry for entry in texts if map_text_visible_to(entry, character_ids)]
+    if len(visible) == len(texts):
+        return state
+    return {**state, "texts": visible}
+
+
 def _stroke_touched(stroke, erase_points, radius):
     """Ластик стирает линию, если попал в точку или в отрезок между точками."""
     points = [
@@ -1268,6 +1378,8 @@ def update_map(code, raw_actor, raw_action):
     Метка возвращается отдельной мелкой частью: клиент просит лёгкий ответ
     (`only: "ping"`) и получает только её, а не всю карту до 179 КБ. Без `only`
     карта приходит целиком — так работает открытая старая страница.
+    Карта в ответе отфильтрована под того, кто писал: закрытые записи игроку
+    не уходят даже с его собственным штрихом.
     """
     actor = normalize_name(raw_actor)
     if not actor:
@@ -1375,6 +1487,10 @@ def update_map(code, raw_actor, raw_action):
                         "tab": tab_id,
                     }
                 )
+                # Кому видна запись, решает мастер; чужие id листов не сохраняем.
+                audience = _map_audience_for(doc, action.get("audience"))
+                if audience is not None:
+                    texts[-1]["audience"] = audience
                 if len(texts) > MAX_MAP_TEXTS:
                     del texts[: len(texts) - MAX_MAP_TEXTS]
                 state["texts"] = texts
@@ -1405,6 +1521,13 @@ def update_map(code, raw_actor, raw_action):
                         entry["size"] = _map_text_size(action.get("size"))
                     if action.get("kind") is not None:
                         entry["kind"] = _map_text_kind(action.get("kind"))
+                    # Явный null снимает ограничение: запись снова видят все.
+                    if "audience" in action:
+                        audience = _map_audience_for(doc, action.get("audience"))
+                        if audience is None:
+                            entry.pop("audience", None)
+                        else:
+                            entry["audience"] = audience
                     next_x = entry.get("x") if action.get("x") is None else _map_coord(action.get("x"))
                     next_y = entry.get("y") if action.get("y") is None else _map_coord(action.get("y"))
                     if next_x is None or next_y is None:
@@ -1476,7 +1599,9 @@ def update_map(code, raw_actor, raw_action):
             state["pingsAt"] = now
         if ping is None:
             state["updatedAt"] = now
-        return {"map": state, "ping": ping}
+        # Ответ фильтруем под того, кто писал: игроку закрытые записи не уходят
+        # даже картой после своего штриха или метки.
+        return {"map": map_for_viewer(state, viewer_characters(doc, actor)), "ping": ping}
 
     value, meta = write_room(code, handler)
     # Лёгкий ответ: только сама метка. Без `only` карта приходит целиком, как раньше.

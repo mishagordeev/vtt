@@ -1,4 +1,4 @@
-import type { MapFont, MapTextKind } from "./types";
+import type { MapFont, MapText, MapTextKind } from "./types";
 
 /**
  * Надписи поверх карты: набор шрифтов и размеров закрыт, потому что ключи
@@ -40,6 +40,60 @@ export const MAP_TEXT_LIMIT = 60;
 export const MAP_TEXT_REVEAL_MS = 5_000;
 /** Виды записи на карте: надпись видна всегда, точка — только по нажатию. */
 export const MAP_TEXT_KINDS: MapTextKind[] = ["label", "point"];
+/** Сколько листов можно выбрать в аудитории записи: длиннее список — уже не подсказка. */
+export const MAP_TEXT_AUDIENCE_LIMIT = 24;
+
+/**
+ * Кому видна запись на карте (аудитория).
+ *
+ * `undefined` — всем: так выглядят записи из старых комнат. Пустой список —
+ * только мастеру: это скрытая заметка, у которой не осталось зрителей.
+ * Иначе — игрокам перечисленных листов. `knownIds` отсекает чужие id: иначе
+ * запись могла бы ссылаться на удалённый лист и пропасть у всех.
+ */
+export function normalizeMapAudience(
+  value: unknown,
+  knownIds?: Iterable<string>,
+): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const allowed = knownIds ? new Set(knownIds) : null;
+  const ids: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const id = raw.trim();
+    if (!id || ids.includes(id)) continue;
+    if (allowed && !allowed.has(id)) continue;
+    ids.push(id);
+    if (ids.length >= MAP_TEXT_AUDIENCE_LIMIT) break;
+  }
+  return ids;
+}
+
+/**
+ * Видна ли запись смотрящему. `null` — мастер: он видит всё, включая скрытые.
+ * Запись без поля аудитории видна всем, с пустой аудиторией — только мастеру.
+ */
+export function mapTextVisibleTo(
+  entry: Pick<MapText, "audience">,
+  characterIds: string[] | null,
+): boolean {
+  if (characterIds === null) return true;
+  const audience = entry.audience;
+  // Мусор в поле старых комнат не должен прятать запись ото всех.
+  if (!Array.isArray(audience)) return true;
+  return audience.some((id) => characterIds.includes(id));
+}
+
+/**
+ * Подпись смотрящего для метки карты: `*` у мастера, иначе отсортированные id
+ * его листов. Клиент присылает её назад, и сервер видит, что набор персонажей
+ * сменился, — без этого закрытая точка появилась бы только после перезагрузки.
+ */
+export function mapAudienceKey(characterIds: string[] | null): string {
+  if (characterIds === null) return "*";
+  return [...characterIds].sort().join(",");
+}
 
 /** Текст надписи без переводов строк и лишних пробелов. */
 export function sanitizeMapText(value: unknown): string {

@@ -65,6 +65,9 @@ export function parsePortraits(raw: string | null): Record<string, string> | und
 
 /** Метки частей снимка из строки запроса — их шлёт клиент в `/state`. */
 export function parseSnapshotMarks(params: URLSearchParams): SnapshotRequest {
+  // Подпись смотрящего отличаем от «не присылали»: пустая строка значит
+  // «игрок без листов», отсутствие параметра — старый клиент.
+  const audience = params.get("mapAudience");
   return {
     since: readMark(params.get("since")),
     chars: readMark(params.get("charsSince")),
@@ -74,6 +77,7 @@ export function parseSnapshotMarks(params: URLSearchParams): SnapshotRequest {
     players: readMark(params.get("playersSince")),
     pings: readMark(params.get("pingsSince")),
     portraits: parsePortraits(params.get("portraits")),
+    ...(audience === null ? {} : { mapAudience: audience }),
   };
 }
 
@@ -93,6 +97,8 @@ export function snapshotQuery(request: SnapshotRequest): string {
     .filter((id) => portraits[id])
     .map((id) => `${id}.${portraits[id]}`);
   if (pairs.length > 0) params.set("portraits", pairs.join(","));
+  // Пустая подпись — тоже значение: игрок без листов видит только общие записи.
+  if (request.mapAudience !== undefined) params.set("mapAudience", request.mapAudience);
   return params.toString();
 }
 

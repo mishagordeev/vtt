@@ -12,12 +12,14 @@ import {
 } from "@/lib/mapText";
 import { ensureMapTabs, entryTabId, MAP_GRID } from "@/lib/mapTabs";
 import { HEX_SCALE, MAP_RASTER } from "@/lib/mapScale";
-import type { MapFont, MapPoint, MapState, MapStroke, MapText } from "@/lib/types";
+import type { Character, MapFont, MapPoint, MapState, MapStroke, MapText } from "@/lib/types";
 
 interface MapBoardProps {
   me: string;
   gm: string;
   map: MapState;
+  /** Листы комнаты: из них мастер выбирает, кому видна запись. */
+  characters: Character[];
   /** Личный цвет игрока: им рисуется метка-круг. */
   pingColor?: string;
   onAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
@@ -75,7 +77,7 @@ function drawStroke(
   });
   context.stroke();
 }
-export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
+export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBoardProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
@@ -98,6 +100,9 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
   const [textColor, setTextColor] = useState(COLORS[5]);
   const [textFont, setTextFont] = useState<MapFont>("serif");
   const [textSize, setTextSize] = useState(MAP_TEXT_SIZES[1].value);
+  // Кому видна запись: undefined — всем (так её ставят по умолчанию), пустой
+  // список — только мастеру, иначе — игрокам выбранных листов.
+  const [textAudience, setTextAudience] = useState<string[] | undefined>(undefined);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   // Открытый текст точки: id и время нажатия (по нему перезапускается таймер).
   const [revealed, setRevealed] = useState<{ id: string; at: number } | null>(null);
@@ -347,6 +352,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
       font: textFont,
       size: textSize,
       tab: tab.id,
+      // null — запись общая; пустой список значил бы «только мастер».
+      audience: textAudience ?? null,
     });
     if (!result) {
       setError("Надпись не сохранилась: её ставит только мастер");
@@ -354,6 +361,24 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     }
     setError("");
     setText("");
+  }
+
+  /** Кто видит запись — подпись для редактора и подсказки у мастера. */
+  function audienceLabel(audience: string[] | undefined): string {
+    if (!Array.isArray(audience)) return "видят все";
+    if (audience.length === 0) return "видит только мастер";
+    const names = audience.map(
+      (id) => characters.find((character) => character.id === id)?.name ?? "удалённый лист",
+    );
+    return `видят: ${names.join(", ")}`;
+  }
+
+  /** Отметить или снять лист в аудитории записи: пустой список — только мастер. */
+  function toggleAudience(id: string) {
+    setTextAudience((previous) => {
+      const list = Array.isArray(previous) ? previous : [];
+      return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
+    });
   }
 
   /** Выбрать надпись или точку с карты: её текст, цвет, шрифт и размер едут в редактор. */
@@ -364,6 +389,7 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
     setTextColor(entry.color);
     setTextFont(entry.font);
     setTextSize(nearestMapTextSize(entry.size));
+    setTextAudience(Array.isArray(entry.audience) ? entry.audience : undefined);
     setError("");
   }
 
@@ -388,6 +414,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
       color: textColor,
       font: textFont,
       size: textSize,
+      // null снимает ограничение: запись снова видят все.
+      audience: textAudience ?? null,
     });
     if (!result) {
       setError("Сохранить надпись может только мастер");
@@ -430,7 +458,8 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           </h2>
           <p className="text-[10px] text-zinc-600">
             Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · мастер ставит
-            надписи и точки: нажатие на точку открывает её текст на 5 секунд
+            надписи и точки: нажатие на точку открывает её текст на 5 секунд, а «Видят»
+            прячет запись от всех, кроме выбранных персонажей
           </p>
         </div>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
@@ -562,8 +591,11 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
           {/* Записи мастера поверх карты: надпись видна всегда, точка — только кружком.
-              Нажатие на точку открывает её текст на 5 секунд; правит записи мастер. */}
+              Нажатие на точку открывает её текст на 5 секунд; правит записи мастер.
+              Закрытые записи мастер отличает по пунктиру: он видит и то, что
+              спрятано от стола. */}
           {texts.map((entry) => {
+            const restricted = isGM && Array.isArray(entry.audience);
             if (entry.kind === "point") {
               const diameter = Math.max(12, entry.size * Math.max(size.width, 320) * 1.4);
               const open = revealed?.id === entry.id;
@@ -580,7 +612,11 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                     className={`-m-2 block cursor-pointer rounded-full p-2 ${
                       editingTextId === entry.id ? "ring-2 ring-amber-300/90" : ""
                     }`}
-                    title="Точка на карте: нажмите, чтобы прочитать"
+                    title={
+                      restricted
+                        ? `Точка на карте. ${audienceLabel(entry.audience)}`
+                        : "Точка на карте: нажмите, чтобы прочитать"
+                    }
                     aria-label="Точка на карте: нажмите, чтобы прочитать"
                   >
                     <span
@@ -590,6 +626,9 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                         height: `${diameter}px`,
                         backgroundColor: entry.color,
                         boxShadow: "0 1px 6px rgba(0,0,0,0.85)",
+                        ...(restricted
+                          ? { outline: "2px dashed rgba(252,211,77,0.85)", outlineOffset: "2px" }
+                          : {}),
                       }}
                     />
                   </button>
@@ -624,10 +663,17 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                   fontFamily: MAP_FONT_STACK[entry.font] ?? MAP_FONT_STACK.sans,
                   fontSize: `${Math.max(9, entry.size * Math.max(size.width, 320))}px`,
                   textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+                  ...(restricted ? { outline: "1px dashed rgba(252,211,77,0.7)" } : {}),
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => pickText(entry)}
-                title={isGM ? "Править надпись" : entry.text}
+                title={
+                  isGM
+                    ? restricted
+                      ? `Править надпись. ${audienceLabel(entry.audience)}`
+                      : "Править надпись"
+                    : entry.text
+                }
               >
                 {entry.text}
               </div>
@@ -785,6 +831,66 @@ export function MapBoard({ me, gm, map, pingColor, onAction }: MapBoardProps) {
                         style={{ backgroundColor: entry }}
                       />
                     ))}
+                    {/* Кому видна запись: точка или надпись может быть тайной
+                        мастера или подсказкой только для выбранных персонажей. */}
+                    <details className="relative" data-map-audience>
+                      <summary
+                        title="Кому видна запись: всем за столом, только выбранным персонажам или только мастеру"
+                        className={`cursor-pointer list-none rounded border px-1 py-0.5 text-[10px] ${
+                          textAudience === undefined
+                            ? "border-zinc-700 bg-zinc-900 text-zinc-300"
+                            : "border-amber-400/70 bg-amber-500/10 text-amber-200"
+                        }`}
+                      >
+                        {textAudience === undefined
+                          ? "Видят: все"
+                          : textAudience.length === 0
+                            ? "Видят: мастер"
+                            : `Видят: ${textAudience.length}`}
+                      </summary>
+                      <div
+                        className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-zinc-700 bg-zinc-950/95 p-1 shadow-xl"
+                        title={audienceLabel(textAudience)}
+                      >
+                        <label className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200">
+                          <input
+                            type="checkbox"
+                            checked={textAudience === undefined}
+                            onChange={() => setTextAudience(undefined)}
+                            className="accent-emerald-500"
+                          />
+                          Все за столом
+                        </label>
+                        <div className="scroll-thin max-h-40 overflow-y-auto">
+                          {characters.map((character) => (
+                            <label
+                              key={character.id}
+                              className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200"
+                              title={
+                                (character.players ?? []).length > 0
+                                  ? `Играют: ${(character.players ?? []).join(", ")}`
+                                  : "Лист пока ни за кем не закреплён"
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={
+                                  Array.isArray(textAudience) && textAudience.includes(character.id)
+                                }
+                                onChange={() => toggleAudience(character.id)}
+                                className="accent-amber-400"
+                              />
+                              <span className="min-w-0 flex-1 truncate">{character.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <p className="px-1 py-0.5 text-[10px] text-zinc-500">
+                          {characters.length === 0
+                            ? "Листов в комнате нет — запись видна всем."
+                            : "Ничего не выбрано — видит только мастер."}
+                        </p>
+                      </div>
+                    </details>
                     {editingTextId ? (
                       <>
                         <button
