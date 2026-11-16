@@ -266,7 +266,7 @@ test("стол виден всегда, а правая панель идёт: �
   const musicAt = room.indexOf("<MusicPlaylist");
   const railAt = room.indexOf("<CharactersRail");
   const feedAt = room.indexOf("<ChatFeed");
-  const composerAt = room.indexOf("<Composer checks={checks}");
+  const composerAt = room.search(/<Composer\r?\n/);
   assert.ok(deskAt > 0, "стол должен быть в комнате");
   assert.ok(musicAt > deskAt, "музыка — в правой панели после стола");
   assert.ok(railAt > musicAt, "под музыкой идёт список персонажей");
@@ -315,10 +315,15 @@ test("стол виден всегда, а правая панель идёт: �
     "мастер определяется по имени за столом",
   );
   assert.match(room, /onOpenPanel=\{\(\) => setMusicOpen\(true\)\}/, "музыка открывает свою панель");
+  // Ввод получает всё, что нужно проверкам: чей лист, характеристики, навыки.
+  const composerStart = room.search(/<Composer\r?\n/);
+  const composerBlock = room.slice(composerStart, room.indexOf("/>", composerStart));
+  assert.match(composerBlock, /checks=\{checks\}/, "ввод получает характеристики и навыки листа");
+  assert.match(composerBlock, /character=\{/, "ввод знает, по чьему листу идут проверки");
   assert.match(
-    room,
-    /<Composer checks=\{checks\} characterName=\{checkCharacter\?\.name\} onSend=\{send\} \/>/,
-    "ввод получает характеристики и навыки листа",
+    composerBlock,
+    /onOpenCharacter=\{/,
+    "клик по аватару открывает лист персонажа проверок",
   );
 
   const rail = read("components", "CharactersRail.tsx");
@@ -672,8 +677,13 @@ test("нижние ряды панели повторяют макет: куби
   );
   assert.match(
     composer,
-    /`\$\{prefix\}\$\{chosenSkill\.name\} 1d20\$\{modText\(chosenSkill\.bonus\)\}`/,
-    "«Бросок» подставляет проверку навыка с его бонусом",
+    /\$\{chosenSkill\.name\} \$\{chosenSkill\.rank\} 1d20\$\{modText\(chosenSkill\.bonus\)\}/,
+    "«Бросок» подставляет проверку навыка с рангом и бонусом",
+  );
+  assert.match(
+    composer,
+    /: "1d20";/,
+    "«без навыка» подставляет голый 1d20 — модификатор добавит кнопка характеристики",
   );
   // Отправка — стрелка в углу поля: широкой кнопки «Отправить» больше нет.
   assert.match(composer, /\{busy \? "…" : "➤"\}/, "кнопка отправки — стрелка в углу поля");
@@ -700,6 +710,75 @@ test("нижние ряды панели повторяют макет: куби
     room,
     /void import\("@\/lib\/rules"\)/,
     "справочник правил тянется отдельным чанком: /r открывается без каталогов",
+  );
+});
+
+test("ввод: аватар персонажа слева от окна, навыки листа с рангами и «без навыка»", () => {
+  const composer = read("components", "Composer.tsx");
+  const avatarAt = composer.indexOf("data-composer-avatar");
+  const fieldAt = composer.indexOf("<textarea");
+  assert.ok(avatarAt > 0, "у окна ввода есть аватар персонажа");
+  assert.ok(avatarAt < fieldAt, "аватар стоит слева от окна ввода");
+  assert.match(
+    composer,
+    /data-composer-character/,
+    "аватар и поле — один блок: портрет слева, ввод справа",
+  );
+  assert.match(
+    composer,
+    /character\?\.portrait \? \(\s*<img src=\{character\.portrait\}/,
+    "в аватаре портрет персонажа проверок",
+  );
+  assert.match(composer, /initials\(character\.name\)/, "без портрета — инициалы имени");
+  assert.match(composer, /onClick=\{onOpenCharacter\}/, "клик по аватару открывает лист");
+  assert.match(
+    composer,
+    /Проверки по листу «\$\{character\.name\}»/,
+    "подсказка говорит, чей лист ведёт проверки",
+  );
+
+  // Навыки: список начинается с «без навыка», в пункте виден ранг и бонус.
+  assert.match(
+    composer,
+    /<option value="">без навыка<\/option>/,
+    "первый пункт списка — «без навыка»",
+  );
+  assert.match(
+    composer,
+    /\$\{skill\.name\} · \$\{skill\.rank\} · \$\{modText\(skill\.bonus\) \|\| "\+0"\}/,
+    "в пункте навыка видны ранг и итоговый бонус",
+  );
+  assert.ok(
+    !/\?\? rows\.skills\[0\]/.test(composer),
+    "навык не выбирается сам: по умолчанию проверка идёт без навыка",
+  );
+  assert.match(
+    composer,
+    /из них \$\{modText\(chosenSkill\.rankBonus\) \|\| "\+0"\} за ранг/,
+    "подсказка показывает, сколько бонуса даёт ранг",
+  );
+
+  // Навыки собираются только по листу персонажа проверок.
+  const room = read("components", "RoomScreen.tsx");
+  assert.match(
+    room,
+    /skill\.rank > 0 && rules\.skillAvailable\(skill\.name, stats\)/,
+    "в списке только взятые и доступные навыки этого листа",
+  );
+  assert.match(
+    room,
+    /rank: rules\.rankLabel\(skill\.rank\)/,
+    "ранг навыка приходит из правил",
+  );
+  assert.match(
+    room,
+    /rankBonus: rules\.rankBonus\(skill\.rank\)/,
+    "бонус ранга считается по правилам (+2 за ступень)",
+  );
+  assert.match(
+    room,
+    /character=\{\s*checkCharacter\s*\?\s*\{ name: checkCharacter\.name, portrait: checkCharacter\.portrait \}/,
+    "аватар получает имя и портрет того же персонажа, по чьему листу идут проверки",
   );
 });
 

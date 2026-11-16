@@ -16,16 +16,28 @@ export interface ComposerStat {
   mod: number;
 }
 
-/** Навык листа для списка «Навык»: имя и итоговый бонус проверки. */
+/** Навык листа для списка «Навык»: имя, ранг и итоговый бонус проверки. */
 export interface ComposerSkill {
   name: string;
+  /** Ранг римскими (I–V): он виден в списке рядом с именем навыка. */
+  rank: string;
+  /** Полный бонус проверки: модификатор характеристики + бонус ранга. */
   bonus: number;
+  /** Сколько из бонуса даёт сам ранг: +2 за каждую ступень (I +2 … V +10). */
+  rankBonus: number;
 }
 
-/** Ряды проверок под полем ввода: считаются по открытому листу. */
+/** Ряды проверок под полем ввода: считаются по листу персонажа. */
 export interface ComposerChecks {
   stats: ComposerStat[];
   skills: ComposerSkill[];
+}
+
+/** Персонаж, от которого идут все проверки: его аватар стоит слева от поля. */
+export interface ComposerCharacter {
+  name: string;
+  /** Круглый портрет (data URL); пусто — инициалы. */
+  portrait?: string;
 }
 
 const NO_CHECKS: ComposerChecks = { stats: [], skills: [] };
@@ -34,8 +46,10 @@ interface ComposerProps {
   disabled?: boolean;
   /** Характеристики и навыки листа: из них собраны нижние ряды. */
   checks?: ComposerChecks;
-  /** Чей лист взят для проверок — имя в подсказке рядов. */
-  characterName?: string;
+  /** Чей лист взят для проверок — аватар слева от окна ввода. */
+  character?: ComposerCharacter | null;
+  /** Клик по аватару: открыть лист этого персонажа. */
+  onOpenCharacter?: () => void;
   onSend: (text: string) => Promise<void>;
 }
 
@@ -45,15 +59,33 @@ function modText(mod: number): string {
   return mod > 0 ? `+${mod}` : `-${Math.abs(mod)}`;
 }
 
-export function Composer({ disabled, checks, characterName, onSend }: ComposerProps) {
+/** Инициалы для аватара без портрета — как на карточке листа. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+export function Composer({
+  disabled,
+  checks,
+  character,
+  onOpenCharacter,
+  onSend,
+}: ComposerProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Пусто — «без навыка»: проверка идёт голым 1d20, а модификатор
+  // характеристики добавляет кнопка СИЛ/ЛОВ. Первый навык сам не выбирается.
   const [skillName, setSkillName] = useState("");
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const preview = useMemo(() => extractFormula(text), [text]);
   const rows = checks ?? NO_CHECKS;
-  const chosenSkill = rows.skills.find((skill) => skill.name === skillName) ?? rows.skills[0] ?? null;
+  const chosenSkill = skillName
+    ? rows.skills.find((skill) => skill.name === skillName) ?? null
+    : null;
 
   function replaceRange(start: number, end: number, chunk: string) {
     const next = `${text.slice(0, start)}${chunk}${text.slice(end)}`;
@@ -155,17 +187,21 @@ export function Composer({ disabled, checks, characterName, onSend }: ComposerPr
   }
 
   /**
-   * Испытание навыка: «Атлетика 1d20+4». Подпись перед формулой нужна ленте —
-   * по ней видно, что именно бросали; сервер разбирает формулу из текста.
+   * Испытание: с выбранным навыком в поле встаёт «Атлетика II 1d20+4», где
+   * бонус уже включает модификатор характеристики навыка и +2 за каждую
+   * ступень ранга. «Без навыка» подставляет голый 1d20 — модификатор
+   * характеристики добавляется кнопкой СИЛ/ЛОВ, и в поле видно, откуда число.
    */
   function addSkillCheck() {
-    if (!chosenSkill) return;
     const el = ref.current;
     const caret = el?.selectionStart ?? text.length;
     const end = el?.selectionEnd ?? text.length;
     const head = text.slice(0, caret);
     const prefix = head.length > 0 && !/\s$/.test(head) ? " " : "";
-    replaceRange(caret, end, `${prefix}${chosenSkill.name} 1d20${modText(chosenSkill.bonus)}`);
+    const chunk = chosenSkill
+      ? `${chosenSkill.name} ${chosenSkill.rank} 1d20${modText(chosenSkill.bonus)}`
+      : "1d20";
+    replaceRange(caret, end, `${prefix}${chunk}`);
   }
 
   async function submit() {
@@ -192,33 +228,61 @@ export function Composer({ disabled, checks, characterName, onSend }: ComposerPr
       }}
       className="border-t border-zinc-800/80 bg-zinc-950/80 p-3"
     >
-      <div className="relative">
-        <textarea
-          ref={ref}
-          value={text}
-          rows={2}
-          maxLength={2000}
-          disabled={disabled}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          placeholder="Что делает ваш персонаж? Enter — отправить, Shift+Enter — новая строка"
-          className="scroll-thin w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-2.5 pr-12 text-sm leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/15"
-        />
-        {/* Отправка — стрелка в углу поля, как на макете: ряд костей под ней не сдвигается. */}
+      {/* Окно ввода и аватар персонажа, от которого идут все проверки:
+          слева круглый портрет (клик открывает лист), справа поле с отправкой.
+          Инициалы вместо портрета — как на карточке листа в списке. */}
+      <div className="flex items-start gap-2" data-composer-character>
         <button
-          type="submit"
-          disabled={busy || disabled || text.trim().length === 0}
-          title="Отправить (Enter)"
-          aria-label="Отправить сообщение"
-          className="absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          onClick={onOpenCharacter}
+          disabled={!onOpenCharacter}
+          data-composer-avatar
+          title={
+            character
+              ? `Проверки по листу «${character.name}» — открыть лист`
+              : "Своего листа нет: проверки идут без персонажа — создать лист"
+          }
+          aria-label={
+            character ? `Персонаж проверок: ${character.name}` : "Лист персонажа не выбран"
+          }
+          className="mt-0.5 h-11 w-11 shrink-0 overflow-hidden rounded-full border border-zinc-700 bg-zinc-900 transition enabled:hover:border-emerald-400/60 disabled:cursor-default"
         >
-          {busy ? "…" : "➤"}
+          {character?.portrait ? (
+            <img src={character.portrait} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center font-mono text-[11px] text-zinc-500">
+              {character ? initials(character.name) : "?"}
+            </span>
+          )}
         </button>
+        <div className="relative min-w-0 flex-1">
+          <textarea
+            ref={ref}
+            value={text}
+            rows={2}
+            maxLength={2000}
+            disabled={disabled}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="Что делает ваш персонаж? Enter — отправить, Shift+Enter — новая строка"
+            className="scroll-thin w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-2.5 pr-12 text-sm leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/15"
+          />
+          {/* Отправка — стрелка в углу поля, как на макете: ряд костей под ней не сдвигается. */}
+          <button
+            type="submit"
+            disabled={busy || disabled || text.trim().length === 0}
+            title="Отправить (Enter)"
+            aria-label="Отправить сообщение"
+            className="absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? "…" : "➤"}
+          </button>
+        </div>
       </div>
 
       {/* Кубики и модификаторы — одной строкой без переноса: ширина правой
@@ -282,38 +346,38 @@ export function Composer({ disabled, checks, characterName, onSend }: ComposerPr
         ))}
       </div>
 
-      {/* Навык и «Бросок»: испытание 1d20 + модификатор характеристики навыка
-          и бонус ранга (lib/rules → skillBonus). Формула встаёт в поле ввода —
-          её видно до отправки, а бросок делает Enter. */}
+      {/* Навык и «Бросок»: в списке только навыки этого персонажа с рангами,
+          первым пунктом — «без навыка». Испытание = 1d20 + модификатор
+          характеристики навыка + 2 за каждую ступень ранга (lib/rules →
+          skillBonus). Формула встаёт в поле ввода — её видно до отправки,
+          а бросок делает Enter. */}
       <div className="mt-1 flex items-center gap-1">
         <select
-          value={chosenSkill?.name ?? ""}
+          value={skillName}
           onChange={(event) => setSkillName(event.target.value)}
-          disabled={rows.skills.length === 0}
           title={
             rows.skills.length > 0
-              ? "Навык листа для проверки"
-              : "Нет листа с навыками: откройте свой лист персонажа"
+              ? "Навыки листа с рангами: бонус = характеристика + 2 за ступень ранга"
+              : "У листа нет навыков с рангом — проверка пойдёт без навыка"
           }
-          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 outline-none transition focus:border-emerald-400/60 disabled:opacity-50"
+          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-300 outline-none transition focus:border-emerald-400/60"
         >
-          {chosenSkill ? null : <option value="">Навык</option>}
+          <option value="">без навыка</option>
           {rows.skills.map((skill) => (
             <option key={skill.name} value={skill.name}>
-              {`${skill.name} ${modText(skill.bonus) || "+0"}`}
+              {`${skill.name} · ${skill.rank} · ${modText(skill.bonus) || "+0"}`}
             </option>
           ))}
         </select>
         <button
           type="button"
           onClick={addSkillCheck}
-          disabled={!chosenSkill}
           title={
             chosenSkill
-              ? `${chosenSkill.name}: 1d20${modText(chosenSkill.bonus)} — подставить в поле`
-              : "Сначала нужен лист с навыками"
+              ? `${chosenSkill.name}, ранг ${chosenSkill.rank}: 1d20${modText(chosenSkill.bonus)} — из них ${modText(chosenSkill.rankBonus) || "+0"} за ранг — подставить в поле`
+              : "Без навыка: голый 1d20 — модификатор характеристики добавит кнопка СИЛ/ЛОВ"
           }
-          className="shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200 disabled:opacity-40"
+          className="shrink-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200"
         >
           Бросок
         </button>
@@ -328,7 +392,7 @@ export function Composer({ disabled, checks, characterName, onSend }: ComposerPr
           Очистить
         </button>
         <span className="min-w-0 flex-1 truncate">
-          {characterName ? `проверки по листу «${characterName}»` : "проверки: откройте свой лист"}
+          {character ? `проверки по листу «${character.name}»` : "проверки: откройте свой лист"}
         </span>
         <span className="shrink-0 text-[11px] text-emerald-300/80">
           {preview ? `Бросок: ${preview}` : ""}

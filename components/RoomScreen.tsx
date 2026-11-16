@@ -648,6 +648,9 @@ export default function RoomScreen({ code }: { code: string }) {
     abilityMod: typeof import("@/lib/rules").abilityMod;
     statValue: typeof import("@/lib/rules").statValue;
     skillBonus: typeof import("@/lib/rules").skillBonus;
+    skillAvailable: typeof import("@/lib/rules").skillAvailable;
+    rankBonus: typeof import("@/lib/rules").rankBonus;
+    rankLabel: typeof import("@/lib/rules").rankLabel;
   } | null>(null);
 
   useEffect(() => {
@@ -660,6 +663,9 @@ export default function RoomScreen({ code }: { code: string }) {
           abilityMod: mod.abilityMod,
           statValue: mod.statValue,
           skillBonus: mod.skillBonus,
+          skillAvailable: mod.skillAvailable,
+          rankBonus: mod.rankBonus,
+          rankLabel: mod.rankLabel,
         });
       })
       .catch(() => undefined);
@@ -679,6 +685,12 @@ export default function RoomScreen({ code }: { code: string }) {
     return mine[0] ?? null;
   }, [characters, focusCharacter, me]);
 
+  /**
+   * Ряды проверок: характеристики листа и его навыки с рангами. В список
+   * навыков идут только взятые (ранг I–V) и доступные по характеристике —
+   * чужой каталог сюда не подмешивается. Бонус проверки считает
+   * `skillBonus`: модификатор характеристики навыка + 2 за каждую ступень.
+   */
   const checks = useMemo<ComposerChecks>(() => {
     const stats = checkCharacter?.stats;
     if (!rules || !stats) return { stats: [], skills: [] };
@@ -689,10 +701,16 @@ export default function RoomScreen({ code }: { code: string }) {
         label: def.label,
         mod: rules.abilityMod(rules.statValue(stats, def.key)),
       })),
-      skills: (checkCharacter?.skills ?? []).map((skill) => ({
-        name: skill.name,
-        bonus: rules.skillBonus(skill, stats),
-      })),
+      skills: (checkCharacter?.skills ?? [])
+        .filter(
+          (skill) => skill.rank > 0 && rules.skillAvailable(skill.name, stats),
+        )
+        .map((skill) => ({
+          name: skill.name,
+          rank: rules.rankLabel(skill.rank),
+          bonus: rules.skillBonus(skill, stats),
+          rankBonus: rules.rankBonus(skill.rank),
+        })),
     };
   }, [rules, checkCharacter]);
 
@@ -1234,7 +1252,20 @@ export default function RoomScreen({ code }: { code: string }) {
             connected={connected}
             onDelete={deleteMessage}
           />
-          <Composer checks={checks} characterName={checkCharacter?.name} onSend={send} />
+          {/* Ввод знает, по чьему листу идут проверки: слева от окна стоит
+              аватар этого персонажа, а клик по нему открывает лист. */}
+          <Composer
+            checks={checks}
+            character={
+              checkCharacter
+                ? { name: checkCharacter.name, portrait: checkCharacter.portrait }
+                : null
+            }
+            onOpenCharacter={
+              checkCharacter ? () => openCharacter(checkCharacter.id) : undefined
+            }
+            onSend={send}
+          />
         </aside>
       </div>
 
