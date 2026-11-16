@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from "react";
 import {
+  cloudWord,
   describeDay,
   formatClock,
+  formatMinutes,
   moonPhases,
   partOfDay,
+  precipitationWord,
+  sunTimes,
   weatherAt,
   worldClock,
 } from "@/lib/calendar";
@@ -65,9 +69,17 @@ const WEATHER_ICONS: Record<string, string> = {
 /** Восемь фаз лун по порядку — совпадают с MOON_PHASES в `lib/calendar.ts`. */
 const MOON_ICONS = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
 
-/** Осадки одной строкой: «дождь 4.2 мм» или «сухо». */
-function precipText(precipitation: { kind: string; mm: number } | null): string {
-  return precipitation ? `${precipitation.kind} ${precipitation.mm} мм` : "сухо";
+/** Значок облачности по тем же порогам, что и слово в `cloudWord`. */
+function cloudIcon(cloud: number): string {
+  if (cloud >= 80) return "☁";
+  if (cloud >= 40) return "⛅";
+  if (cloud >= 10) return "🌤";
+  return "☀";
+}
+
+/** «15 ч 10 мин» — сколько длится день от рассвета до заката. */
+function daylightText(minutes: number): string {
+  return `${Math.floor(minutes / 60)} ч ${String(minutes % 60).padStart(2, "0")} мин`;
 }
 
 /** «+26°», «−7°», «0°». */
@@ -95,6 +107,13 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   const weather = weatherAt(clock.day, clock.hour, world.weatherSeed);
   const moons = moonPhases(clock.day);
   const icon = WEATHER_ICONS[weather.key] ?? "🌤";
+  /** Облачность и осадки — словами: проценты и миллиметры на стол не идут. */
+  const cloud = cloudWord(weather.cloud);
+  const precip = precipitationWord(weather.precipitation);
+  const sun = sunTimes(clock.day);
+  const sunTitle = `Рассвет ${formatMinutes(sun.sunrise)}, закат ${formatMinutes(
+    sun.sunset,
+  )} · день длится ${daylightText(sun.daylight)}`;
   const windTitle = `Ветер дует с ${weather.wind.dir}: ${weather.wind.strength}, ${weather.wind.speed}`;
   const moonTitle = moons
     .map((moon) => `${MOON_ICONS[moon.phaseIndex] ?? "🌙"} ${moon.name} — ${moon.phase}`)
@@ -161,12 +180,13 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
         </div>
       </div>
 
-      {/* Погода одной строкой: значок, градусы, ветер, облачность-осадки, луны. Клик — сводка. */}
+      {/* Погода одной строкой: значок, градусы, ветер, облачность и осадки словами,
+          рассвет и закат, луны. Клик — сводка. */}
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        title={open ? "Свернуть сводку погоды" : "Развернуть сводку: температура, ветер, осадки, луны"}
+        title={open ? "Свернуть сводку погоды" : "Развернуть сводку: температура, ветер, осадки, солнце, луны"}
         className="mt-2 flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2 py-1 text-left transition hover:border-sky-500/40 hover:bg-zinc-950/70"
       >
         <span className="text-sm leading-none">{icon}</span>
@@ -181,10 +201,13 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
             {weather.wind.dir}
             <span className="hidden text-zinc-600 sm:inline">{weather.wind.speed}</span>
           </span>
-          <span title={`Облачность ${weather.cloud}%, осадки: ${precipText(weather.precipitation)}`}>
-            {weather.cloud >= 70 ? "☁" : weather.cloud >= 30 ? "⛅" : "☀"} {weather.cloud}%
+          <span title={`Облачность: ${cloud}; осадки: ${precip}`}>
+            {cloudIcon(weather.cloud)} {cloud}
             <span className="text-zinc-600"> · </span>
-            {weather.precipitation ? `💧${weather.precipitation.mm}` : "💧—"}
+            {weather.precipitation ? `💧${precip}` : "💧—"}
+          </span>
+          <span title={sunTitle}>
+            🌅{formatMinutes(sun.sunrise)} 🌇{formatMinutes(sun.sunset)}
           </span>
           <span title={moonTitle} className="tracking-tight">
             {moons.map((moon) => MOON_ICONS[moon.phaseIndex] ?? "🌙").join("")}
@@ -204,15 +227,10 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
               <span className="text-zinc-600"> · размах {weather.high - weather.low}°</span>
             </span>
             <span>
-              Облачность <span className="text-zinc-300">{weather.cloud}%</span>
+              Облачность <span className="text-zinc-300">{cloud}</span>
             </span>
             <span>
-              Осадки:{" "}
-              <span className="text-zinc-300">
-                {weather.precipitation
-                  ? `${weather.precipitation.kind}, ${weather.precipitation.mm} мм за 4 ч`
-                  : "нет"}
-              </span>
+              Осадки: <span className="text-zinc-300">{precip}</span>
             </span>
             <span>
               Ветер:{" "}
@@ -220,6 +238,12 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
                 {weather.wind.dir}, {weather.wind.strength}
               </span>
               <span className="text-zinc-600"> {weather.wind.speed}</span>
+            </span>
+            <span title={sunTitle}>
+              Рассвет <span className="font-mono text-zinc-300">{formatMinutes(sun.sunrise)}</span>
+              <span className="text-zinc-600"> · </span>
+              закат <span className="font-mono text-zinc-300">{formatMinutes(sun.sunset)}</span>
+              <span className="text-zinc-600"> · день {daylightText(sun.daylight)}</span>
             </span>
             <span className="col-span-2 text-zinc-400">{moonTitle}</span>
           </div>

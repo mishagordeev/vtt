@@ -372,6 +372,12 @@ export function formatClock(hour: number, minute: number): string {
   return `${pad2(safeHour)}:${pad2(safeMinute)}`;
 }
 
+/** «05:20» из минут от полуночи — так пишутся рассвет и закат. */
+export function formatMinutes(minutes: number): string {
+  const safe = ((Math.round(minutes) % 1440) + 1440) % 1440;
+  return formatClock(Math.floor(safe / 60), safe % 60);
+}
+
 /** Часть суток: по ней видно, кто что видит и когда меняется стража. */
 export function partOfDay(hour: number): string {
   const safe = ((Math.floor(hour) % 24) + 24) % 24;
@@ -382,6 +388,36 @@ export function partOfDay(hour: number): string {
   if (safe < 18) return "день";
   if (safe < 20) return "закат";
   return "ночь";
+}
+
+/**
+ * Рассвет, закат и долгота дня по номеру дня.
+ *
+ * День растёт от равноденствия к солнцестоянию и убывает к Самому Долгому
+ * Вечеру: самый длинный день — 1 Абу («Высокое Солнце», 120-й день года),
+ * самый короткий — 21 Швата (320-й). Полдень стоит посередине, поэтому
+ * рассвет и закат отстоят от него на равное время; минуты округляются до
+ * пяти, чтобы за столом было удобно говорить «в пять двадцать».
+ */
+export interface SunTimes {
+  /** Минуты от полуночи: 320 — это 05:20. */
+  sunrise: number;
+  sunset: number;
+  /** Долгота дня в минутах — от рассвета до заката. */
+  daylight: number;
+}
+
+export function sunTimes(dayNumber: number): SunTimes {
+  const info = describeDay(dayNumber);
+  const inYear = info.silent
+    ? DAYS_PER_MONTH * MONTHS.length + info.day - 1
+    : (info.month - 1) * DAYS_PER_MONTH + info.day - 1;
+  const swing = Math.sin((2 * Math.PI * (inYear - 20)) / YEAR_DAYS);
+  // 12 часов в равноденствие и ±3,6 часа к солнцестояниям: широта Пограничья.
+  const daylight = Math.round((12 + 3.6 * swing) * 60);
+  const sunrise = Math.round((720 - daylight / 2) / 5) * 5;
+  const sunset = Math.round((720 + daylight / 2) / 5) * 5;
+  return { sunrise, sunset, daylight: sunset - sunrise };
 }
 
 const MOON_PHASES = [
@@ -896,11 +932,51 @@ export interface WeatherInfo {
   /** Климатическая норма суток: ночной минимум и дневной максимум — по ним виден размах. */
   low: number;
   high: number;
-  /** Облачность, % неба. */
+  /** Облачность, % неба: на стол уходит словом (`cloudWord`), процент — для расчёта. */
   cloud: number;
-  /** Осадки за блок в четыре часа; null — сухо. */
+  /** Осадки за блок в четыре часа; null — сухо. На стол — словом (`precipitationWord`). */
   precipitation: Precipitation | null;
   wind: WindInfo;
+}
+
+/**
+ * Облачность словами: за столом не читают проценты, а спрашивают «пасмурно?».
+ * Порог 80% совпадает с видом погоды «Пасмурно», 40–79% — «облачно».
+ */
+export function cloudWord(cloud: number): string {
+  const safe = Number.isFinite(cloud) ? Math.max(0, Math.min(100, cloud)) : 0;
+  if (safe < 10) return "безоблачно";
+  if (safe < 40) return "малооблачно";
+  if (safe < 80) return "облачно";
+  return "пасмурно";
+}
+
+/**
+ * Осадки словами вместо миллиметров: «сухо», «мелкий дождь», «ливень».
+ * Силу задаёт вид осадков и сколько их выпало за блок, но на стол уходит
+ * только слово — миллиметры остаются в расчёте.
+ */
+export function precipitationWord(precipitation: Precipitation | null): string {
+  if (!precipitation) return "сухо";
+  switch (precipitation.kind) {
+    case "дождь":
+      if (precipitation.mm < 1) return "морось";
+      return precipitation.mm < 3 ? "мелкий дождь" : "дождь";
+    case "ливень":
+      return precipitation.mm >= 15 ? "сильный ливень" : "ливень";
+    case "гроза":
+      return "гроза";
+    case "град":
+      return "град";
+    case "снег":
+      return "снег";
+    case "крупа":
+      return "снежная крупа";
+    case "мокрый снег":
+      return "мокрый снег";
+    default:
+      return precipitation.kind;
+  }
 }
 
 /** Быстрый детерминированный генератор: один и тот же день даёт одну погоду. */
@@ -949,7 +1025,8 @@ function round1(value: number): number {
  *
  * Температура считается от средней по месяцу (резко континентальный климат)
  * с суточным ходом и поправкой на погоду; рядом отдаются минимум и максимум
- * суток, облачность в процентах и осадки в миллиметрах за блок.
+ * суток, облачность и осадки за блок. На стол облачность и осадки идут словами
+ * (`cloudWord`, `precipitationWord`), проценты и миллиметры остаются здесь.
  */
 export function weatherAt(dayNumber: number, hour: number, seed = 0): WeatherInfo {
   const info = describeDay(dayNumber);

@@ -17,18 +17,22 @@ import {
   WEEKDAYS,
   YEAR_DAYS,
   clampYear,
+  cloudWord,
   composeBirth,
   dayIndex,
   describeDay,
   describeClock,
   formatBirth,
   formatClock,
+  formatMinutes,
   monthCells,
   moonPhases,
   natalChart,
   parseBirth,
   partOfDay,
+  precipitationWord,
   silentDayIndex,
+  sunTimes,
   weatherAt,
   worldClock,
 } from "../lib/calendar.ts";
@@ -338,5 +342,64 @@ test("день рождения собирается из половин, тол
   assert.equal(composeBirth("31", "4"), "");
   assert.equal(composeBirth("14", "13"), "");
   assert.equal(composeBirth("14.03", "4"), "");
+});
+
+test("погода: облачность и осадки называются словами, без процентов и миллиметров", () => {
+  assert.equal(cloudWord(0), "безоблачно");
+  assert.equal(cloudWord(9), "безоблачно");
+  assert.equal(cloudWord(10), "малооблачно");
+  assert.equal(cloudWord(39), "малооблачно");
+  assert.equal(cloudWord(40), "облачно");
+  assert.equal(cloudWord(79), "облачно");
+  assert.equal(cloudWord(80), "пасмурно");
+  assert.equal(cloudWord(100), "пасмурно");
+
+  assert.equal(precipitationWord(null), "сухо");
+  assert.equal(precipitationWord({ kind: "дождь", mm: 0.4 }), "морось");
+  assert.equal(precipitationWord({ kind: "дождь", mm: 2.2 }), "мелкий дождь");
+  assert.equal(precipitationWord({ kind: "дождь", mm: 5 }), "дождь");
+  assert.equal(precipitationWord({ kind: "ливень", mm: 9 }), "ливень");
+  assert.equal(precipitationWord({ kind: "ливень", mm: 18 }), "сильный ливень");
+  assert.equal(precipitationWord({ kind: "гроза", mm: 8 }), "гроза");
+  assert.equal(precipitationWord({ kind: "град", mm: 6 }), "град");
+  assert.equal(precipitationWord({ kind: "снег", mm: 3 }), "снег");
+  assert.equal(precipitationWord({ kind: "крупа", mm: 5 }), "снежная крупа");
+  assert.equal(precipitationWord({ kind: "мокрый снег", mm: 2 }), "мокрый снег");
+
+  // На стол уходит только слово: ни процентов, ни миллиметров в нём нет.
+  for (let day = 0; day < YEAR_DAYS; day += 7) {
+    for (const hour of [0, 6, 12, 18]) {
+      const weather = weatherAt(day, hour, 3);
+      assert.doesNotMatch(cloudWord(weather.cloud), /\d|%/);
+      assert.doesNotMatch(precipitationWord(weather.precipitation), /\d|мм/);
+    }
+  }
+});
+
+test("солнце: рассвет и закат по календарю, день длиннее в Абу и короче в Швате", () => {
+  const summer = sunTimes(dayIndex(FIRST_YEAR, 5, 1));
+  const winter = sunTimes(dayIndex(FIRST_YEAR, 11, 21));
+  const spring = sunTimes(dayIndex(FIRST_YEAR, 1, 21));
+
+  // Самый длинный день — 1 Абу («Высокое Солнце»), самый короткий — 21 Швата.
+  assert.ok(summer.daylight > winter.daylight + 5 * 60);
+  assert.ok(summer.daylight > spring.daylight);
+  assert.ok(winter.daylight < spring.daylight);
+  assert.ok(Math.abs(spring.daylight - 12 * 60) <= 10, "у равноденствия день около 12 часов");
+
+  for (const sun of [summer, winter, spring, sunTimes(364)]) {
+    assert.ok(sun.sunrise >= 0 && sun.sunrise < sun.sunset, "рассвет раньше заката");
+    assert.ok(sun.sunset <= 24 * 60);
+    assert.equal(sun.sunrise % 5, 0, "время округлено до пяти минут");
+    assert.equal(sun.sunset % 5, 0);
+    assert.equal(sun.daylight, sun.sunset - sun.sunrise);
+    // Полдень посередине: рассвет и закат стоят от него на равном удалении.
+    assert.ok(Math.abs(sun.sunrise + sun.sunset - 2 * 720) <= 5);
+  }
+
+  assert.match(formatMinutes(summer.sunrise), /^\d{2}:\d{2}$/);
+  assert.equal(formatMinutes(0), "00:00");
+  assert.equal(formatMinutes(1440), "00:00");
+  assert.equal(formatMinutes(320), "05:20");
 });
 

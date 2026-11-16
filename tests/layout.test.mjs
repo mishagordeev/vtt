@@ -634,4 +634,23 @@ test("часы кампании: дату стола выбирают кален
   );
 });
 
+test("часы кампании: облачность и осадки словами, рассвет и закат на месте", () => {
+  const clock = read("components", "WorldClock.tsx");
+
+  assert.match(clock, /cloudWord\(weather\.cloud\)/, "облачность приходит словом из lib/calendar.ts");
+  assert.match(
+    clock,
+    /precipitationWord\(weather\.precipitation\)/,
+    "осадки приходят словом, а не в миллиметрах",
+  );
+  assert.match(clock, /sunTimes\(clock\.day\)/, "рассвет и закат считаются по номеру дня");
+  assert.match(clock, /🌅\{formatMinutes\(sun\.sunrise\)\}/, "рассвет виден в строке погоды");
+  assert.match(clock, /🌇\{formatMinutes\(sun\.sunset\)\}/, "закат виден в строке погоды");
+  assert.match(clock, /Рассвет <span/, "в раскрытой сводке рассвет назван словом");
+
+  // Процентов облачности и миллиметров осадков на столе больше нет.
+  assert.doesNotMatch(clock, /weather\.cloud\}%/, "облачность в процентах из сводки убрана");
+  assert.doesNotMatch(clock, /precipitation\.mm/, "миллиметры осадков из сводки убраны");
+});
+
 
