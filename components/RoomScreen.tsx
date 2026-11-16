@@ -12,7 +12,7 @@ import {
   portraitKey,
   snapshotQuery,
 } from "@/lib/snapshot";
-import { headIsNewer, watchDelay } from "@/lib/syncWatch";
+import { PRESENCE_ASK_MS, headIsNewer, samePresence, watchDelay } from "@/lib/syncWatch";
 import {
   advanceMarks,
   dropCharacter,
@@ -103,6 +103,12 @@ export default function RoomScreen({ code }: { code: string }) {
   const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * Присутствие из головы комнаты: имя → когда игрок последний раз спрашивал
+   * стол (время сервера). Документ комнаты при спокойном просмотре не пишется,
+   * поэтому без головы панель считала офлайном того, кто просто смотрит карту.
+   */
+  const [presence, setPresence] = useState<Record<string, number>>({});
   /** Повтор чтения комнаты у баннера ошибки: кнопка показывает, что запрос идёт. */
   const [retryLoadBusy, setRetryLoadBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -165,6 +171,12 @@ export default function RoomScreen({ code }: { code: string }) {
    * сразу после ответа и не запускает вторую перечитку из-за устаревшего состояния.
    */
   const roomRevRef = useRef(0);
+  /**
+   * Когда голова последний раз называла этого игрока. Имя шлём не на каждой
+   * проверке (каждые 3–8 с), а раз в `PRESENCE_ASK_MS`: сервер всё равно пишет
+   * присутствие не чаще раза в 20 секунд, а чтение ключа `seen` — лишняя команда.
+   */
+  const presenceAskedAtRef = useRef(0);
   /** Когда стол последний раз менялся или игрок что-то делал: от этого — шаг опроса. */
   const lastChangeAtRef = useRef(Date.now());
   /** Чтение комнаты уже идёт: параллельный `/state` не нужен — метки бы разъехались. */
@@ -332,17 +344,33 @@ export default function RoomScreen({ code }: { code: string }) {
    * `changed` — номер вырос, комнату пора перечитать; `failed` — сеть или сервер
    * не ответили (опрос уйдёт на паузу, баннер ошибки не показываем: следующий
    * шаг — сама проверка, а не кнопка «Повторить»).
+   *
+   * Раз в `PRESENCE_ASK_MS` проверка называет себя (`?name=`): сервер отмечает
+   * присутствие в боковом ключе и возвращает всех, кто был в голове за последние
+   * пять минут. Иначе игрок, который только читает стол, ничего не пишет в
+   * документ комнаты — и через минуту панель показывала его офлайном.
    */
-  const checkHead = useCallback(async (): Promise<"changed" | "idle" | "failed"> => {
+  const checkHead = useCallback(async (): Promise<{
+    state: "changed" | "idle" | "failed";
+    /** Присутствие: пришло вместе с головой; `null` — имя не спрашивали. */
+    seen: Record<string, number> | null;
+  }> => {
     try {
-      // Без `name`: присутствие не спрашиваем, поэтому ответ стоит одного ключа.
-      const head = await api<RoomHead>(`/api/rooms/${code}/rev`, undefined, {
-        timeoutMs: 8_000,
-      });
-      return headIsNewer(head.rev, roomRevRef.current) ? "changed" : "idle";
+      const name = meRef.current.trim();
+      const ask = name.length > 0 && Date.now() - presenceAskedAtRef.current >= PRESENCE_ASK_MS;
+      if (ask) presenceAskedAtRef.current = Date.now();
+      const head = await api<RoomHead>(
+        `/api/rooms/${code}/rev${ask ? `?name=${encodeURIComponent(name)}` : ""}`,
+        undefined,
+        { timeoutMs: 8_000 },
+      );
+      return {
+        state: headIsNewer(head.rev, roomRevRef.current) ? "changed" : "idle",
+        seen: ask ? head.seen ?? {} : null,
+      };
     } catch (error) {
       if (error instanceof AppError && error.status === 404) setPhase("missing");
-      return "failed";
+      return { state: "failed", seen: null };
     }
   }, [code]);
 
@@ -368,6 +396,8 @@ export default function RoomScreen({ code }: { code: string }) {
         window.localStorage.setItem(nameKey(code), name);
         window.localStorage.setItem("pp:name", name);
         meRef.current = name;
+        // Новое имя отметится в голове на первой же проверке, не дожидаясь окна.
+        presenceAskedAtRef.current = 0;
         setMe(name);
         setPhase("room");
         await load();
@@ -524,9 +554,13 @@ export default function RoomScreen({ code }: { code: string }) {
     const tick = async () => {
       if (!alive) return;
       if (document.visibilityState === "visible") {
-        const state = await checkHead();
-        failures = state === "failed" ? failures + 1 : 0;
-        if (state === "changed") {
+        const head = await checkHead();
+        failures = head.state === "failed" ? failures + 1 : 0;
+        // Присутствие пришло вместе с головой: кладём его, только если оно
+        // изменилось, — иначе каждая проверка перерисовывала бы весь стол.
+        const seen = head.seen;
+        if (seen) setPresence((prev) => (samePresence(prev, seen) ? prev : seen));
+        if (head.state === "changed") {
           // Стол ожил: следующие проверки идут частым шагом.
           lastChangeAtRef.current = Date.now();
           await load();
@@ -932,6 +966,7 @@ export default function RoomScreen({ code }: { code: string }) {
       const wasMe = target.trim().toLowerCase() === meRef.current.trim().toLowerCase();
       if (wasMe && result.renamedTo !== meRef.current) {
         meRef.current = result.renamedTo;
+        presenceAskedAtRef.current = 0;
         setMe(result.renamedTo);
         window.localStorage.setItem(nameKey(code), result.renamedTo);
         window.localStorage.setItem("pp:name", result.renamedTo);
@@ -1000,8 +1035,10 @@ export default function RoomScreen({ code }: { code: string }) {
     meRef.current = "";
     syncRef.current = emptySnapshotRequest();
     roomRevRef.current = 0;
+    presenceAskedAtRef.current = 0;
     lastChangeAtRef.current = Date.now();
     setRoomRev(0);
+    setPresence({});
     animatedRollsRef.current = new Set();
     setLastSyncAt(0);
     setDiceQueue([]);
@@ -1272,6 +1309,8 @@ export default function RoomScreen({ code }: { code: string }) {
         me={me}
         gm={gm}
         characters={characters}
+        presence={presence}
+        clockSkew={clockOffset}
         onOpenProfile={(name) => setProfileFor(name)}
       />
 

@@ -11,6 +11,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  PRESENCE_ASK_MS,
   WATCH_FAST_MS,
   WATCH_FRESH_MS,
   WATCH_HIDDEN_MS,
@@ -18,6 +19,9 @@ import {
   WATCH_RETRY_MAX_MS,
   WATCH_RETRY_MS,
   headIsNewer,
+  playerSeenAt,
+  presenceIndex,
+  samePresence,
   watchDelay,
 } from "../lib/syncWatch.ts";
 
@@ -81,31 +85,85 @@ test("голова новее только когда номер изменен�
 });
 
 
+test("присутствие из головы: кто за столом, даже если документ комнаты молчит", () => {
+  assert.equal(
+    PRESENCE_ASK_MS,
+    20_000,
+    "имя в голове называется не чаще серверного окна присутствия",
+  );
+
+  const index = presenceIndex({
+    " Луна ": 500,
+    "луна": 900,
+    "Миша": 0,
+    "": 700,
+    bad: Number.NaN,
+  });
+  assert.deepEqual(
+    [...index.entries()],
+    [["луна", 900]],
+    "имя без учёта регистра и пробелов, мусор мимо",
+  );
+
+  assert.equal(
+    playerSeenAt({ name: "Луна", lastSeen: 0 }, index),
+    900,
+    "молчащий игрок в сети по голове, а не офлайн по пустому lastSeen",
+  );
+  assert.equal(
+    playerSeenAt({ name: "Луна", lastSeen: 1200 }, index),
+    1200,
+    "свежая запись документа главнее головы",
+  );
+  assert.equal(
+    playerSeenAt({ name: "Миша", lastSeen: 300 }, index),
+    300,
+    "без присутствия в голове остаётся время из документа",
+  );
+  assert.equal(
+    playerSeenAt({ name: "Миша", lastSeen: Number.NaN }, presenceIndex(null)),
+    0,
+    "мусор вместо времени — «ещё не заходил»",
+  );
+
+  const one = { Луна: 100 };
+  assert.equal(samePresence(one, { Луна: 100 }), true, "то же присутствие не перерисовывает стол");
+  assert.equal(samePresence(one, { Луна: 101 }), false, "новое время — повод перерисовать");
+  assert.equal(samePresence(one, {}), false, "ушедший игрок тоже виден");
+});
+
+
 test("RoomScreen спрашивает голову и читает комнату только при росте номера", () => {
   const room = read("components", "RoomScreen.tsx");
 
   assert.match(
     room,
-    /import \{ headIsNewer, watchDelay \} from "@\/lib\/syncWatch";/,
-    "расписание опроса берётся из lib/syncWatch.ts",
+    /import \{ PRESENCE_ASK_MS, headIsNewer, samePresence, watchDelay \} from "@\/lib\/syncWatch";/,
+    "расписание опроса и присутствие берутся из lib/syncWatch.ts",
   );
   assert.match(
     room,
-    /const head = await api<RoomHead>\(`\/api\/rooms\/\$\{code\}\/rev`, undefined, \{/,
+    /const head = await api<RoomHead>\(\s*`\/api\/rooms\/\$\{code\}\/rev\$\{ask \? `\?name=\$\{encodeURIComponent\(name\)\}` : ""\}`/,
     "клиент спрашивает маленькую голову, а не снимок",
   );
-  assert.ok(
-    !/\/rev\?name=/.test(room),
-    "живой опрос не тянет присутствие: без name голова стоит одного ключа",
+  assert.match(
+    room,
+    /Date\.now\(\) - presenceAskedAtRef\.current >= PRESENCE_ASK_MS/,
+    "имя шлётся раз в 20 с, а не на каждой проверке",
   );
   assert.match(
     room,
-    /return headIsNewer\(head\.rev, roomRevRef\.current\) \? "changed" : "idle";/,
+    /if \(seen\) setPresence\(\(prev\) => \(samePresence\(prev, seen\) \? prev : seen\)\);/,
+    "присутствие не перерисовывает стол, если не изменилось",
+  );
+  assert.match(
+    room,
+    /state: headIsNewer\(head\.rev, roomRevRef\.current\) \? "changed" : "idle",/,
     "решение «читать комнату» принимается по номеру изменения",
   );
   assert.match(
     room,
-    /if \(state === "changed"\) \{[\s\S]{0,200}await load\(\);/,
+    /if \(head\.state === "changed"\) \{[\s\S]{0,200}await load\(\);/,
     "комната читается только при выросшем номере",
   );
   assert.match(
@@ -115,7 +173,7 @@ test("RoomScreen спрашивает голову и читает комнат�
   );
   assert.match(
     room,
-    /if \(document\.visibilityState === "visible"\) \{[\s\S]{0,200}const state = await checkHead\(\);/,
+    /if \(document\.visibilityState === "visible"\) \{[\s\S]{0,200}const head = await checkHead\(\);/,
     "в фоновой вкладке запросов нет",
   );
   assert.match(
@@ -149,8 +207,8 @@ test("своё действие делает стол живым, а чтени�
   );
   assert.match(
     room,
-    /roomRevRef\.current = 0;\s*lastChangeAtRef\.current = Date\.now\(\);/,
-    "смена имени начинает синхронизацию заново",
+    /roomRevRef\.current = 0;\s*presenceAskedAtRef\.current = 0;\s*lastChangeAtRef\.current = Date\.now\(\);/,
+    "смена имени начинает синхронизацию заново и сразу отмечает новое имя",
   );
 });
 

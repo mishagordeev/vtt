@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { initials } from "@/lib/client";
+import { playerSeenAt, presenceIndex } from "@/lib/syncWatch";
 import type { Character, Player } from "@/lib/types";
 
 interface PlayersBarProps {
@@ -13,6 +14,14 @@ interface PlayersBarProps {
   gm: string;
   /** Листы комнаты: по ним в подсказке видно, кто каким героем играет. */
   characters: Character[];
+  /**
+   * Присутствие из головы комнаты: имя → когда игрок последний раз спрашивал
+   * стол (время сервера). Документ комнаты пишется только действиями, поэтому
+   * по одному `lastSeen` молчащий игрок выглядел бы офлайном.
+   */
+  presence?: Record<string, number>;
+  /** Насколько часы сервера впереди наших: присутствие живёт по времени сервера. */
+  clockSkew?: number;
   /** Открыть профиль игрока: имя, цвет и привязанные листы. */
   onOpenProfile: (name: string) => void;
 }
@@ -39,11 +48,27 @@ function seenText(lastSeen: number, now: number): string {
  *
  * Раньше список жил под картой в `DeskPanel` и занимал там целый блок. Теперь это
  * одна полоса от края до края: имя, инициалы на цвете профиля, метки «м» и «вы»,
- * а у тех, кто сейчас за столом, — зелёная точка. Точка гаснет сама через минуту
- * без нового присутствия, поэтому строка пересчитывается по таймеру, а не только
- * на ответ комнаты. Клик по игроку, как и раньше, открывает профиль.
+ * а у тех, кто сейчас за столом, — залитая зелёная точка; у офлайна точка пустая,
+ * только обводка, и в подсказке видно, когда он был в последний раз.
+ *
+ * Признак «в сети» складывается из двух времён: `lastSeen` из документа комнаты
+ * (его двигают вход, бросок и правки) и присутствие из головы `/rev` — его живой
+ * опрос отмечает раз в 20 секунд, даже когда игрок только смотрит карту. Второе
+ * время главное: без него молчащий игрок через минуту считался офлайном, включая
+ * самого себя. Точка гаснет сама через минуту без нового присутствия, поэтому
+ * строка пересчитывается по таймеру, а не только на ответ комнаты. Часы сервера
+ * впереди наших на `clockSkew` — присутствие живёт по ним. Клик по игроку, как
+ * и раньше, открывает профиль.
  */
-export function PlayersBar({ players, me, gm, characters, onOpenProfile }: PlayersBarProps) {
+export function PlayersBar({
+  players,
+  me,
+  gm,
+  characters,
+  presence,
+  clockSkew = 0,
+  onOpenProfile,
+}: PlayersBarProps) {
   const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
@@ -51,7 +76,12 @@ export function PlayersBar({ players, me, gm, characters, onOpenProfile }: Playe
     return () => clearInterval(id);
   }, []);
 
-  const online = players.filter((player) => now - player.lastSeen < ONLINE_WINDOW);
+  // Времена присутствия серверные: поправка часов не даёт «офлайну» появиться
+  // из-за того, что наши часы отстают на пару минут.
+  const clock = now + clockSkew;
+  const presenceAt = presenceIndex(presence);
+  const seenAt = (player: Player) => playerSeenAt(player, presenceAt);
+  const online = players.filter((player) => clock - seenAt(player) < ONLINE_WINDOW);
 
   return (
     <section className="shrink-0 border-t border-zinc-800/80 bg-zinc-950/90 text-[11px] backdrop-blur">
@@ -62,14 +92,15 @@ export function PlayersBar({ players, me, gm, characters, onOpenProfile }: Playe
         {players.length > 0 ? (
           <span
             className="hidden shrink-0 font-mono text-[10px] text-zinc-500 sm:inline"
-            title="Игрок в сети, если его присутствие обновлялось меньше минуты назад"
+            title="Игрок в сети, если его присутствие обновлялось меньше минуты назад — действием в комнате или живым опросом головы"
           >
             в сети {online.length} из {players.length}
           </span>
         ) : null}
         <ul className="scroll-thin flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
           {players.map((player) => {
-            const isOnline = now - player.lastSeen < ONLINE_WINDOW;
+            const lastSeen = seenAt(player);
+            const isOnline = clock - lastSeen < ONLINE_WINDOW;
             const isGM = player.name.trim().toLowerCase() === gm.trim().toLowerCase();
             const isMe = player.name.trim().toLowerCase() === me.trim().toLowerCase();
             const linked = (player.characterIds ?? [])
@@ -79,7 +110,7 @@ export function PlayersBar({ players, me, gm, characters, onOpenProfile }: Playe
               player.name,
               isGM ? "мастер" : "",
               isMe ? "вы" : "",
-              isOnline ? "в сети" : `офлайн · ${seenText(player.lastSeen, now)}`,
+              isOnline ? "в сети" : `офлайн · ${seenText(lastSeen, clock)}`,
               linked.length > 0 ? `листы: ${linked.join(", ")}` : "",
               "клик — профиль",
             ]
@@ -116,11 +147,17 @@ export function PlayersBar({ players, me, gm, characters, onOpenProfile }: Playe
                       вы
                     </span>
                   ) : null}
+                  {/* В сети — залитая точка, офлайн — пустой кружок: по одной
+                      обводке видно, что человек не за столом, даже боковым зрением.
+                      Обводка чуть светлее панели в тёмной теме и темнее в светлой
+                      (`zinc-400`), иначе 6-пиксельный кружок на обоих фонах теряется. */}
                   <span
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                      isOnline ? "bg-emerald-400" : "bg-zinc-700"
+                      isOnline
+                        ? "bg-emerald-400"
+                        : "border border-zinc-400 bg-transparent"
                     }`}
-                    title={isOnline ? "в сети" : `офлайн · ${seenText(player.lastSeen, now)}`}
+                    title={isOnline ? "в сети" : `офлайн · ${seenText(lastSeen, clock)}`}
                     aria-hidden
                   />
                 </button>

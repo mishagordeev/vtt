@@ -505,16 +505,31 @@ test("нижняя плашка стола: игроки отдельной ст
   assert.match(bar, /const ONLINE_WINDOW = 60_000/, "в сети — присутствие моложе минуты");
   assert.match(
     bar,
-    /now - player\.lastSeen < ONLINE_WINDOW/,
+    /const clock = now \+ clockSkew;/,
+    "присутствие сверяется по часам сервера, а не по локальным",
+  );
+  assert.match(
+    bar,
+    /players\.filter\(\(player\) => clock - seenAt\(player\) < ONLINE_WINDOW\)/,
     "онлайн считается по последнему присутствию игрока",
+  );
+  assert.match(
+    bar,
+    /playerSeenAt\(player, presenceAt\)/,
+    "присутствие из головы комнаты главнее lastSeen из документа",
   );
   assert.match(
     bar,
     /setInterval\(\(\) => setNow\(Date\.now\(\)\), TICK_MS\)/,
     "точка гаснет сама, даже если комната молчит",
   );
-  assert.match(bar, /bg-emerald-400/, "в сети — зелёная точка");
-  assert.match(bar, /bg-zinc-700/, "офлайн — серая точка");
+  assert.match(bar, /bg-emerald-400/, "в сети — залитая зелёная точка");
+  assert.match(
+    bar,
+    /border border-zinc-400 bg-transparent/,
+    "офлайн — пустой кружок, только обводка (цвет контрастен обеим темам)",
+  );
+  assert.ok(!/bg-zinc-700/.test(bar), "офлайн больше не залит серым — это незаполненный кружок");
   assert.match(bar, /pp-on-player/, "инициалы на цвете профиля игрока");
   assert.match(
     bar,
@@ -523,8 +538,18 @@ test("нижняя плашка стола: игроки отдельной ст
   );
   assert.match(
     bar,
-    /seenText\(player\.lastSeen, now\)/,
+    /seenText\(lastSeen, clock\)/,
     "у офлайна видно, когда он был в последний раз",
+  );
+  assert.match(
+    room,
+    /<PlayersBar[\s\S]{0,300}presence=\{presence\}/,
+    "панель получает присутствие из головы комнаты",
+  );
+  assert.match(
+    room,
+    /<PlayersBar[\s\S]{0,400}clockSkew=\{clockOffset\}/,
+    "и поправку часов сервера: присутствие живёт по его времени",
   );
   assert.match(bar, /max-w-\[9rem\] truncate/, "длинные имена не растягивают строку");
   assert.match(bar, /Пока никого/, "пустой стол подписан");
