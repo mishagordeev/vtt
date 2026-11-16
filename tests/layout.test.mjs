@@ -619,6 +619,19 @@ test("часы кампании: дату стола выбирают кален
   assert.match(picker, /disabled=\{!canPick\}/, "дату выбирает только мастер");
   assert.match(picker, /onPick\(cell\.index\)/, "клик по дню отдаёт номер дня от начала календаря");
   assert.match(picker, /cell\.holiday/, "праздники видны в сетке");
+
+  assert.match(clock, /minutes\?: number/, "у сдвига бывают и минуты, а не только часы");
+  assert.match(
+    clock,
+    /label: "\+10 мин", minutes: 10/,
+    "мелкий шаг в десять минут — для разговора и короткого перехода",
+  );
+  assert.match(clock, /label: "\+4 ч", hours: 4/, "четыре часа вперёд — половина стражи");
+  assert.match(
+    clock,
+    /action: "advance", hours: shift\.hours, minutes: shift\.minutes/,
+    "и часы, и минуты уходят в то же действие advance",
+  );
 });
 
 

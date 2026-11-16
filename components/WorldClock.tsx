@@ -21,10 +21,17 @@ interface WorldClockProps {
   onAction: (payload: Record<string, unknown>) => Promise<WorldState | null>;
 }
 
-/** Кнопки мастера: сдвиг времени и переброс погоды. */
-const SHIFTS: { label: string; hours?: number; title: string }[] = [
+/**
+ * Кнопки мастера: сдвиг времени и переброс погоды.
+ *
+ * Часы и минуты — то же действие `advance`: сервер складывает их и переносит
+ * лишнее в следующий день, поэтому шаг «+10 мин» и «+4 ч» ничего не ломают.
+ */
+const SHIFTS: { label: string; hours?: number; minutes?: number; title: string }[] = [
   { label: "−1 ч", hours: -1, title: "Отмотать час назад" },
+  { label: "+10 мин", minutes: 10, title: "Десять минут вперёд: разговор, поиск, короткий переход" },
   { label: "+1 ч", hours: 1, title: "Час вперёд" },
+  { label: "+4 ч", hours: 4, title: "Полсмены: четыре часа вперёд" },
   { label: "+8 ч", hours: 8, title: "Смена стражи: восемь часов вперёд" },
   { label: "+1 день", hours: 24, title: "Следующий день, то же время" },
 ];
@@ -238,7 +245,9 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
               type="button"
               disabled={busy}
               title={shift.title}
-              onClick={() => void act({ action: "advance", hours: shift.hours })}
+              onClick={() =>
+                void act({ action: "advance", hours: shift.hours, minutes: shift.minutes })
+              }
               className="rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200 disabled:opacity-40"
             >
               {shift.label}
