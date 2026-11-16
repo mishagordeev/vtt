@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { initials } from "@/lib/client";
-import type { Character, MapState, Player, StorageHealth, WorldState } from "@/lib/types";
+import type { Character, MapState, StorageHealth, WorldState } from "@/lib/types";
 import { MapBoard } from "./MapBoard";
 import { WorldClock } from "./WorldClock";
 
@@ -10,7 +9,6 @@ interface DeskPanelProps {
   code: string;
   me: string;
   gm: string;
-  players: Player[];
   characters: Character[];
   map: MapState;
   /** Часы кампании и погода. */
@@ -21,11 +19,7 @@ interface DeskPanelProps {
   myColor?: string;
   onMapAction: (payload: Record<string, unknown>) => Promise<MapState | null>;
   onWorldAction: (payload: Record<string, unknown>) => Promise<WorldState | null>;
-  /** Открыть профиль игрока: цвет и привязанные персонажи. */
-  onOpenProfile: (name: string) => void;
 }
-
-const ONLINE_WINDOW = 60_000;
 
 /** Как показать режим хранилища: цвет точки, подпись и подсказку. */
 function describeStorage(storage: StorageHealth | null): {
@@ -87,7 +81,6 @@ export function DeskPanel({
   code,
   me,
   gm,
-  players,
   characters,
   map,
   world,
@@ -95,16 +88,9 @@ export function DeskPanel({
   myColor,
   onMapAction,
   onWorldAction,
-  onOpenProfile,
 }: DeskPanelProps) {
-  const [now, setNow] = useState<number>(() => Date.now());
   const [copied, setCopied] = useState(false);
   const [storage, setStorage] = useState<StorageHealth | null>(null);
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     if (!copied) return;
@@ -180,74 +166,6 @@ export function DeskPanel({
               Хранилище: <span className="text-zinc-400">{storageBadge.label}</span>
             </p>
           </div>
-        </section>
-
-        <section className="space-y-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-            За столом
-          </h2>
-          <ul className="space-y-1.5">
-            {players.map((player) => {
-              const online = now - player.lastSeen < ONLINE_WINDOW;
-              const isGM = player.name.toLowerCase() === gm.toLowerCase();
-              const isMe = player.name.toLowerCase() === me.toLowerCase();
-              const linked = (player.characterIds ?? [])
-                .map((id) => characters.find((character) => character.id === id)?.name)
-                .filter(Boolean);
-              return (
-                <li key={player.name}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenProfile(player.name)}
-                    className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition hover:border-emerald-400/50 ${
-                      isMe
-                        ? "border-emerald-500/40 bg-emerald-500/5"
-                        : "border-zinc-800/70 bg-zinc-900/40"
-                    }`}
-                    title="Открыть профиль игрока"
-                  >
-                    <span
-                      className="pp-on-player flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
-                      style={{ backgroundColor: player.color || "#8a6a2f" }}
-                    >
-                      {initials(player.name)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate text-sm text-zinc-200">{player.name}</span>
-                        {isGM ? (
-                          <span className="rounded bg-amber-500/15 px-1 text-[10px] uppercase text-amber-300">
-                            м
-                          </span>
-                        ) : null}
-                        {isMe ? (
-                          <span className="rounded bg-emerald-500/15 px-1 text-[10px] uppercase text-emerald-200">
-                            вы
-                          </span>
-                        ) : null}
-                      </span>
-                      {linked.length > 0 ? (
-                        <span className="block truncate text-[10px] text-zinc-500">
-                          {linked.join(" · ")}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        online ? "bg-emerald-400" : "bg-zinc-700"
-                      }`}
-                      title={online ? "в сети" : "офлайн"}
-                    />
-                  </button>
-                </li>
-              );
-            })}
-            {players.length === 0 ? <li className="text-xs text-zinc-600">Пока никого.</li> : null}
-          </ul>
-          <p className="text-[10px] leading-relaxed text-zinc-600">
-            Клик по игроку открывает профиль: имя, цвет и привязанные листы. Персонажи — в правой
-            панели, полный список листов — кнопка «Все» там же.
-          </p>
         </section>
       </div>
     </div>

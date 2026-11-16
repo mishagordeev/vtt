@@ -36,6 +36,7 @@ import { MusicHost } from "./MusicHost";
 import { MusicPanel } from "./MusicPanel";
 import { MusicPlaylist } from "./MusicPlaylist";
 import { PlayerProfile } from "./PlayerProfile";
+import { PlayersBar } from "./PlayersBar";
 import { RoomsMemory } from "./RoomsMemory";
 import { SheetDialog } from "./SheetDialog";
 import { TopBar } from "./TopBar";
@@ -1142,7 +1143,7 @@ export default function RoomScreen({ code }: { code: string }) {
           порядке (сначала панель с чатом и вводом, ниже — карта), и прокрутка
           одна, по документу: двум независимым областям на телефоне тесно. */}
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
-        {/* Стол виден всегда: карта, часы и игроки не исчезают при правках, а лист
+        {/* Стол виден всегда: карта и часы не исчезают при правках, а лист
             и музыка открываются левой панелью до правой панели — чат, персонажи
             и кубики остаются под рукой. */}
         <section className="scroll-thin min-h-[60vh] lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
@@ -1150,7 +1151,6 @@ export default function RoomScreen({ code }: { code: string }) {
             code={code}
             me={me}
             gm={gm}
-            players={players}
             characters={characters}
             map={map}
             world={world}
@@ -1158,7 +1158,6 @@ export default function RoomScreen({ code }: { code: string }) {
             myColor={myColor}
             onMapAction={mapAction}
             onWorldAction={worldAction}
-            onOpenProfile={(name) => setProfileFor(name)}
           />
         </section>
 
@@ -1264,6 +1263,18 @@ export default function RoomScreen({ code }: { code: string }) {
           onClose={() => setProfileFor(null)}
         />
       ) : null}
+
+      {/* Нижняя плашка стола: кто за столом и кто из них сейчас в сети —
+          отдельной строкой. У мастера под ней идёт его диагностика, поэтому
+          у обоих одна ширина и одна рамка сверху. Список переехал сюда
+          из-под карты: там он занимал блок, а под рукой нужен всегда. */}
+      <PlayersBar
+        players={players}
+        me={me}
+        gm={gm}
+        characters={characters}
+        onOpenProfile={(name) => setProfileFor(name)}
+      />
 
       <DebugPanel
         code={code}

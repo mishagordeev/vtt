@@ -104,7 +104,7 @@ test("буквы на цвете игрока не зависят от темы"
     /\.pp-on-player \{\s*color: #f5ecd6;/,
     "текст на кружке игрока — светлый пергамент в обеих темах",
   );
-  for (const file of ["DeskPanel.tsx", "PlayerProfile.tsx"]) {
+  for (const file of ["PlayersBar.tsx", "PlayerProfile.tsx"]) {
     const source = read("components", file);
     assert.match(source, /pp-on-player/, `${file}: инициалы на цвете игрока через pp-on-player`);
     assert.ok(

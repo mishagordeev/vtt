@@ -367,6 +367,59 @@ test("верхняя панель комнаты на всю ширину: «В�
 
 
 
+test("нижняя плашка стола: игроки отдельной строкой и пометка «в сети»", () => {
+  const room = read("components", "RoomScreen.tsx");
+  const bar = read("components", "PlayersBar.tsx");
+  const desk = read("components", "DeskPanel.tsx");
+
+  const playersAt = room.indexOf("<PlayersBar");
+  assert.ok(playersAt > 0, "комната рендерит нижнюю плашку с игроками");
+  assert.ok(
+    playersAt < room.indexOf("<DebugPanel"),
+    "строка игроков стоит над тем, что уже было в нижней плашке, — диагностикой мастера",
+  );
+  assert.ok(
+    playersAt > room.indexOf("</aside>"),
+    "плашка идёт после стола и правой панели — значит, полосой внизу",
+  );
+  assert.match(
+    room,
+    /<PlayersBar[\s\S]{0,300}onOpenProfile=\{\(name\) => setProfileFor\(name\)\}/,
+    "клик по игроку открывает профиль, как раньше в списке под картой",
+  );
+  assert.ok(!/За столом/.test(desk), "списка игроков под картой больше нет — он переехал вниз");
+
+  assert.match(bar, /const ONLINE_WINDOW = 60_000/, "в сети — присутствие моложе минуты");
+  assert.match(
+    bar,
+    /now - player\.lastSeen < ONLINE_WINDOW/,
+    "онлайн считается по последнему присутствию игрока",
+  );
+  assert.match(
+    bar,
+    /setInterval\(\(\) => setNow\(Date\.now\(\)\), TICK_MS\)/,
+    "точка гаснет сама, даже если комната молчит",
+  );
+  assert.match(bar, /bg-emerald-400/, "в сети — зелёная точка");
+  assert.match(bar, /bg-zinc-700/, "офлайн — серая точка");
+  assert.match(bar, /pp-on-player/, "инициалы на цвете профиля игрока");
+  assert.match(
+    bar,
+    /в сети \{online\.length\} из \{players\.length\}/,
+    "видно, сколько человек из стола в сети",
+  );
+  assert.match(
+    bar,
+    /seenText\(player\.lastSeen, now\)/,
+    "у офлайна видно, когда он был в последний раз",
+  );
+  assert.match(bar, /max-w-\[9rem\] truncate/, "длинные имена не растягивают строку");
+  assert.match(bar, /Пока никого/, "пустой стол подписан");
+  assert.ok(!/text-zinc-950/.test(bar), "в тёмной теме светлый текст на цвете игрока");
+});
+
+
+
 test("кнопка «Все» в блоке персонажей открывает полный список листов комнаты", () => {
   const room = read("components", "RoomScreen.tsx");
   assert.match(
