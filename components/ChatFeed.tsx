@@ -134,10 +134,15 @@ function MessageRow({
   );
 }
 
+/** Насколько лента может быть недокручена до низа и всё ещё считаться «в конце». */
+const BOTTOM_SLACK = 80;
+
 /**
  * Лента переписки в правой панели комнаты: между списком персонажей и полем
  * ввода. Броски приходят карточкой с отдельными костями и итогом, а на столе
- * тот же бросок выпадает 3d-кубиками.
+ * тот же бросок выпадает 3d-кубиками. Низ ленты держится сам: свой бросок
+ * виден всегда, а смена высоты не прячет последнюю карточку под панелью
+ * с кубиками.
  */
 export function ChatFeed({ messages, me, gm, players, connected, onDelete }: ChatFeedProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -148,10 +153,38 @@ export function ChatFeed({ messages, me, gm, players, connected, onDelete }: Cha
     players.find((player) => player.name.trim().toLowerCase() === author.trim().toLowerCase())
       ?.color ?? "";
 
+  /**
+   * Низ ленты. Свой ход — в том числе бросок — показываем всегда: иначе его
+   * результат остаётся за краем, под панелью с кубиками, потому что игрок
+   * читал историю выше. Чужое сообщение догоняем, только если лента и так
+   * стоит в конце: чтение выше не дёргаем.
+   */
   useEffect(() => {
     const el = listRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    if (!el) return;
+    const last = messages[messages.length - 1];
+    const mine = !!last && last.author.trim().toLowerCase() === me.trim().toLowerCase();
+    if (!stickRef.current && !mine) return;
+    el.scrollTop = el.scrollHeight;
+    stickRef.current = true;
+  }, [messages, me]);
+
+  /**
+   * Высота ленты меняется и без новых строк: окно стало ниже, открылась
+   * экранная клавиатура, вырос соседний блок панели. Низ держим сами — иначе
+   * последняя карточка броска уезжает за край, под панелью с кубиками. Флаг
+   * «стояли внизу» берём прежний: пересчёт приходит уже после новой раскладки,
+   * и по ней видно только новое расстояние до низа.
+   */
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <section className="flex min-h-[24vh] max-h-[45vh] flex-1 flex-col border-t border-zinc-800/80 lg:max-h-none lg:min-h-0">
@@ -170,7 +203,7 @@ export function ChatFeed({ messages, me, gm, players, connected, onDelete }: Cha
         ref={listRef}
         onScroll={(event) => {
           const el = event.currentTarget;
-          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
         }}
         className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pb-3"
       >

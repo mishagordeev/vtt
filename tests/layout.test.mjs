@@ -621,6 +621,39 @@ test("лента: сумма броска крупным числом справ
   assert.match(feed, /players: Player\[\]/, "лента знает игроков стола");
 });
 
+test("лента держит низ: свой бросок и смена высоты не прячут результат под кубиками", () => {
+  const feed = read("components", "ChatFeed.tsx");
+
+  // Порог «стоим в конце» — одна константа, а не число в двух местах.
+  assert.match(feed, /const BOTTOM_SLACK = 80;/, "порог «лента в конце» назван константой");
+  assert.match(
+    feed,
+    /stickRef\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < BOTTOM_SLACK;/,
+    "прокрутка вверх снимает прилипание к низу",
+  );
+
+  // Новое сообщение: своё показываем всегда, чужое — только если лента внизу.
+  assert.match(
+    feed,
+    /const mine = !!last && last\.author\.trim\(\)\.toLowerCase\(\) === me\.trim\(\)\.toLowerCase\(\);/,
+    "свой ход узнаётся по автору последнего сообщения",
+  );
+  assert.match(feed, /if \(!stickRef\.current && !mine\) return;/, "чужое сообщение не дёргает чтение выше");
+  assert.match(feed, /\}, \[messages, me\]\);/, "низ пересчитывается на новые сообщения и смену игрока");
+
+  // Смена высоты без новых строк: окно стало ниже — низ ленты возвращаем сами.
+  const observerAt = feed.indexOf("new ResizeObserver");
+  assert.ok(observerAt > 0, "высота ленты отслеживается: окно, клавиатура, соседние блоки");
+  const observerBlock = feed.slice(observerAt, observerAt + 200);
+  assert.match(
+    observerBlock,
+    /if \(stickRef\.current\) el\.scrollTop = el\.scrollHeight;/,
+    "при смене высоты последняя карточка возвращается на вид",
+  );
+  assert.match(feed, /observer\.observe\(el\);/, "наблюдаем саму ленту, а не окно");
+  assert.match(feed, /return \(\) => observer\.disconnect\(\);/, "наблюдатель снимается вместе с лентой");
+});
+
 test("список персонажей больше не занимает вкладку: лист идёт на всю ширину", () => {
   const panel = read("components", "CharactersPanel.tsx");
   assert.ok(!/h-\[42vh\]/.test(panel), "колонки со списком на вкладке больше нет");
