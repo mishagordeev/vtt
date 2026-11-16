@@ -283,8 +283,8 @@ test("стол виден всегда, а правая панель идёт: �
     !/xl:w-\[480px\]|lg:w-\[440px\]/.test(room),
     "широкие 440/480 px убраны: панель шире ряда кубиков не нужна",
   );
-  // Макет: шапка комнаты живёт в правой панели, стол занимает всю высоту,
-  // а на узком экране колонка с чатом идёт первой.
+  // Макет: верхняя панель на всю ширину идёт над всем столом, стол занимает всю
+  // высоту, а на узком экране колонка с чатом идёт первой.
   assert.match(
     room,
     /flex min-h-0 flex-1 flex-col-reverse lg:flex-row/,
@@ -292,18 +292,20 @@ test("стол виден всегда, а правая панель идёт: �
   );
   assert.match(
     room,
-    /<aside className="[^"]*lg:w-\[352px\][^"]*">\s*\{\/\* pr-11[^\n]*\*\/\}\s*<header className="[^"]*pr-11[^"]*">/,
-    "шапка комнаты — первая строка правой панели, а не полоса над столом",
+    /<aside className="[^"]*lg:w-\[352px\][^"]*">\s*<MusicPlaylist/,
+    "в правой панели шапки больше нет: первой строкой идёт музыка",
   );
   const asideAt = room.indexOf("<aside");
   assert.ok(
     deskAt > 0 && asideAt > deskAt,
     "стол идёт первым в разметке: на широком экране он слева от панели",
   );
+  // Метка «мастер» переехала в верхнюю панель вместе с именем игрока.
+  const bar = read("components", "TopBar.tsx");
   assert.match(
-    room,
+    bar,
     /const isGM = me\.trim\(\)\.length > 0 && me\.trim\(\)\.toLowerCase\(\) === gm\.trim\(\)\.toLowerCase\(\)/,
-    "мастер определяется по имени в комнате",
+    "мастер определяется по имени за столом",
   );
   assert.match(room, /onOpenPanel=\{\(\) => setMusicOpen\(true\)\}/, "музыка открывает свою панель");
   assert.match(
@@ -331,6 +333,39 @@ test("стол виден всегда, а правая панель идёт: �
   assert.match(feed, /Лента переписки/, "чат вернулся в правую панель");
   assert.match(feed, /onDelete/, "своё сообщение можно удалить");
 });
+test("верхняя панель комнаты на всю ширину: «Вторые», сборка, код комнаты, кто за столом, «Выйти» и тема", () => {
+  const room = read("components", "RoomScreen.tsx");
+  const bar = read("components", "TopBar.tsx");
+
+  const barAt = room.indexOf("<TopBar");
+  assert.ok(barAt > 0, "стол рендерит верхнюю панель");
+  assert.ok(
+    barAt < room.indexOf("<DeskPanel"),
+    "панель стоит до стола и правой колонки — значит, полосой над ними",
+  );
+  assert.ok(
+    barAt < room.indexOf("<aside"),
+    "панель не прячется в правой колонке: она идёт от края до края",
+  );
+  assert.ok(
+    room.indexOf("<TopBar") < room.indexOf("loadError ?"),
+    "панель видна и тогда, когда баннер ошибки чтения на месте",
+  );
+
+  assert.match(bar, /sticky top-0/, "панель липкая: на телефоне страница прокручивается целиком");
+  assert.match(bar, /flex w-full/, "панель занимает всю ширину окна");
+  assert.match(bar, /Вторые/, "на панели — название игры");
+  assert.match(bar, /@\/lib\/version/, "версия берётся из package.json");
+  assert.match(bar, /v\{APP_VERSION\}/, "рядом с названием стоит версия сборки");
+  assert.match(bar, /\{copied \? "скопировано" : code\}/, "код комнаты копирует ссылку кликом");
+  assert.match(bar, /\{me\}/, "видно, под каким именем игрок за столом");
+  assert.match(bar, /onRefresh/, "кнопка ⟳ перечитывает комнату");
+  assert.match(bar, /onLeave/, "выход из стола — кнопкой на панели");
+  assert.match(bar, />\s*Выйти\s*</, "кнопка выхода подписана «Выйти»");
+  assert.match(bar, /<ThemeToggle variant="bar" \/>/, "переключатель темы стоит на панели");
+});
+
+
 
 test("кнопка «Все» в блоке персонажей открывает полный список листов комнаты", () => {
   const room = read("components", "RoomScreen.tsx");

@@ -114,11 +114,31 @@ test("буквы на цвете игрока не зависят от темы"
   }
 });
 
-test("шапка комнаты оставляет место кнопке темы", () => {
+test("на столе кнопка темы стоит в верхней панели, а угловая не дублируется", () => {
   const room = read("components", "RoomScreen.tsx");
+  assert.match(room, /<TopBar\b/, "стол рендерит верхнюю панель");
+
+  const bar = read("components", "TopBar.tsx");
   assert.match(
-    room,
-    /bg-zinc-950\/70 px-3 py-2 pr-11 backdrop-blur/,
-    "кнопка темы не должна накрывать «сменить» в правом углу шапки",
+    bar,
+    /<ThemeToggle variant="bar" \/>/,
+    "переключатель темы стоит в верхней панели, рядом с «Выйти»",
   );
+  assert.match(
+    bar,
+    /document\.body\.dataset\.topBar = "room"/,
+    "панель помечает страницу, пока стоит на экране",
+  );
+
+  const css = read("app", "globals.css");
+  assert.match(
+    css,
+    /body\[data-top-bar="room"\] \.pp-theme-toggle--corner \{\s*display: none;/,
+    "угловая кнопка на столе прячется: переключатель уже в панели",
+  );
+
+  const toggle = read("components", "ThemeToggle.tsx");
+  assert.match(toggle, /pp-theme-toggle--bar/, "у кнопки есть вариант для верхней панели");
+  assert.match(toggle, /pp-theme-toggle--corner/, "и прежний вариант для угла окна");
 });
+

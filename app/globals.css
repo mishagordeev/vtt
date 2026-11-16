@@ -171,6 +171,15 @@ html[data-theme="dark"] .pp-theme-icon--moon {
   display: none;
 }
 
+/*
+ * На столе переключатель темы живёт в верхней панели (`TopBar`), поэтому
+ * угловая копия там не нужна: две кнопки с одним действием только путают.
+ * Атрибут `data-top-bar="room"` ставит сама панель, пока она на экране.
+ */
+body[data-top-bar="room"] .pp-theme-toggle--corner {
+  display: none;
+}
+
 html,
 body {
   height: 100%;

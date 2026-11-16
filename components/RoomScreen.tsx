@@ -4,7 +4,6 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
-import { APP_VERSION } from "@/lib/version";
 import { AppError } from "@/lib/errors";
 import {
   emptySnapshotRequest,
@@ -39,6 +38,7 @@ import { MusicPlaylist } from "./MusicPlaylist";
 import { PlayerProfile } from "./PlayerProfile";
 import { RoomsMemory } from "./RoomsMemory";
 import { SheetDialog } from "./SheetDialog";
+import { TopBar } from "./TopBar";
 
 const EMPTY_MAP: MapState = { strokes: [], texts: [], cursors: {}, pings: [], updatedAt: 0 };
 const EMPTY_MUSIC: MusicState = { tracks: [], updatedAt: 0 };
@@ -208,9 +208,6 @@ export default function RoomScreen({ code }: { code: string }) {
     lastChangeAtRef.current = Date.now();
     setRoomRev(rev);
   }, []);
-
-  /** Я мастер: мне доступны полный список листов, музыка и запуск треков. */
-  const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
 
   /** Цвет моего профиля — для метки на карте. */
   const myColor = useMemo(
@@ -1109,6 +1106,20 @@ export default function RoomScreen({ code }: { code: string }) {
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh">
 
+      {/* Верхняя панель во всю ширину: «Вторые», сборка, код комнаты, кто за
+          столом, «Выйти» и переключатель темы. Раньше эта шапка делила 352 px
+          правой панели с чатом и кубиками. */}
+      <TopBar
+        code={code}
+        me={me}
+        gm={gm}
+        connected={connected}
+        copied={copied}
+        onRefresh={() => void load()}
+        onCopyLink={() => void copyInvite()}
+        onLeave={changeName}
+      />
+
       {/* Ошибка чтения комнаты: текст и «Повторить» рядом — у стола после таймаута
           иначе остаются только текст и «нет связи», а перечитать нечем. */}
       {loadError ? (
@@ -1126,8 +1137,8 @@ export default function RoomScreen({ code }: { code: string }) {
         </div>
       ) : null}
 
-      {/* Раскладка как на макете: стол занимает всю высоту, панель — колонкой
-          справа со своей шапкой. На узком экране колонки идут в обратном
+      {/* Раскладка как на макете: под верхней панелью стол занимает всю высоту,
+          панель идёт колонкой справа. На узком экране колонки идут в обратном
           порядке (сначала панель с чатом и вводом, ниже — карта), и прокрутка
           одна, по документу: двум независимым областям на телефоне тесно. */}
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
@@ -1151,72 +1162,13 @@ export default function RoomScreen({ code }: { code: string }) {
           />
         </section>
 
-        {/* Правая панель как на макете: своя шапка → музыка → персонажи → чат →
-            ввод с кубиками, характеристиками и навыком. Ширина ровно по ряду
-            d4…d100 и «+1»/«−1» с небольшим запасом: ряд не переносится, а
-            лишнего места справа не остаётся. */}
+        {/* Правая панель как на макете: музыка → персонажи → чат → ввод с
+            кубиками, характеристиками и навыком. Своей шапки у неё больше нет:
+            «Вторые», сборка, код комнаты, имя игрока и «Выйти» стоят в верхней
+            панели на всю ширину окна. Ширина ровно по ряду d4…d100 и «+1»/«−1»
+            с небольшим запасом: ряд не переносится, а лишнего места справа не
+            остаётся. */}
         <aside className="flex flex-none flex-col border-t border-zinc-800/80 lg:min-h-0 lg:w-[352px] lg:border-l lg:border-t-0">
-          {/* pr-11: место под переключатель темы — он живёт в общем layout и стоит в правом верхнем углу. */}
-          <header className="shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 px-3 py-2 pr-11 backdrop-blur">
-            {/* Строка первая — кто за столом и выход из него: как «Мастер · Выйти» на макете. */}
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
-                title={connected ? "Ответы сервера приходят" : "Нет связи с сервером"}
-                aria-hidden
-              />
-              <span className="truncate text-sm font-semibold text-zinc-50">{me}</span>
-              {isGM ? (
-                <span
-                  className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] uppercase text-amber-300"
-                  title="Вы мастер этого стола"
-                >
-                  мастер
-                </span>
-              ) : null}
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-emerald-400/50 hover:text-emerald-200"
-                  title="Прочитать комнату из базы (обновление по действиям, без таймера)"
-                >
-                  ⟳
-                </button>
-                <button
-                  type="button"
-                  onClick={changeName}
-                  className="rounded-md border border-zinc-800 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200"
-                  title="Выйти из стола под этим именем и войти заново"
-                >
-                  сменить
-                </button>
-              </div>
-            </div>
-            {/* Строка вторая — подпись панели: сборка, код комнаты и путь на главную. */}
-            <div className="mt-1 flex items-center gap-1.5">
-              <Link
-                href="/"
-                className="shrink-0 text-[10px] font-semibold tracking-tight text-zinc-400 transition hover:text-zinc-200"
-              >
-                Poison Press
-              </Link>
-              <span
-                className="shrink-0 rounded border border-zinc-800 px-1 py-0.5 font-mono text-[9px] text-zinc-500"
-                title="Версия сборки VTT"
-              >
-                v{APP_VERSION}
-              </span>
-              <button
-                type="button"
-                onClick={() => void copyInvite()}
-                title="Скопировать ссылку на комнату"
-                className="ml-auto shrink-0 rounded border border-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-emerald-300 transition hover:border-emerald-400/50"
-              >
-                {copied ? "скопировано" : code}
-              </button>
-            </div>
-          </header>
           <MusicPlaylist
             me={me}
             gm={gm}
