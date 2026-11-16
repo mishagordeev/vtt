@@ -107,7 +107,8 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   const weather = weatherAt(clock.day, clock.hour, world.weatherSeed);
   const moons = moonPhases(clock.day);
   const icon = WEATHER_ICONS[weather.key] ?? "🌤";
-  /** Облачность и осадки — словами: проценты и миллиметры на стол не идут. */
+  /** Облачность и осадки — словами: проценты и миллиметры на стол не идут,
+      сухая погода так и называется («сухо»), прочерка нет. */
   const cloud = cloudWord(weather.cloud);
   const precip = precipitationWord(weather.precipitation);
   const sun = sunTimes(clock.day);
@@ -204,7 +205,7 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
           <span title={`Облачность: ${cloud}; осадки: ${precip}`}>
             {cloudIcon(weather.cloud)} {cloud}
             <span className="text-zinc-600"> · </span>
-            {weather.precipitation ? `💧${precip}` : "💧—"}
+            {`💧${precip}`}
           </span>
           <span title={sunTitle}>
             🌅{formatMinutes(sun.sunrise)} 🌇{formatMinutes(sun.sunset)}
