@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   cloudWord,
   describeDay,
@@ -101,7 +101,9 @@ function tempText(value: number): string {
  * прокручивается, а дата, время и погода остаются на виду. На телефоне у
  * стола прокручивается весь документ, поэтому смещение считается от высоты
  * верхней плашки — `--pp-top-bar-h` пишет `TopBar`, а не мы: шапка на узком
- * экране складывается в два ряда, и число заранее не угадать. Фон плотнее
+ * экране складывается в два ряда, и число заранее не угадать. Свою высоту
+ * панель, наоборот, отдаёт сама (`--pp-clock-h`): под ней липнет шапка карты —
+ * вкладки и инструменты, и ей нужно знать, на сколько отступить. Фон плотнее
  * обычной карточки, с размытием: под панелью проезжает карта, и сквозь
  * полупрозрачный фон читались бы её линии. Раскрытая сводка погоды и
  * календарь живут внутри панели и при переполнении прокручиваются в ней же,
@@ -114,11 +116,40 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   const [open, setOpen] = useState(false);
   /** Календарь: сетка месяца под часами, дату выбирает мастер. */
   const [picking, setPicking] = useState(false);
+  /** Узел панели: по нему меряется высота для шапки карты. */
+  const panelRef = useRef<HTMLElement | null>(null);
 
   // Минута игры = минута за столом: раз в 20 секунд пересчитываем стрелки.
   useEffect(() => {
     const id = setInterval(() => setTick((value) => value + 1), 20_000);
     return () => clearInterval(id);
+  }, []);
+
+  /**
+   * Высота панели — в `--pp-clock-h`: под часами липнет шапка карты, вкладки и
+   * инструменты (`pp-sticky-map-head` в `app/globals.css`). Числом её не задать:
+   * на узком экране кнопки мастера переносятся, раскрытая сводка погоды и
+   * календарь меняют высоту на глазах. Поэтому меряем и пересчитываем на каждое
+   * изменение размера, как это делает `TopBar` со своей плашкой.
+   */
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const root = document.documentElement;
+    const write = () => {
+      root.style.setProperty(
+        "--pp-clock-h",
+        `${Math.ceil(panel.getBoundingClientRect().height)}px`,
+      );
+    };
+    write();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(write);
+    observer.observe(panel);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--pp-clock-h");
+    };
   }, []);
 
   const serverNow = Date.now() + clockOffset;
@@ -150,7 +181,10 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   }
 
   return (
-    <section className="pp-sticky-clock rounded-xl border border-zinc-800 bg-zinc-900/95 px-3 py-2.5 shadow-lg backdrop-blur">
+    <section
+      ref={panelRef}
+      className="pp-sticky-clock rounded-xl border border-zinc-800 bg-zinc-900/95 px-3 py-2.5 shadow-lg backdrop-blur"
+    >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <div className="min-w-0">
           <p className="flex min-w-0 items-baseline gap-1.5 text-sm text-zinc-100">

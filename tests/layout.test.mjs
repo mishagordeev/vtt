@@ -1006,4 +1006,76 @@ test("часы и погода закреплены под верхней пла
   );
 });
 
+test("вкладки карты и панель инструментов закреплены под часами", () => {
+  const board = read("components", "MapBoard.tsx");
+  const clock = read("components", "WorldClock.tsx");
+  const css = read("app", "globals.css");
+  const desk = read("components", "DeskPanel.tsx");
+
+  // Шапка карты — один липкий блок: вкладки идут под плашкой с погодой,
+  // инструменты — над самой картой. Раньше панель инструментов висела плашкой
+  // в верхнем углу рамки и закрывала часть листа.
+  const headAt = board.indexOf("data-map-head");
+  const tabsAt = board.indexOf("data-map-tabs");
+  const toolsAt = board.indexOf("data-map-toolbar");
+  const frameAt = board.indexOf("overflow-hidden rounded-xl border border-zinc-800");
+  const zoomAt = board.indexOf("data-map-zoom");
+  assert.ok(headAt > 0, "у шапки карты есть своя метка");
+  assert.ok(tabsAt > headAt && toolsAt > tabsAt, "вкладки стоят первыми, инструменты под ними");
+  assert.ok(frameAt > toolsAt, "рамка карты идёт после шапки — инструменты стоят над картой");
+  assert.ok(zoomAt > frameAt, "масштаб остался в рамке карты");
+  assert.match(
+    board,
+    /className="pp-sticky-map-head[^"]*"[\s\S]{0,80}?data-map-head/,
+    "закрепление висит на шапке карты",
+  );
+  assert.match(
+    board,
+    /<div className="flex flex-col gap-1" data-map-controls data-map-toolbar>/,
+    "панель инструментов — полоса в шапке, а не плашка поверх карты",
+  );
+  assert.doesNotMatch(board, /absolute left-2 top-2/, "плашки поверх верхнего угла карты больше нет");
+
+  // Липкость — в CSS: смещение складывается из плашки и фактической высоты часов.
+  assert.match(
+    css,
+    /\.pp-sticky-map-head\s*\{[^}]*position: sticky/,
+    "класс делает шапку карты липкой",
+  );
+  assert.match(
+    css,
+    /\.pp-sticky-map-head\s*\{[^}]*top: calc\(var\(--pp-top-bar-h\) \+ var\(--pp-clock-h\)\)/,
+    "смещение — высота плашки плюс высота часов, а не число",
+  );
+  assert.match(
+    css,
+    /\.pp-sticky-map-head\s*\{[^}]*z-index: 25/,
+    "шапка карты ниже часов и плашки, но выше карты",
+  );
+  assert.match(
+    css,
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-sticky-map-head\s*\{\s*top: var\(--pp-clock-h\)/,
+    "на широком экране плашка не в счёт: стол прокручивается сам",
+  );
+  assert.match(
+    css,
+    /:root\s*\{[^}]*--pp-clock-h: 0px/,
+    "у высоты часов есть значение по умолчанию — до первого замера шапка не прыгает",
+  );
+
+  // Высоту часов публикует сама панель — фактическую и с пересчётом.
+  assert.match(clock, /ref=\{panelRef\}/, "у панели часов есть ссылка на собственный узел");
+  assert.match(clock, /--pp-clock-h/, "часы отдают свою высоту шапке карты");
+  assert.match(clock, /getBoundingClientRect\(\)\.height/, "высота меряется по факту");
+  assert.match(clock, /new ResizeObserver\(write\)/, "раскрытый календарь пересчитывает высоту");
+
+  // Стол не заводит собственной прокрутки: липкое внутри области с
+  // `overflow-y: auto`, которая сама не прокручивается, к экрану не липнет.
+  assert.doesNotMatch(
+    desk,
+    /overflow-y-auto/,
+    "прокручивается колонка комнаты или документ, а не сам стол",
+  );
+});
+
 

@@ -641,8 +641,8 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   // Курсор рамки: зажатый пробел (временная «Рука») показывает захват даже над кистью.
   const cursor = mapCursor(tool, tempHand);
   return (
-    <section className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <section>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
             {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
@@ -660,51 +660,294 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
         </span>
       </div>
 
-      {/* Вкладки карт: «Кас-Хатар» и полотна, которые мастер добавляет сам.
-          Новая вкладка — белый лист с серой сеткой по размеру карты. */}
-      <div className="flex flex-wrap items-center gap-1" data-map-tabs>
-        {tabs.map((entry) => (
+      {/* Шапка карты — вкладки и инструменты — липнет под часами: смещение
+          считает `pp-sticky-map-head` в `app/globals.css` по высоте закреплённой
+          панели с погодой (`--pp-clock-h`). Вкладки стоят под плашкой с погодой,
+          инструменты — над самой картой, и при прокрутке стола ни те, ни другие
+          не уезжают под верхнюю плашку. */}
+      <div
+        className="pp-sticky-map-head space-y-1 rounded-lg border border-zinc-800 bg-zinc-900/95 p-1 shadow-lg backdrop-blur"
+        data-map-head
+      >
+        {/* Вкладки карт: «Кас-Хатар» и полотна, которые мастер добавляет сам.
+            Новая вкладка — белый лист с серой сеткой по размеру карты. */}
+        <div className="flex flex-wrap items-center gap-1" data-map-tabs>
+          {tabs.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => setActiveTab(entry.id)}
+              title={
+                entry.kind === "kas-khatar"
+                  ? "Карта Кас-Хатара"
+                  : `Вкладка «${entry.name}»: пустой лист с сеткой`
+              }
+              className={`rounded-md border px-2 py-0.5 text-[10px] transition ${
+                entry.id === tab.id
+                  ? "border-emerald-400/70 bg-emerald-500/15 text-emerald-100"
+                  : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+              }`}
+            >
+              {entry.kind === "kas-khatar" ? "Кас-Хатар" : entry.name}
+            </button>
+          ))}
+          {isGM ? (
+            <button
+              type="button"
+              onClick={() => void addTab()}
+              title="Новая вкладка: белый лист с серой сеткой по размеру карты"
+              className="rounded-md border border-dashed border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300 transition hover:border-emerald-400/70 hover:text-emerald-200"
+            >
+              + вкладка
+            </button>
+          ) : null}
+          {isGM && tab.kind !== "kas-khatar" ? (
+            <button
+              type="button"
+              onClick={() => void removeTab()}
+              title={`Удалить вкладку «${tab.name}»`}
+              className="rounded-md border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-500 transition hover:border-rose-400/60 hover:text-rose-300"
+            >
+              × удалить
+            </button>
+          ) : null}
+        </div>
+
+        {/* Панель инструментов — своя полоса над картой, а не плашка поверх её
+            верхнего угла: карту она больше не закрывает, а закрепление живёт на
+            шапке карты. Колесо над ней масштаб не меняет (`data-map-controls`
+            проверяет обработчик рамки), хотя слушатель висит на самой карте. */}
+        <div className="flex flex-col gap-1" data-map-controls data-map-toolbar>
+          <div className="flex flex-wrap items-center gap-1">
           <button
-            key={entry.id}
             type="button"
-            onClick={() => setActiveTab(entry.id)}
-            title={
-              entry.kind === "kas-khatar"
-                ? "Карта Кас-Хатара"
-                : `Вкладка «${entry.name}»: пустой лист с сеткой`
-            }
-            className={`rounded-md border px-2 py-0.5 text-[10px] transition ${
-              entry.id === tab.id
-                ? "border-emerald-400/70 bg-emerald-500/15 text-emerald-100"
-                : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-            }`}
+            onClick={() => setTool("hand")}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "hand" ? "bg-zinc-200 text-zinc-900" : "text-zinc-300 hover:text-zinc-100"}`}
+            title="Рука: потяните карту мышью или пальцем, колесо над ней меняет масштаб · пробел или средняя кнопка мыши — та же рука поверх кисти"
           >
-            {entry.kind === "kas-khatar" ? "Кас-Хатар" : entry.name}
+            Рука
           </button>
-        ))}
-        {isGM ? (
           <button
             type="button"
-            onClick={() => void addTab()}
-            title="Новая вкладка: белый лист с серой сеткой по размеру карты"
-            className="rounded-md border border-dashed border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300 transition hover:border-emerald-400/70 hover:text-emerald-200"
+            onClick={() => setTool("pen")}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "pen" ? "bg-emerald-500 text-emerald-950" : "text-zinc-300 hover:text-emerald-200"}`}
           >
-            + вкладка
+            Кисть
           </button>
-        ) : null}
-        {isGM && tab.kind !== "kas-khatar" ? (
           <button
             type="button"
-            onClick={() => void removeTab()}
-            title={`Удалить вкладку «${tab.name}»`}
-            className="rounded-md border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-500 transition hover:border-rose-400/60 hover:text-rose-300"
+            onClick={() => setTool("erase")}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "erase" ? "bg-rose-400 text-rose-950" : "text-zinc-300 hover:text-rose-200"}`}
           >
-            × удалить
+            Ластик
           </button>
-        ) : null}
+          {COLORS.map((entry) => (
+            <button
+              key={entry}
+              type="button"
+              onClick={() => {
+                setColor(entry);
+                setTool("pen");
+              }}
+              title={`Цвет ${entry}`}
+              className={`h-4 w-4 rounded-full border ${color === entry && tool === "pen" ? "border-zinc-100" : "border-zinc-800"}`}
+              style={{ backgroundColor: entry }}
+            />
+          ))}
+          <select
+            value={width}
+            onChange={(event) => setWidth(Number(event.target.value))}
+            className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
+            title="Толщина"
+          >
+            {WIDTHS.map((entry) => (
+              <option key={entry.value} value={entry.value}>{entry.label}</option>
+            ))}
+          </select>
+          {isGM ? (
+            <button
+              type="button"
+              onClick={clearBoard}
+              className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-rose-300"
+            >
+              Очистить
+            </button>
+          ) : null}
+          </div>
+
+          {/* Вторая строка — под кистью и ластиком: надписи и точки поверх карты.
+              Ставит и правит их только мастер. */}
+          {isGM ? (
+            <div className="flex flex-wrap items-center gap-1 border-t border-zinc-700/60 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setTool("text");
+                  setEditingTextId(null);
+                }}
+                className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "text" ? "bg-amber-300 text-amber-950" : "text-zinc-300 hover:text-amber-200"}`}
+                title="Надпись поверх карты"
+              >
+                Текст
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTool("point");
+                  setEditingTextId(null);
+                }}
+                className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "point" ? "bg-sky-300 text-sky-950" : "text-zinc-300 hover:text-sky-200"}`}
+                title="Точка: текст открывается нажатием на 5 секунд"
+              >
+                Точка
+              </button>
+              {tool === "text" || tool === "point" ? (
+                <>
+                  <input
+                    value={text}
+                    onChange={(event) => setText(event.target.value)}
+                    maxLength={MAP_TEXT_MAX_LENGTH}
+                    placeholder="Надпись"
+                    className="w-28 rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-100"
+                  />
+                  <select
+                    value={textFont}
+                    onChange={(event) => setTextFont(event.target.value as MapFont)}
+                    className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
+                    title="Шрифт"
+                  >
+                    {MAP_FONT_OPTIONS.map((entry) => (
+                      <option key={entry.value} value={entry.value}>{entry.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={textSize}
+                    onChange={(event) => setTextSize(Number(event.target.value))}
+                    className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
+                    title="Размер"
+                  >
+                    {MAP_TEXT_SIZES.map((entry) => (
+                      <option key={entry.value} value={entry.value}>{entry.label}</option>
+                    ))}
+                  </select>
+                  {COLORS.map((entry) => (
+                    <button
+                      key={`text-${entry}`}
+                      type="button"
+                      onClick={() => setTextColor(entry)}
+                      title={`Цвет надписи ${entry}`}
+                      className={`h-4 w-4 rounded-full border ${textColor === entry ? "border-zinc-100" : "border-zinc-800"}`}
+                      style={{ backgroundColor: entry }}
+                    />
+                  ))}
+                  {/* Кому видна запись: точка или надпись может быть тайной
+                      мастера или подсказкой только для выбранных персонажей. */}
+                  <details className="relative" data-map-audience>
+                    <summary
+                      title={audienceLabel(textAudience)}
+                      className={`max-w-[9rem] cursor-pointer list-none truncate rounded border px-1 py-0.5 text-[10px] ${
+                        textAudience === undefined
+                          ? "border-zinc-700 bg-zinc-900 text-zinc-300"
+                          : "border-amber-400/70 bg-amber-500/10 text-amber-200"
+                      }`}
+                    >
+                      {textAudience === undefined
+                        ? "Видят: все"
+                        : textAudience.length === 0
+                          ? "Видят: мастер"
+                          : textAudience.length === 1
+                            ? `Видят: ${
+                                characters.find((character) => character.id === textAudience[0])
+                                  ?.name ?? "лист"
+                              }`
+                            : `Видят: ${textAudience.length}`}
+                    </summary>
+                    <div
+                      className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-zinc-700 bg-zinc-950/95 p-1 shadow-xl"
+                      title={audienceLabel(textAudience)}
+                    >
+                      <label className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={textAudience === undefined}
+                          onChange={() => setTextAudience(undefined)}
+                          className="accent-emerald-500"
+                        />
+                        Все за столом
+                      </label>
+                      <div className="scroll-thin max-h-40 overflow-y-auto">
+                        {characters.map((character) => (
+                          <label
+                            key={character.id}
+                            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200"
+                            title={
+                              (character.players ?? []).length > 0
+                                ? `Играют: ${(character.players ?? []).join(", ")}`
+                                : "Лист пока ни за кем не закреплён"
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={
+                                Array.isArray(textAudience) && textAudience.includes(character.id)
+                              }
+                              onChange={() => toggleAudience(character.id)}
+                              className="accent-amber-400"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{character.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="px-1 py-0.5 text-[10px] text-zinc-500">
+                        {characters.length === 0
+                          ? "Листов в комнате нет — запись видна всем."
+                          : textAudience === undefined
+                            ? "Запись видна всем за столом."
+                            : textAudience.length === 0
+                              ? "Ничего не выбрано — видит только мастер."
+                              : audienceLabel(textAudience)}
+                      </p>
+                    </div>
+                  </details>
+                  {editingTextId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={saveText}
+                        className="rounded px-1.5 py-0.5 text-[10px] text-emerald-300 hover:text-emerald-200"
+                      >
+                        Сохранить
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removeText}
+                        className="rounded px-1.5 py-0.5 text-[10px] text-rose-300 hover:text-rose-200"
+                      >
+                        Удалить
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelText}
+                        className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200"
+                      >
+                        Отмена
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-zinc-400">
+                      {tool === "point" ? "клик по карте — место точки" : "клик по карте — место"}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-[10px] text-zinc-500">надписи и точки поверх карты</span>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+      <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
         {/* Пробел тянет карту, только пока курсор над ней: за пределами рамки он
             остаётся обычным пробелом и не прокручивает стол. */}
         <div
@@ -917,243 +1160,6 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           ) : null}
           </div>
 
-          {/* Панель инструментов и масштаб стоят в рамке, а не на сцене: при
-              увеличении карты они не растут вместе с ней. */}
-          <div
-            className="absolute left-2 top-2 z-20 flex flex-col gap-1 rounded-lg border border-zinc-700/80 bg-zinc-950/85 p-1 shadow-lg backdrop-blur"
-            data-map-controls
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerMove={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-          >
-            <div className="flex flex-wrap items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setTool("hand")}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "hand" ? "bg-zinc-200 text-zinc-900" : "text-zinc-300 hover:text-zinc-100"}`}
-              title="Рука: потяните карту мышью или пальцем, колесо над ней меняет масштаб · пробел или средняя кнопка мыши — та же рука поверх кисти"
-            >
-              Рука
-            </button>
-            <button
-              type="button"
-              onClick={() => setTool("pen")}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "pen" ? "bg-emerald-500 text-emerald-950" : "text-zinc-300 hover:text-emerald-200"}`}
-            >
-              Кисть
-            </button>
-            <button
-              type="button"
-              onClick={() => setTool("erase")}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "erase" ? "bg-rose-400 text-rose-950" : "text-zinc-300 hover:text-rose-200"}`}
-            >
-              Ластик
-            </button>
-            {COLORS.map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                onClick={() => {
-                  setColor(entry);
-                  setTool("pen");
-                }}
-                title={`Цвет ${entry}`}
-                className={`h-4 w-4 rounded-full border ${color === entry && tool === "pen" ? "border-zinc-100" : "border-zinc-800"}`}
-                style={{ backgroundColor: entry }}
-              />
-            ))}
-            <select
-              value={width}
-              onChange={(event) => setWidth(Number(event.target.value))}
-              className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
-              title="Толщина"
-            >
-              {WIDTHS.map((entry) => (
-                <option key={entry.value} value={entry.value}>{entry.label}</option>
-              ))}
-            </select>
-            {isGM ? (
-              <button
-                type="button"
-                onClick={clearBoard}
-                className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-rose-300"
-              >
-                Очистить
-              </button>
-            ) : null}
-            </div>
-
-            {/* Вторая строка — под кистью и ластиком: надписи и точки поверх карты.
-                Ставит и правит их только мастер. */}
-            {isGM ? (
-              <div className="flex flex-wrap items-center gap-1 border-t border-zinc-700/60 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTool("text");
-                    setEditingTextId(null);
-                  }}
-                  className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "text" ? "bg-amber-300 text-amber-950" : "text-zinc-300 hover:text-amber-200"}`}
-                  title="Надпись поверх карты"
-                >
-                  Текст
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTool("point");
-                    setEditingTextId(null);
-                  }}
-                  className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "point" ? "bg-sky-300 text-sky-950" : "text-zinc-300 hover:text-sky-200"}`}
-                  title="Точка: текст открывается нажатием на 5 секунд"
-                >
-                  Точка
-                </button>
-                {tool === "text" || tool === "point" ? (
-                  <>
-                    <input
-                      value={text}
-                      onChange={(event) => setText(event.target.value)}
-                      maxLength={MAP_TEXT_MAX_LENGTH}
-                      placeholder="Надпись"
-                      className="w-28 rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-100"
-                    />
-                    <select
-                      value={textFont}
-                      onChange={(event) => setTextFont(event.target.value as MapFont)}
-                      className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
-                      title="Шрифт"
-                    >
-                      {MAP_FONT_OPTIONS.map((entry) => (
-                        <option key={entry.value} value={entry.value}>{entry.label}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={textSize}
-                      onChange={(event) => setTextSize(Number(event.target.value))}
-                      className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300"
-                      title="Размер"
-                    >
-                      {MAP_TEXT_SIZES.map((entry) => (
-                        <option key={entry.value} value={entry.value}>{entry.label}</option>
-                      ))}
-                    </select>
-                    {COLORS.map((entry) => (
-                      <button
-                        key={`text-${entry}`}
-                        type="button"
-                        onClick={() => setTextColor(entry)}
-                        title={`Цвет надписи ${entry}`}
-                        className={`h-4 w-4 rounded-full border ${textColor === entry ? "border-zinc-100" : "border-zinc-800"}`}
-                        style={{ backgroundColor: entry }}
-                      />
-                    ))}
-                    {/* Кому видна запись: точка или надпись может быть тайной
-                        мастера или подсказкой только для выбранных персонажей. */}
-                    <details className="relative" data-map-audience>
-                      <summary
-                        title={audienceLabel(textAudience)}
-                        className={`max-w-[9rem] cursor-pointer list-none truncate rounded border px-1 py-0.5 text-[10px] ${
-                          textAudience === undefined
-                            ? "border-zinc-700 bg-zinc-900 text-zinc-300"
-                            : "border-amber-400/70 bg-amber-500/10 text-amber-200"
-                        }`}
-                      >
-                        {textAudience === undefined
-                          ? "Видят: все"
-                          : textAudience.length === 0
-                            ? "Видят: мастер"
-                            : textAudience.length === 1
-                              ? `Видят: ${
-                                  characters.find((character) => character.id === textAudience[0])
-                                    ?.name ?? "лист"
-                                }`
-                              : `Видят: ${textAudience.length}`}
-                      </summary>
-                      <div
-                        className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-zinc-700 bg-zinc-950/95 p-1 shadow-xl"
-                        title={audienceLabel(textAudience)}
-                      >
-                        <label className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200">
-                          <input
-                            type="checkbox"
-                            checked={textAudience === undefined}
-                            onChange={() => setTextAudience(undefined)}
-                            className="accent-emerald-500"
-                          />
-                          Все за столом
-                        </label>
-                        <div className="scroll-thin max-h-40 overflow-y-auto">
-                          {characters.map((character) => (
-                            <label
-                              key={character.id}
-                              className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-zinc-200"
-                              title={
-                                (character.players ?? []).length > 0
-                                  ? `Играют: ${(character.players ?? []).join(", ")}`
-                                  : "Лист пока ни за кем не закреплён"
-                              }
-                            >
-                              <input
-                                type="checkbox"
-                                checked={
-                                  Array.isArray(textAudience) && textAudience.includes(character.id)
-                                }
-                                onChange={() => toggleAudience(character.id)}
-                                className="accent-amber-400"
-                              />
-                              <span className="min-w-0 flex-1 truncate">{character.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                        <p className="px-1 py-0.5 text-[10px] text-zinc-500">
-                          {characters.length === 0
-                            ? "Листов в комнате нет — запись видна всем."
-                            : textAudience === undefined
-                              ? "Запись видна всем за столом."
-                              : textAudience.length === 0
-                                ? "Ничего не выбрано — видит только мастер."
-                                : audienceLabel(textAudience)}
-                        </p>
-                      </div>
-                    </details>
-                    {editingTextId ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={saveText}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-emerald-300 hover:text-emerald-200"
-                        >
-                          Сохранить
-                        </button>
-                        <button
-                          type="button"
-                          onClick={removeText}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-rose-300 hover:text-rose-200"
-                        >
-                          Удалить
-                        </button>
-                        <button
-                          type="button"
-                          onClick={cancelText}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200"
-                        >
-                          Отмена
-                        </button>
-                      </>
-                    ) : (
-                      <span className="text-[10px] text-zinc-400">
-                        {tool === "point" ? "клик по карте — место точки" : "клик по карте — место"}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-[10px] text-zinc-500">надписи и точки поверх карты</span>
-                )}
-              </div>
-            ) : null}
-          </div>
-
           {/* Масштаб: «−» и «+» — то же, что колесо, но под палец; «⟲» возвращает
               карту целиком. Подпись показывает, во сколько раз карта увеличена. */}
           <div
@@ -1206,7 +1212,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           </span>
         </div>
       </div>
-      {error ? <p className="text-[10px] text-rose-300">{error}</p> : null}
+      {error ? <p className="mt-2 text-[10px] text-rose-300">{error}</p> : null}
     </section>
   );
 }
