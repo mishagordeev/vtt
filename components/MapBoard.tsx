@@ -642,19 +642,13 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   const cursor = mapCursor(tool, tempHand);
   return (
     <section>
+      {/* Заголовок вкладки и счётчик меток — и больше ничего: абзац-пояснение
+          под заголовком убран, он отнимал высоту у самой карты, а те же правила
+          есть в подсказках кнопок («Рука», «Точка», «Видят»). */}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-            {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
-          </h2>
-          <p className="text-[10px] text-zinc-600">
-            Клик по карте — метка цветом игрока · «Рука» тянет карту мышью или пальцем, колесо
-            над ней меняет масштаб · пробел или средняя кнопка мыши — та же рука поверх кисти,
-            инструмент выбирать заново не нужно · мастер ставит надписи и точки: нажатие на точку
-            открывает её текст на 5 секунд, а «Видят» прячет запись от всех, кроме выбранных
-            персонажей
-          </p>
-        </div>
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+          {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
+        </h2>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
           метки: {pings.length}
         </span>
