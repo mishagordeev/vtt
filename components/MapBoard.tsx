@@ -7,6 +7,7 @@ import {
   MAP_TEXT_MAX_LENGTH,
   MAP_TEXT_REVEAL_MS,
   MAP_TEXT_SIZES,
+  mapPointDiameter,
   nearestMapTextSize,
   sanitizeMapText,
 } from "@/lib/mapText";
@@ -597,7 +598,8 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           {texts.map((entry) => {
             const restricted = isGM && Array.isArray(entry.audience);
             if (entry.kind === "point") {
-              const diameter = Math.max(12, entry.size * Math.max(size.width, 320) * 1.4);
+              // Кружок точки: в полтора раза меньше прежнего на всех размерах.
+              const diameter = mapPointDiameter(entry.size, size.width);
               const open = revealed?.id === entry.id;
               return (
                 <div

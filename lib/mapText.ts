@@ -30,6 +30,22 @@ export const MAP_TEXT_SIZES = [
   { label: "огромный", value: 0.036 },
 ];
 
+/**
+ * Кружок точки на карте: диаметр в пикселях считается от кегля и ширины карты.
+ *
+ * Прежний множитель был 1,4; теперь он поделён на 1,5 — точка стала в полтора
+ * раза меньше на всех размерах из `MAP_TEXT_SIZES` (мелкий…огромный).
+ * Нижний предел опустился так же: 12 px / 1,5 = 8 px, иначе на узком экране
+ * мелкие точки остались бы прежними и правило «в полтора раза» не выполнялось.
+ */
+export const MAP_POINT_DIAMETER_SCALE = 1.4 / 1.5;
+export const MAP_POINT_MIN_DIAMETER = 8;
+
+/** Диаметр кружка точки: доля кегля от ширины карты, но не меньше предела. */
+export function mapPointDiameter(size: number, mapWidth: number): number {
+  return Math.max(MAP_POINT_MIN_DIAMETER, size * Math.max(mapWidth, 320) * MAP_POINT_DIAMETER_SCALE);
+}
+
 export const MAP_TEXT_MIN_SIZE = 0.008;
 export const MAP_TEXT_MAX_SIZE = 0.06;
 /** Больше — уже не подпись, а абзац поверх карты. */

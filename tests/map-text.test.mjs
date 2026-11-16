@@ -11,12 +11,14 @@ import { fileURLToPath } from "node:url";
 import {
   MAP_FONT_OPTIONS,
   MAP_FONT_STACK,
+  MAP_POINT_MIN_DIAMETER,
   MAP_TEXT_AUDIENCE_LIMIT,
   MAP_TEXT_KINDS,
   MAP_TEXT_MAX_LENGTH,
   MAP_TEXT_REVEAL_MS,
   MAP_TEXT_SIZES,
   mapAudienceKey,
+  mapPointDiameter,
   mapTextVisibleTo,
   nearestMapTextSize,
   normalizeMapAudience,
@@ -64,6 +66,38 @@ test("размер надписи держится в пределах, мусо
       "размеры в списке идут по возрастанию",
     );
   }
+});
+
+test("кружок точки в полтора раза меньше на всех размерах", () => {
+  // Прежняя формула — та, что стояла в MapBoard.tsx до этой правки.
+  const before = (size, mapWidth) => Math.max(12, size * Math.max(mapWidth, 320) * 1.4);
+  for (const { label, value } of MAP_TEXT_SIZES) {
+    for (const mapWidth of [900, 1280]) {
+      const now = mapPointDiameter(value, mapWidth);
+      assert.ok(
+        Math.abs(now * 1.5 - before(value, mapWidth)) < 1e-9,
+        `размер «${label}» на карте ${mapWidth} px: ${now} px — это не в полтора раза меньше ${before(value, mapWidth)} px`,
+      );
+    }
+  }
+  assert.equal(MAP_POINT_MIN_DIAMETER, 8, "предел кружка опустился с 12 до 8 px");
+  assert.equal(
+    mapPointDiameter(MAP_TEXT_SIZES[0].value, 320),
+    8,
+    "на узком экране кружок упирается в предел, а не остаётся прежним",
+  );
+  assert.ok(
+    mapPointDiameter(MAP_TEXT_SIZES[0].value, 900) < mapPointDiameter(MAP_TEXT_SIZES[1].value, 900),
+    "соседние размеры по-прежнему различимы",
+  );
+
+  const board = read("components", "MapBoard.tsx");
+  assert.match(
+    board,
+    /const diameter = mapPointDiameter\(entry\.size, size\.width\);/,
+    "карта рисует кружок точки через общий расчёт",
+  );
+  assert.doesNotMatch(board, /\* 1\.4\)/, "прежнего множителя 1,4 в раскладке точки не осталось");
 });
 
 test("вид записи: всё, кроме явной точки, — обычная надпись", () => {
