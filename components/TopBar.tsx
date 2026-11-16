@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   lastRoomPingMs,
   medianRoomPingMs,
@@ -52,6 +52,11 @@ interface TopBarProps {
  * Полоса липкая (`sticky`), потому что на телефоне страница прокручивается
  * целиком: имя, код и «Выйти» должны оставаться под рукой, а не уезжать вверх
  * вместе с картой.
+ *
+ * Свою фактическую высоту полоса публикует в `--pp-top-bar-h`: по ней
+ * закрепляются часы и погода в столе (`pp-sticky-clock` в `app/globals.css`),
+ * чтобы не уезжать под шапку. Шапка переносится в два ряда, поэтому высоту
+ * меряем, а не задаём числом.
  */
 export function TopBar({
   code,
@@ -64,6 +69,8 @@ export function TopBar({
   onLeave,
 }: TopBarProps) {
   const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
+  /** Сама полоса: по её высоте липнут часы и погода в столе. */
+  const barRef = useRef<HTMLElement | null>(null);
 
   // Счётчики обмена ведёт клиент API: пинг — оттуда же, отдельного запроса ради
   // замера не нужно.
@@ -99,8 +106,35 @@ export function TopBar({
     };
   }, []);
 
+  /**
+   * Высота полосы — в `--pp-top-bar-h`: по ней липнут часы и погода в столе
+   * (`pp-sticky-clock` в `app/globals.css`). Числом её не задать: на узком
+   * экране шапка складывается в два ряда, когда не влезают имя, код и
+   * «Выйти», а при смене шрифта или масштаба высота меняется ещё раз.
+   * Поэтому меряем и пересчитываем на каждое изменение размера.
+   */
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const root = document.documentElement;
+    const write = () => {
+      root.style.setProperty(
+        "--pp-top-bar-h",
+        `${Math.ceil(bar.getBoundingClientRect().height)}px`,
+      );
+    };
+    write();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(write);
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--pp-top-bar-h");
+    };
+  }, []);
+
   return (
-    <header className="sticky top-0 z-40 flex w-full shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-zinc-800/80 bg-zinc-950/90 px-3 py-2 backdrop-blur">
+    <header ref={barRef} className="sticky top-0 z-40 flex w-full shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-zinc-800/80 bg-zinc-950/90 px-3 py-2 backdrop-blur">
       {/* Название игры, сборка и код комнаты — слева. «Вторые» ведёт на главную:
           это прежний путь на главную из шапки правой панели. */}
       <div className="flex min-w-0 items-center gap-2">

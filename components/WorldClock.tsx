@@ -94,6 +94,19 @@ function tempText(value: number): string {
   return `${value > 0 ? "+" : ""}${value}°`;
 }
 
+/**
+ * Часы кампании и погода над картой.
+ *
+ * Панель липкая (`pp-sticky-clock` в `app/globals.css`): карта под ней
+ * прокручивается, а дата, время и погода остаются на виду. На телефоне у
+ * стола прокручивается весь документ, поэтому смещение считается от высоты
+ * верхней плашки — `--pp-top-bar-h` пишет `TopBar`, а не мы: шапка на узком
+ * экране складывается в два ряда, и число заранее не угадать. Фон плотнее
+ * обычной карточки, с размытием: под панелью проезжает карта, и сквозь
+ * полупрозрачный фон читались бы её линии. Раскрытая сводка погоды и
+ * календарь живут внутри панели и при переполнении прокручиваются в ней же,
+ * не вытесняя карту целиком.
+ */
 export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps) {
   const [, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -137,7 +150,7 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   }
 
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
+    <section className="pp-sticky-clock rounded-xl border border-zinc-800 bg-zinc-900/95 px-3 py-2.5 shadow-lg backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <div className="min-w-0">
           <p className="flex min-w-0 items-baseline gap-1.5 text-sm text-zinc-100">

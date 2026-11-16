@@ -958,4 +958,52 @@ test("часы кампании: облачность и осадки слова
   assert.doesNotMatch(clock, /precipitation\.mm/, "миллиметры осадков из сводки убраны");
 });
 
+test("часы и погода закреплены под верхней плашкой, а карта проезжает под ними", () => {
+  const clock = read("components", "WorldClock.tsx");
+  const desk = read("components", "DeskPanel.tsx");
+  const bar = read("components", "TopBar.tsx");
+  const css = read("app", "globals.css");
+
+  // Панель часов и погоды — первая в столе и с классом закрепления.
+  assert.match(clock, /className="pp-sticky-clock rounded-xl/, "у панели часов есть класс закрепления");
+  assert.ok(
+    desk.indexOf("<WorldClock") > 0 && desk.indexOf("<WorldClock") < desk.indexOf("<MapBoard"),
+    "закреплённая панель идёт первой, над картой",
+  );
+
+  // Липкость живёт в CSS: смещение — высота верхней плашки, а на широком
+  // экране прокручивается сам стол и начинается уже под плашкой.
+  assert.match(css, /\.pp-sticky-clock\s*\{[^}]*position: sticky/, "класс делает панель липкой");
+  assert.match(
+    css,
+    /\.pp-sticky-clock\s*\{[^}]*top: var\(--pp-top-bar-h\)/,
+    "смещение берётся из высоты верхней плашки, а не из числа",
+  );
+  assert.match(
+    css,
+    /\.pp-sticky-clock\s*\{[^}]*max-height: calc\(100dvh - var\(--pp-top-bar-h\)[^}]*overflow-y: auto/,
+    "высокий раскрытый календарь прокручивается внутри панели, а не вытесняет карту",
+  );
+  assert.match(
+    css,
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-sticky-clock\s*\{[^}]*top: 0/,
+    "на широком экране смещение снято: стол прокручивается сам под плашкой",
+  );
+  assert.match(
+    css,
+    /:root\s*\{[^}]*--pp-top-bar-h: 0px/,
+    "у переменной есть значение по умолчанию — до первого замера панель не прыгает",
+  );
+
+  // Высоту публикует сама плашка — фактическую, а не угаданную.
+  assert.match(bar, /ref=\{barRef\}/, "у плашки есть ссылка на собственный узел");
+  assert.match(bar, /--pp-top-bar-h/, "плашка отдаёт свою высоту липкой панели");
+  assert.match(bar, /getBoundingClientRect\(\)\.height/, "высота меряется по факту");
+  assert.match(
+    bar,
+    /new ResizeObserver\(write\)/,
+    "при переносе шапки в два ряда высота пересчитывается",
+  );
+});
+
 
