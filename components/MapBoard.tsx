@@ -13,6 +13,16 @@ import {
 } from "@/lib/mapText";
 import { ensureMapTabs, entryTabId, MAP_GRID } from "@/lib/mapTabs";
 import { HEX_SCALE, MAP_RASTER } from "@/lib/mapScale";
+import {
+  MAP_VIEW_DEFAULT,
+  MAP_ZOOM_BUTTON_STEP,
+  clampMapView,
+  mapViewTransform,
+  mapWheelScale,
+  mapZoomLabel,
+  zoomMapView,
+  type MapView,
+} from "@/lib/mapView";
 import type { Character, MapFont, MapPoint, MapState, MapStroke, MapText } from "@/lib/types";
 
 interface MapBoardProps {
@@ -82,13 +92,20 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
+  /** Начало перетаскивания карты: точка нажатия и сдвиг вида в этот момент. */
+  const panRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
   const currentRef = useRef<MapPoint[]>([]);
   const startRef = useRef<MapPoint | null>(null);
   const movedRef = useRef(false);
   const imageRef = useRef<HTMLImageElement>(null);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [tool, setTool] = useState<"pen" | "erase" | "text" | "point">("pen");
+  // «Рука» выбрана сразу: зажать ЛКМ над картой и потянуть — обычный способ
+  // осмотреться; рисование начинается только с выбранного инструмента.
+  const [tool, setTool] = useState<"hand" | "pen" | "erase" | "text" | "point">("hand");
+  // Вид карты: масштаб и сдвиг сцены внутри рамки. Колесо над картой считает
+  // масштаб от курсора, «Рука» тянет сцену, «⟲» возвращает карту целиком.
+  const [view, setView] = useState<MapView>(MAP_VIEW_DEFAULT);
   const [color, setColor] = useState(COLORS[0]);
   const [width, setWidth] = useState(WIDTHS[1].value);
   const [current, setCurrent] = useState<MapPoint[]>([]);
@@ -122,13 +139,15 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     [map.strokes, tabs, tab.id],
   );
 
-  // Переключили вкладку — незаконченный штрих и редактор остаются от старой карты.
+  // Переключили вкладку — незаконченный штрих, редактор и вид остаются от старой карты.
   useEffect(() => {
     currentRef.current = [];
+    panRef.current = null;
     setCurrent([]);
     setEditingTextId(null);
     setRevealed(null);
     setErasePoint(null);
+    setView(MAP_VIEW_DEFAULT);
   }, [activeTab]);
 
   // Картинка могла прийти из кэша до подписки на onLoad — тогда размер берём сразу.
@@ -159,8 +178,38 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     return () => observer.disconnect();
   }, []);
 
+  // Стол изменил ширину — сдвиг поджимается, чтобы карта не оторвалась от рамки.
   useEffect(() => {
-    if (tool === "pen") setErasePoint(null);
+    setView((previous) => clampMapView(previous, size));
+  }, [size]);
+
+  // Колесо над картой — масштаб, а не прокрутка стола. Слушатель нативный:
+  // React вешает `onWheel` пассивным, и `preventDefault` в нём не сработал бы.
+  useEffect(() => {
+    const node = wrapRef.current;
+    if (!node) return;
+    const onWheel = (event: WheelEvent) => {
+      // Над панелью инструментов колесо не перехватываем: там списки и поля.
+      if (event.target instanceof Element && event.target.closest("[data-map-controls]")) return;
+      event.preventDefault();
+      const rect = node.getBoundingClientRect();
+      const box = { width: rect.width, height: rect.height };
+      const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      setView((previous) =>
+        zoomMapView(
+          previous,
+          mapWheelScale(previous.scale, event.deltaY, event.deltaMode),
+          point,
+          box,
+        ),
+      );
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, []);
+
+  useEffect(() => {
+    if (tool === "pen" || tool === "hand") setErasePoint(null);
     // Ушли с инструмента надписей и точек — выбор снимается, введённый текст не теряется.
     if (tool !== "text" && tool !== "point") setEditingTextId(null);
   }, [tool]);
@@ -190,13 +239,39 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     }
   }, [strokes, current, size, tool, color, width]);
 
+  /**
+   * Точка рамки → доля карты. Считается через масштаб и сдвиг вида: при
+   * увеличении клик попадает туда, где виден рисунок, а не в угол карты.
+   */
   function pointFrom(event: React.PointerEvent<HTMLDivElement>): MapPoint {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
     return {
-      x: clamp01((event.clientX - rect.left) / rect.width),
-      y: clamp01((event.clientY - rect.top) / rect.height),
+      x: clamp01((event.clientX - rect.left - view.x) / view.scale / rect.width),
+      y: clamp01((event.clientY - rect.top - view.y) / view.scale / rect.height),
     };
+  }
+
+  /** Метка цветом профиля: короткое нажатие по карте без движения. */
+  function ping(point: MapPoint) {
+    void onAction({
+      action: "ping",
+      x: point.x,
+      y: point.y,
+      color: pingColor || colorFor(me),
+      tab: tab.id,
+    }).then((result) => {
+      setError(result ? "" : "Не удалось показать метку");
+    });
+  }
+
+  /** Кнопки «−» и «+»: масштаб меняется вокруг середины рамки. */
+  function zoomBy(factor: number) {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const box = { width: rect.width, height: rect.height };
+    const centre = { x: rect.width / 2, y: rect.height / 2 };
+    setView((previous) => zoomMapView(previous, previous.scale * factor, centre, box));
   }
 
   async function commit() {
@@ -220,6 +295,15 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     // Открытый текст точки закрывается кликом по карте — и не ставит заодно метку.
     if (revealed) {
       setRevealed(null);
+      return;
+    }
+    // «Рука»: зажатая ЛКМ тянет карту, короткое нажатие остаётся меткой.
+    if (tool === "hand") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      panRef.current = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y };
+      startRef.current = pointFrom(event);
+      movedRef.current = false;
+      setErasePoint(null);
       return;
     }
     if (tool === "text" || tool === "point") {
@@ -246,6 +330,17 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    // Сдвиг карты считается в пикселях рамки: масштаб здесь не мешает.
+    const pan = panRef.current;
+    if (pan) {
+      const dx = event.clientX - pan.x;
+      const dy = event.clientY - pan.y;
+      if (!movedRef.current && Math.hypot(dx, dy) > 2) movedRef.current = true;
+      setView(
+        clampMapView({ scale: view.scale, x: pan.viewX + dx, y: pan.viewY + dy }, size),
+      );
+      return;
+    }
     const point = pointFrom(event);
     if (tool === "text" || tool === "point") {
       if (!drawingRef.current) return;
@@ -279,6 +374,14 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   }
 
   function handlePointerUp() {
+    // Отпустили «руку»: перетаскивание закончилось, короткое нажатие — метка.
+    if (panRef.current) {
+      panRef.current = null;
+      const start = startRef.current;
+      startRef.current = null;
+      if (!movedRef.current && start) ping(start);
+      return;
+    }
     if (!drawingRef.current) return;
     drawingRef.current = false;
     const start = startRef.current;
@@ -292,9 +395,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
       currentRef.current = [];
       setCurrent([]);
       setErasePoint(null);
-      void onAction({ action: "ping", x: start.x, y: start.y, color: pingColor || colorFor(me), tab: tab.id }).then((result) => {
-        setError(result ? "" : "Не удалось показать метку");
-      });
+      ping(start);
       return;
     }
     void commit();
@@ -458,9 +559,9 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
             {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
           </h2>
           <p className="text-[10px] text-zinc-600">
-            Клик по карте — метка цветом игрока · рисуйте мышью или пальцем · мастер ставит
-            надписи и точки: нажатие на точку открывает её текст на 5 секунд, а «Видят»
-            прячет запись от всех, кроме выбранных персонажей
+            Клик по карте — метка цветом игрока · «Рука» тянет карту мышью или пальцем, колесо
+            над ней меняет масштаб · мастер ставит надписи и точки: нажатие на точку открывает
+            её текст на 5 секунд, а «Видят» прячет запись от всех, кроме выбранных персонажей
           </p>
         </div>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
@@ -519,14 +620,24 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          className={`map-frame relative touch-none select-none ${
-            tool === "pen" || tool === "point"
-              ? "cursor-crosshair"
-              : tool === "text"
-                ? "cursor-text"
-                : "cursor-cell"
+          style={{ aspectRatio: `${MAP_RASTER.width} / ${MAP_RASTER.height}` }}
+          className={`map-frame relative touch-none select-none overflow-hidden ${
+            tool === "hand"
+              ? "cursor-grab active:cursor-grabbing"
+              : tool === "pen" || tool === "point"
+                ? "cursor-crosshair"
+                : tool === "text"
+                  ? "cursor-text"
+                  : "cursor-cell"
           }`}
         >
+          {/* Сцена: растр, рисунки, надписи и метки. Она ездит и растёт внутри
+              рамки, поэтому всё внутри считается в долях карты. */}
+          <div
+            className="absolute inset-0 origin-top-left"
+            style={{ transform: mapViewTransform(view) }}
+            data-map-stage
+          >
           {tab.kind === "kas-khatar" ? (
             /* Формат выбирает браузер: берётся первый поддержанный <source>, JPEG
                 остаётся запасным. Статика собирается без оптимизатора картинок
@@ -552,12 +663,9 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
             </picture>
           ) : (
             /* Пустой лист: белое полотно с серой сеткой того же размера, что карта
-                (4333×3064). Сетка — SVG-узор, поэтому тянется вместе с полем. */
-            <div
-              className="block w-full bg-white"
-              style={{ aspectRatio: `${MAP_RASTER.width} / ${MAP_RASTER.height}` }}
-              data-map-blank
-            >
+                (4333×3064). Пропорции задаёт рамка, сетка — SVG-узор, поэтому
+                лист тянется вместе с полем. */
+            <div className="block h-full w-full bg-white" data-map-blank>
               <svg
                 className="block h-full w-full"
                 viewBox={`0 0 ${MAP_RASTER.width} ${MAP_RASTER.height}`}
@@ -713,13 +821,26 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
               }}
             />
           ) : null}
+          </div>
+
+          {/* Панель инструментов и масштаб стоят в рамке, а не на сцене: при
+              увеличении карты они не растут вместе с ней. */}
           <div
             className="absolute left-2 top-2 z-20 flex flex-col gap-1 rounded-lg border border-zinc-700/80 bg-zinc-950/85 p-1 shadow-lg backdrop-blur"
+            data-map-controls
             onPointerDown={(event) => event.stopPropagation()}
             onPointerMove={(event) => event.stopPropagation()}
             onPointerUp={(event) => event.stopPropagation()}
           >
             <div className="flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setTool("hand")}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "hand" ? "bg-zinc-200 text-zinc-900" : "text-zinc-300 hover:text-zinc-100"}`}
+              title="Рука: потяните карту мышью или пальцем, колесо над ней меняет масштаб"
+            >
+              Рука
+            </button>
             <button
               type="button"
               onClick={() => setTool("pen")}
@@ -937,6 +1058,49 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
                 )}
               </div>
             ) : null}
+          </div>
+
+          {/* Масштаб: «−» и «+» — то же, что колесо, но под палец; «⟲» возвращает
+              карту целиком. Подпись показывает, во сколько раз карта увеличена. */}
+          <div
+            className="absolute bottom-1 left-2 z-20 flex items-center gap-0.5 rounded border border-zinc-700/80 bg-zinc-950/85 px-1 py-0.5 text-[10px] text-zinc-300 shadow backdrop-blur"
+            data-map-controls
+            data-map-zoom
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => zoomBy(1 / MAP_ZOOM_BUTTON_STEP)}
+              title="Дальше: то же, что колесо вниз"
+              className="rounded px-1 text-zinc-300 hover:text-emerald-200"
+            >
+              −
+            </button>
+            <span
+              className="min-w-[2.6rem] text-center tabular-nums"
+              title="Масштаб карты: колесо над картой приближает и отдаляет"
+            >
+              {mapZoomLabel(view.scale)}
+            </span>
+            <button
+              type="button"
+              onClick={() => zoomBy(MAP_ZOOM_BUTTON_STEP)}
+              title="Ближе: то же, что колесо вверх"
+              className="rounded px-1 text-zinc-300 hover:text-emerald-200"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => setView(MAP_VIEW_DEFAULT)}
+              title="Сбросить масштаб и сдвиг: карта целиком"
+              className="rounded px-1 text-zinc-400 hover:text-emerald-200"
+              data-map-zoom-reset
+            >
+              ⟲
+            </button>
           </div>
 
           <span className="pointer-events-none absolute bottom-1 right-2 rounded bg-zinc-950/70 px-1.5 py-0.5 text-[9px] text-zinc-400">
