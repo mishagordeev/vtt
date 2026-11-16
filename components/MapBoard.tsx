@@ -17,6 +17,9 @@ import {
   MAP_VIEW_DEFAULT,
   MAP_ZOOM_BUTTON_STEP,
   clampMapView,
+  isMapPanButton,
+  isMapPanKey,
+  mapCursor,
   mapViewTransform,
   mapWheelScale,
   mapZoomLabel,
@@ -92,8 +95,21 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
-  /** Начало перетаскивания карты: точка нажатия и сдвиг вида в этот момент. */
-  const panRef = useRef<{ x: number; y: number; viewX: number; viewY: number } | null>(null);
+  /**
+   * Начало перетаскивания карты: точка нажатия, сдвиг вида в этот момент и
+   * признак «короткое нажатие ставит метку» (пробел и средняя кнопка — нет).
+   */
+  const panRef = useRef<{
+    x: number;
+    y: number;
+    viewX: number;
+    viewY: number;
+    ping: boolean;
+  } | null>(null);
+  /** Зажат пробел: карта тянется поверх выбранного инструмента. */
+  const spaceRef = useRef(false);
+  /** Курсор над рамкой: только там пробел тянет карту, а не прокручивает стол. */
+  const hoverRef = useRef(false);
   const currentRef = useRef<MapPoint[]>([]);
   const startRef = useRef<MapPoint | null>(null);
   const movedRef = useRef(false);
@@ -103,6 +119,9 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   // «Рука» выбрана сразу: зажать ЛКМ над картой и потянуть — обычный способ
   // осмотреться; рисование начинается только с выбранного инструмента.
   const [tool, setTool] = useState<"hand" | "pen" | "erase" | "text" | "point">("hand");
+  // Временная «Рука»: зажали пробел или среднюю кнопку — карта едет, а кисть
+  // остаётся кистью. Состояние нужно только для курсора, нажатие смотрит в ref.
+  const [tempHand, setTempHand] = useState(false);
   // Вид карты: масштаб и сдвиг сцены внутри рамки. Колесо над картой считает
   // масштаб от курсора, «Рука» тянет сцену, «⟲» возвращает карту целиком.
   const [view, setView] = useState<MapView>(MAP_VIEW_DEFAULT);
@@ -183,11 +202,54 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     setView((previous) => clampMapView(previous, size));
   }, [size]);
 
+  // Временная «Рука» с клавиатуры: пока зажат пробел, карта едет поверх любого
+  // инструмента — на большом плане не нужно бросать кисть, чтобы подвинуть вид.
+  // В поле ввода и селекте пробел остаётся пробелом: надпись «Лагерь бандитов»
+  // набирается как обычно.
+  useEffect(() => {
+    const isTyping = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.isContentEditable ||
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT"
+      );
+    };
+    const release = () => {
+      spaceRef.current = false;
+      setTempHand(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isMapPanKey(event.code) || isTyping(event.target)) return;
+      // Над картой пробел тянет её, а не прокручивает стол под рамкой.
+      if (hoverRef.current) event.preventDefault();
+      spaceRef.current = true;
+      setTempHand(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (isMapPanKey(event.code)) release();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    // Ушли из окна с зажатым пробелом — рука отпускается, иначе карта «залипнет».
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", release);
+    };
+  }, []);
+
   // Колесо над картой — масштаб, а не прокрутка стола. Слушатель нативный:
   // React вешает `onWheel` пассивным, и `preventDefault` в нём не сработал бы.
   useEffect(() => {
     const node = wrapRef.current;
     if (!node) return;
+    // Средняя кнопка тянет карту: без этого Chrome открывает автоскролл страницы.
+    const onMouseDown = (event: MouseEvent) => {
+      if (isMapPanButton(event.button)) event.preventDefault();
+    };
     const onWheel = (event: WheelEvent) => {
       // Над панелью инструментов колесо не перехватываем: там списки и поля.
       if (event.target instanceof Element && event.target.closest("[data-map-controls]")) return;
@@ -205,7 +267,11 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
       );
     };
     node.addEventListener("wheel", onWheel, { passive: false });
-    return () => node.removeEventListener("wheel", onWheel);
+    node.addEventListener("mousedown", onMouseDown);
+    return () => {
+      node.removeEventListener("wheel", onWheel);
+      node.removeEventListener("mousedown", onMouseDown);
+    };
   }, []);
 
   useEffect(() => {
@@ -290,8 +356,31 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     setError(result ? "" : "Не удалось сохранить рисунок");
   }
 
+  /** Начать сдвиг карты: точка нажатия, сдвиг вида и право на метку по клику. */
+  function startPan(event: React.PointerEvent<HTMLDivElement>, ping: boolean) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      viewX: view.x,
+      viewY: view.y,
+      ping,
+    };
+    startRef.current = pointFrom(event);
+    movedRef.current = false;
+    setErasePoint(null);
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
+    // Средняя кнопка мыши — временная «Рука»: карта едет, а инструмент не меняется.
+    const middle = isMapPanButton(event.button);
+    if (event.button !== 0 && !middle) return;
+    // Пробел, зажатый над картой, тоже делает руку временной — даже если выбрана
+    // кисть или ластик. Короткое нажатие здесь метку не ставит: это осмотр, не бросок.
+    if (middle || (event.button === 0 && spaceRef.current)) {
+      startPan(event, false);
+      return;
+    }
     // Открытый текст точки закрывается кликом по карте — и не ставит заодно метку.
     if (revealed) {
       setRevealed(null);
@@ -299,11 +388,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     }
     // «Рука»: зажатая ЛКМ тянет карту, короткое нажатие остаётся меткой.
     if (tool === "hand") {
-      event.currentTarget.setPointerCapture(event.pointerId);
-      panRef.current = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y };
-      startRef.current = pointFrom(event);
-      movedRef.current = false;
-      setErasePoint(null);
+      startPan(event, true);
       return;
     }
     if (tool === "text" || tool === "point") {
@@ -375,11 +460,13 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
 
   function handlePointerUp() {
     // Отпустили «руку»: перетаскивание закончилось, короткое нажатие — метка.
-    if (panRef.current) {
+    // Временная «Рука» (пробел и средняя кнопка) метку не ставит: ею только смотрят.
+    const pan = panRef.current;
+    if (pan) {
       panRef.current = null;
       const start = startRef.current;
       startRef.current = null;
-      if (!movedRef.current && start) ping(start);
+      if (pan.ping && !movedRef.current && start) ping(start);
       return;
     }
     if (!drawingRef.current) return;
@@ -551,6 +638,8 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     (ping) => Date.now() - ping.createdAt < PING_TTL && entryTabId(ping, tabs) === tab.id,
   );
   const texts = (map.texts ?? []).filter((entry) => entryTabId(entry, tabs) === tab.id);
+  // Курсор рамки: зажатый пробел (временная «Рука») показывает захват даже над кистью.
+  const cursor = mapCursor(tool, tempHand);
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -560,8 +649,10 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           </h2>
           <p className="text-[10px] text-zinc-600">
             Клик по карте — метка цветом игрока · «Рука» тянет карту мышью или пальцем, колесо
-            над ней меняет масштаб · мастер ставит надписи и точки: нажатие на точку открывает
-            её текст на 5 секунд, а «Видят» прячет запись от всех, кроме выбранных персонажей
+            над ней меняет масштаб · пробел или средняя кнопка мыши — та же рука поверх кисти,
+            инструмент выбирать заново не нужно · мастер ставит надписи и точки: нажатие на точку
+            открывает её текст на 5 секунд, а «Видят» прячет запись от всех, кроме выбранных
+            персонажей
           </p>
         </div>
         <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
@@ -614,21 +705,24 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+        {/* Пробел тянет карту, только пока курсор над ней: за пределами рамки он
+            остаётся обычным пробелом и не прокручивает стол. */}
         <div
           ref={wrapRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onPointerEnter={() => {
+            hoverRef.current = true;
+          }}
+          onPointerLeave={() => {
+            hoverRef.current = false;
+          }}
           style={{ aspectRatio: `${MAP_RASTER.width} / ${MAP_RASTER.height}` }}
+          data-map-temp-hand={tempHand ? "on" : "off"}
           className={`map-frame relative touch-none select-none overflow-hidden ${
-            tool === "hand"
-              ? "cursor-grab active:cursor-grabbing"
-              : tool === "pen" || tool === "point"
-                ? "cursor-crosshair"
-                : tool === "text"
-                  ? "cursor-text"
-                  : "cursor-cell"
+            cursor === "grab" ? "cursor-grab active:cursor-grabbing" : `cursor-${cursor}`
           }`}
         >
           {/* Сцена: растр, рисунки, надписи и метки. Она ездит и растёт внутри
@@ -837,7 +931,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
               type="button"
               onClick={() => setTool("hand")}
               className={`rounded px-1.5 py-0.5 text-[10px] ${tool === "hand" ? "bg-zinc-200 text-zinc-900" : "text-zinc-300 hover:text-zinc-100"}`}
-              title="Рука: потяните карту мышью или пальцем, колесо над ней меняет масштаб"
+              title="Рука: потяните карту мышью или пальцем, колесо над ней меняет масштаб · пробел или средняя кнопка мыши — та же рука поверх кисти"
             >
               Рука
             </button>

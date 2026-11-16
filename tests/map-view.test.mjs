@@ -9,12 +9,17 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  MAP_PAN_BUTTON,
+  MAP_PAN_KEY,
   MAP_VIEW_DEFAULT,
   MAP_ZOOM_BUTTON_STEP,
   MAP_ZOOM_MAX,
   MAP_ZOOM_MIN,
   clampMapScale,
   clampMapView,
+  isMapPanButton,
+  isMapPanKey,
+  mapCursor,
   mapViewTransform,
   mapWheelScale,
   mapZoomLabel,
@@ -148,8 +153,8 @@ test("MapBoard: колесо над картой меняет масштаб, «
   assert.match(board, /setTool\("hand"\)/, "кнопка «Рука» переключает инструмент");
   assert.match(
     board,
-    /panRef\.current = \{ x: event\.clientX, y: event\.clientY, viewX: view\.x, viewY: view\.y \}/,
-    "зажатая ЛКМ запоминает начало сдвига",
+    /panRef\.current = \{\s*x: event\.clientX,\s*y: event\.clientY,\s*viewX: view\.x,\s*viewY: view\.y,\s*ping,/,
+    "зажатая ЛКМ запоминает начало сдвига и право на метку",
   );
   assert.match(
     board,
@@ -158,7 +163,7 @@ test("MapBoard: колесо над картой меняет масштаб, «
   );
   assert.match(
     board,
-    /if \(!movedRef\.current && start\) ping\(start\);/,
+    /if \(pan\.ping && !movedRef\.current && start\) ping\(start\);/,
     "нажатие без движения остаётся меткой",
   );
 
@@ -181,4 +186,64 @@ test("MapBoard: колесо над картой меняет масштаб, «
     /style=\{\{ aspectRatio: `\$\{MAP_RASTER\.width\} \/ \$\{MAP_RASTER\.height\}` \}\}/,
     "рамка держит пропорции карты",
   );
+});
+
+test("временная «Рука»: пробел и средняя кнопка двигают карту, не бросая кисть", () => {
+  assert.equal(MAP_PAN_KEY, "Space", "пробел — код клавиши, а не буква");
+  assert.equal(MAP_PAN_BUTTON, 1, "средняя кнопка мыши — это button 1");
+  assert.equal(isMapPanKey(MAP_PAN_KEY), true);
+  assert.equal(isMapPanKey("Spacebar"), true, "старый Edge присылал Spacebar");
+  assert.equal(isMapPanKey("KeyS"), false, "буква s пробелом не считается");
+  assert.equal(isMapPanKey(undefined), false);
+
+  assert.equal(isMapPanButton(1), true);
+  assert.equal(isMapPanButton(0), false, "левая кнопка рисует и ставит метки");
+  assert.equal(isMapPanButton(2), false, "правая кнопка карту не тянет");
+  assert.equal(isMapPanButton(undefined), false, "пустое значение — не средняя кнопка");
+
+  assert.equal(mapCursor("pen", true), "grab", "зажатый пробел показывает руку поверх кисти");
+  assert.equal(mapCursor("pen", false), "crosshair", "без пробела кисть рисует");
+  assert.equal(mapCursor("hand"), "grab", "выбранная «Рука» показывает захват");
+  assert.equal(mapCursor("point"), "crosshair");
+  assert.equal(mapCursor("text"), "text");
+  assert.equal(mapCursor("erase"), "cell");
+
+  const board = read("components", "MapBoard.tsx");
+  assert.match(board, /isMapPanKey\(event\.code\)/, "пробел ловится по коду клавиши");
+  assert.match(board, /spaceRef\.current = true/, "зажатый пробел включает руку");
+  assert.match(
+    board,
+    /window\.addEventListener\("keyup", onKeyUp\)/,
+    "отпустили пробел — рука отпускается",
+  );
+  assert.match(
+    board,
+    /window\.addEventListener\("blur", release\)/,
+    "уход из окна не оставляет карту залипшей",
+  );
+  assert.match(
+    board,
+    /target\.tagName === "TEXTAREA"/,
+    "в поле надписи пробел остаётся пробелом",
+  );
+  assert.match(
+    board,
+    /if \(hoverRef\.current\) event\.preventDefault\(\);/,
+    "над картой пробел не прокручивает стол",
+  );
+  assert.match(board, /isMapPanButton\(event\.button\)/, "средняя кнопка тянет карту");
+  assert.match(
+    board,
+    /node\.addEventListener\("mousedown", onMouseDown\)/,
+    "средняя кнопка гасит автоскролл страницы",
+  );
+  assert.match(
+    board,
+    /middle \|\| \(event\.button === 0 && spaceRef\.current\)/,
+    "пробел временно включает руку поверх выбранного инструмента",
+  );
+  assert.match(board, /startPan\(event, false\)/, "временная рука работает без метки");
+  assert.match(board, /startPan\(event, true\)/, "настоящая «Рука» оставляет короткий клик меткой");
+  assert.match(board, /mapCursor\(tool, tempHand\)/, "курсор знает про временную руку");
+  assert.match(board, /data-map-temp-hand/, "состояние руки видно в разметке");
 });

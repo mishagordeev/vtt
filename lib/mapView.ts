@@ -7,6 +7,9 @@
  * от рамки: при масштабе 1 он всегда нулевой.
  *
  * Правила простые, но их удобнее проверять без браузера — `tests/map-view.test.mjs`.
+ *
+ * Кроме постоянной «Руки» есть временная: пока зажат пробел или средняя кнопка
+ * мыши, карта тянется поверх любого инструмента — кисть при этом не сбрасывается.
  */
 
 export interface MapView {
@@ -29,6 +32,10 @@ export interface MapPoint2D {
 
 export const MAP_ZOOM_MIN = 1;
 export const MAP_ZOOM_MAX = 8;
+/** Пробел над картой — временная «рука»: карта едет, а инструмент не меняется. */
+export const MAP_PAN_KEY = "Space";
+/** Средняя кнопка мыши (`event.button`) — та же временная «рука». */
+export const MAP_PAN_BUTTON = 1;
 /** Одно деление колеса мыши (`deltaY ≈ 100`) — плюс-минус 15 % масштаба. */
 export const MAP_ZOOM_WHEEL_STEP = 0.15;
 /** Шаг кнопок «−» и «+»: в полтора раза за нажатие — крупнее шага колеса. */
@@ -46,6 +53,33 @@ function finite(value: unknown, fallback = 0): number {
 function clampNumber(value: number, min: number, max: number): number {
   const clamped = Math.max(min, Math.min(max, value));
   return clamped === 0 ? 0 : clamped;
+}
+
+/**
+ * Клавиша временной «руки». Сравниваем код клавиши, а не букву: на любой
+ * раскладке пробел остаётся `Space` (старый Edge присылал `Spacebar`).
+ */
+export function isMapPanKey(code: unknown): boolean {
+  return code === MAP_PAN_KEY || code === "Spacebar";
+}
+
+/**
+ * Средняя кнопка мыши вместо инструмента: `button` у колеса — 1. Левая (0)
+ * по-прежнему рисует и ставит метки, правая ничего не делает.
+ */
+export function isMapPanButton(button: unknown): boolean {
+  return typeof button === "number" && button === MAP_PAN_BUTTON;
+}
+
+/**
+ * Курсор рамки карты: временная «рука» и выбранная «Рука» показывают захват,
+ * кисть и точка — перекрестие, надпись — текстовый курсор, ластик — клетку.
+ */
+export function mapCursor(tool: string, tempHand = false): "grab" | "crosshair" | "text" | "cell" {
+  if (tempHand || tool === "hand") return "grab";
+  if (tool === "pen" || tool === "point") return "crosshair";
+  if (tool === "text") return "text";
+  return "cell";
 }
 
 /** Масштаб в допустимых пределах; мусор — «карта целиком». */
