@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatTime, nameColor } from "@/lib/client";
 import type { ChatMessage, Player, RollResult } from "@/lib/types";
 
@@ -147,26 +147,64 @@ const BOTTOM_SLACK = 80;
 export function ChatFeed({ messages, me, gm, players, connected, onDelete }: ChatFeedProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
+  /** Лента стоит не у низа: в шапке появляется «⤓ вниз». */
+  const [away, setAway] = useState(false);
+  /** Id строк, пришедших пока лента стояла выше: точка у «Чата» — их число. */
+  const unreadRef = useRef<Set<string>>(new Set());
+  const [unread, setUnread] = useState(0);
+  /** Id всех строк ленты: по разнице с ним и находятся новые. */
+  const knownRef = useRef<Set<string>>(new Set());
   const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
   /** Цвет профиля автора: тем же цветом он метит карту и стоит у стола. */
   const colorOf = (author: string) =>
     players.find((player) => player.name.trim().toLowerCase() === author.trim().toLowerCase())
       ?.color ?? "";
 
+  /** Всё прочитано: точка у заголовка гаснет. */
+  const markAllRead = () => {
+    unreadRef.current.clear();
+    setUnread(0);
+  };
+
+  /** Вернуть ленту к низу: новые строки на виду, счётчик гаснет. */
+  const jumpToBottom = () => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickRef.current = true;
+    markAllRead();
+    setAway(false);
+  };
+
   /**
    * Низ ленты. Свой ход — в том числе бросок — показываем всегда: иначе его
    * результат остаётся за краем, под панелью с кубиками, потому что игрок
    * читал историю выше. Чужое сообщение догоняем, только если лента и так
-   * стоит в конце: чтение выше не дёргаем.
+   * стоит в конце: чтение выше не дёргаем, а пришедшие строки считаем
+   * непрочитанными — их число видно точкой у «Чата».
    */
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const last = messages[messages.length - 1];
     const mine = !!last && last.author.trim().toLowerCase() === me.trim().toLowerCase();
-    if (!stickRef.current && !mine) return;
+    // Новые строки — те, чьих id не было в прошлом списке. Удалённую строку
+    // из непрочитанного убираем: счётчик не должен врать.
+    const ids = new Set(messages.map((message) => message.id));
+    const fresh = messages.filter((message) => !knownRef.current.has(message.id));
+    knownRef.current = ids;
+    for (const id of unreadRef.current) {
+      if (!ids.has(id)) unreadRef.current.delete(id);
+    }
+    if (!stickRef.current && !mine) {
+      for (const message of fresh) unreadRef.current.add(message.id);
+      setUnread(unreadRef.current.size);
+      return;
+    }
     el.scrollTop = el.scrollHeight;
     stickRef.current = true;
+    markAllRead();
+    setAway(false);
   }, [messages, me]);
 
   /**
@@ -190,20 +228,49 @@ export function ChatFeed({ messages, me, gm, players, connected, onDelete }: Cha
     <section className="flex min-h-[24vh] max-h-[45vh] flex-1 flex-col border-t border-zinc-800/80 lg:max-h-none lg:min-h-0">
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Чат</h2>
-        <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+        {unread > 0 ? (
           <span
-            className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
-            aria-hidden
-          />
-          {connected ? "на связи" : "нет связи"}
-        </span>
+            data-chat-unread={unread}
+            role="status"
+            aria-label={`Новых сообщений: ${unread}`}
+            title={`Новых сообщений: ${unread} — лента стоит выше`}
+            className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-500 px-1 py-0.5 font-mono text-[10px] font-semibold leading-none text-emerald-950"
+          >
+            {unread > 99 ? "99+" : unread}
+          </span>
+        ) : null}
+        <div className="ml-auto flex items-center gap-2">
+          {away || unread > 0 ? (
+            <button
+              type="button"
+              data-chat-down
+              onClick={jumpToBottom}
+              title="К последним сообщениям"
+              aria-label="Прокрутить ленту вниз"
+              className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] leading-none text-emerald-200 transition hover:border-emerald-400/70 hover:bg-emerald-500/20"
+            >
+              ⤓ вниз
+            </button>
+          ) : null}
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
+              aria-hidden
+            />
+            {connected ? "на связи" : "нет связи"}
+          </span>
+        </div>
       </div>
 
       <div
         ref={listRef}
         onScroll={(event) => {
           const el = event.currentTarget;
-          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+          stickRef.current = atBottom;
+          setAway(!atBottom);
+          // Вернулись к низу — всё прочитано, точка у заголовка гаснет.
+          if (atBottom) markAllRead();
         }}
         className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pb-3"
       >

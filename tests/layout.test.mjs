@@ -725,7 +725,7 @@ test("лента держит низ: свой бросок и смена выс
   assert.match(feed, /const BOTTOM_SLACK = 80;/, "порог «лента в конце» назван константой");
   assert.match(
     feed,
-    /stickRef\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < BOTTOM_SLACK;/,
+    /const atBottom = el\.scrollHeight - el\.scrollTop - el\.clientHeight < BOTTOM_SLACK;/,
     "прокрутка вверх снимает прилипание к низу",
   );
 
@@ -735,7 +735,7 @@ test("лента держит низ: свой бросок и смена выс
     /const mine = !!last && last\.author\.trim\(\)\.toLowerCase\(\) === me\.trim\(\)\.toLowerCase\(\);/,
     "свой ход узнаётся по автору последнего сообщения",
   );
-  assert.match(feed, /if \(!stickRef\.current && !mine\) return;/, "чужое сообщение не дёргает чтение выше");
+  assert.match(feed, /if \(!stickRef\.current && !mine\) \{/, "чужое сообщение не дёргает чтение выше");
   assert.match(feed, /\}, \[messages, me\]\);/, "низ пересчитывается на новые сообщения и смену игрока");
 
   // Смена высоты без новых строк: окно стало ниже — низ ленты возвращаем сами.
@@ -749,6 +749,51 @@ test("лента держит низ: свой бросок и смена выс
   );
   assert.match(feed, /observer\.observe\(el\);/, "наблюдаем саму ленту, а не окно");
   assert.match(feed, /return \(\) => observer\.disconnect\(\);/, "наблюдатель снимается вместе с лентой");
+});
+
+test("непрочитанное: у «Чата» точка с числом и кнопка «⤓ вниз», когда лента стоит выше", () => {
+  const feed = read("components", "ChatFeed.tsx");
+
+  // Счётчик — по id пришедших строк, а не по «на глаз»: удаление не врёт.
+  assert.match(
+    feed,
+    /const unreadRef = useRef<Set<string>>\(new Set\(\)\);/,
+    "непрочитанное хранится набором id",
+  );
+  assert.match(
+    feed,
+    /const fresh = messages\.filter\(\(message\) => !knownRef\.current\.has\(message\.id\)\);/,
+    "новые строки находятся по id",
+  );
+  assert.match(
+    feed,
+    /for \(const message of fresh\) unreadRef\.current\.add\(message\.id\);/,
+    "пришедшие строки становятся непрочитанными",
+  );
+  assert.match(feed, /setUnread\(unreadRef\.current\.size\);/, "число у заголовка — размер набора");
+  assert.match(feed, /if \(!ids\.has\(id\)\) unreadRef\.current\.delete\(id\);/, "удалённая строка выбывает из счёта");
+
+  // Точка у заголовка и кнопка вниз — в шапке ленты, над списком сообщений.
+  const headerAt = feed.indexOf(">Чат</h2>");
+  const badgeAt = feed.indexOf("data-chat-unread");
+  const downAt = feed.indexOf("data-chat-down");
+  const listAt = feed.indexOf("ref={listRef}");
+  assert.ok(headerAt > 0 && badgeAt > headerAt, "точка с числом стоит у самого заголовка «Чат»");
+  assert.ok(downAt > badgeAt && downAt < listAt, "кнопка «вниз» в шапке, над лентой");
+  assert.match(feed, /data-chat-unread=\{unread\}/, "в точке видно именно число непрочитанных");
+  assert.match(feed, /\{unread > 99 \? "99\+" : unread\}/, "больше сотни — «99+», шапка не растягивается");
+  assert.match(feed, /⤓ вниз/, "у кнопки есть подпись «⤓ вниз»");
+  assert.match(feed, /aria-label="Прокрутить ленту вниз"/, "у кнопки есть подпись для чтения с экрана");
+  assert.match(feed, /\{unread > 0 \? \(/, "точка появляется только когда есть непрочитанное");
+  assert.match(feed, /\{away \|\| unread > 0 \? \(/, "кнопка «вниз» появляется, когда лента не у низа");
+
+  // Прокрутка вниз руками и кнопкой снимает пометку.
+  assert.match(feed, /if \(atBottom\) markAllRead\(\);/, "возврат к низу гасит точку");
+  assert.match(
+    feed,
+    /el\.scrollTop = el\.scrollHeight;[\s\S]{0,200}markAllRead\(\);/,
+    "кнопка ведёт к низу и снимает пометку",
+  );
 });
 
 test("список персонажей больше не занимает вкладку: лист идёт на всю ширину", () => {
