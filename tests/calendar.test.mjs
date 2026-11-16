@@ -5,23 +5,30 @@ import {
   DAYS_PER_MONTH,
   FIRST_YEAR,
   HOLIDAYS,
+  MAX_DAY_INDEX,
+  MAX_YEAR,
+  MIN_YEAR,
   MONTHS,
   MONTH_RANGE,
   MONTH_TEMPERATURE,
   SIGNS,
+  SILENT_DAYS,
   WEATHER_KINDS,
   WEEKDAYS,
   YEAR_DAYS,
+  clampYear,
   composeBirth,
   dayIndex,
   describeDay,
   describeClock,
   formatBirth,
   formatClock,
+  monthCells,
   moonPhases,
   natalChart,
   parseBirth,
   partOfDay,
+  silentDayIndex,
   weatherAt,
   worldClock,
 } from "../lib/calendar.ts";
@@ -65,6 +72,48 @@ test("календарь: номер дня и обратный разбор с�
     assert.equal(info.day, day);
   }
   assert.equal(dayIndex(FIRST_YEAR + 1, 1, 1), YEAR_DAYS);
+});
+
+test("календарь: сетка месяца и Немые дни — готовые ячейки для выбора даты", () => {
+  const cells = monthCells(FIRST_YEAR, 3);
+  assert.equal(cells.length, DAYS_PER_MONTH);
+  assert.equal(cells[0].index, dayIndex(FIRST_YEAR, 3, 1));
+  assert.equal(cells[0].day, 1);
+  assert.equal(cells[29].day, 30);
+  assert.equal(cells[0].weekday, WEEKDAYS[0]);
+  assert.equal(cells[5].weekday, WEEKDAYS[5]);
+
+  // Праздник стоит в своей ячейке и виден по календарю, обычный день — пустой.
+  const holiday = HOLIDAYS.find((entry) => entry.month === 3);
+  assert.ok(holiday, "в третьем месяце есть праздник");
+  assert.equal(cells[holiday.day - 1].holiday?.name, holiday.name);
+  assert.equal(cells[0].holiday, null);
+
+  // Немые дни — месяц 0: пять ячеек сразу после 30 Адара, без дня шестицы.
+  const silent = monthCells(FIRST_YEAR, 0);
+  assert.equal(silent.length, SILENT_DAYS);
+  assert.ok(silent.every((cell) => cell.silent && cell.weekday === "" && cell.sign === null));
+  assert.equal(silent[0].index, dayIndex(FIRST_YEAR, 12, 30) + 1);
+  assert.equal(silent[0].index, silentDayIndex(FIRST_YEAR, 1));
+  assert.equal(silent[4].index, silentDayIndex(FIRST_YEAR, 5));
+  assert.equal(silent[4].day, 5);
+
+  // Каждая ячейка разбирается обратно в тот же год, месяц и день.
+  for (const cell of monthCells(FIRST_YEAR + 1, 7)) {
+    const info = describeDay(cell.index);
+    assert.equal(info.year, FIRST_YEAR + 1);
+    assert.equal(info.month, 7);
+    assert.equal(info.day, cell.day);
+  }
+
+  // Год не выходит за потолок комнаты: двадцать лет от начала счёта.
+  assert.equal(MAX_DAY_INDEX, YEAR_DAYS * 20);
+  assert.equal(monthCells(MAX_YEAR, 0).at(-1).index, MAX_DAY_INDEX - 1);
+  assert.equal(monthCells(MAX_YEAR + 5, 1)[0].index, dayIndex(MAX_YEAR, 1, 1));
+  assert.equal(monthCells(FIRST_YEAR - 5, 1)[0].index, 0);
+  assert.equal(clampYear(MAX_YEAR + 5), MAX_YEAR);
+  assert.equal(clampYear(MIN_YEAR - 5), MIN_YEAR);
+  assert.equal(clampYear(Number.NaN), MIN_YEAR);
 });
 
 test("день недели идёт шестицей, праздники стоят на своих днях", () => {

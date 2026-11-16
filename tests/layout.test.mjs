@@ -596,4 +596,29 @@ test("после смены сборки стол сам перезагружа�
   assert.match(errorPage, /onClick=\{\(\) => reset\(\)\}/, "вторая кнопка повторяет отрисовку без перезагрузки");
   assert.match(errorPage, /ChunkLoadError/, "про устаревшую сборку страница должна говорить отдельно");
 });
+test("часы кампании: дату стола выбирают календарём, а не только сдвигами", () => {
+  const clock = read("components", "WorldClock.tsx");
+  assert.match(
+    clock,
+    /import \{ CalendarPicker \} from "@\/components\/CalendarPicker"/,
+    "сетка календаря — отдельный компонент рядом с часами",
+  );
+  assert.match(clock, /<CalendarPicker/, "календарь должен стоять в часах кампании");
+  assert.match(
+    clock,
+    /onPick=\{\(index\) => void act\(\{ action: "set", day: index \}\)\}/,
+    "клик по дню выставляет дату тем же действием set, что и раньше",
+  );
+  assert.match(clock, /gm=\{gm\}/, "календарь знает, мастер ли смотрит");
+
+  const picker = read("components", "CalendarPicker.tsx");
+  assert.match(picker, /monthCells\(year, month\)/, "сетка месяца считается в lib/calendar.ts");
+  assert.match(picker, /grid-cols-6/, "шестица — шесть колонок, 30 дней без остатка");
+  assert.match(picker, /Немые дни/, "пять Немых дней — отдельный месяц года");
+  assert.match(picker, /SILENT_NOTE/, "про Немые дни сказано тут же, а не только в книге");
+  assert.match(picker, /disabled=\{!canPick\}/, "дату выбирает только мастер");
+  assert.match(picker, /onPick\(cell\.index\)/, "клик по дню отдаёт номер дня от начала календаря");
+  assert.match(picker, /cell\.holiday/, "праздники видны в сетке");
+});
+
 

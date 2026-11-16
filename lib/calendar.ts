@@ -323,6 +323,48 @@ export function describeDay(index: number): GameDateInfo {
   };
 }
 
+/**
+ * Потолок календаря кампании: двадцать лет от начала счёта. Дальше не игра,
+ * а хроника — столько же дней хранит комната (`MAX_WORLD_DAY` в `lib/store.ts`).
+ */
+export const MAX_DAY_INDEX = YEAR_DAYS * 20;
+export const MIN_YEAR = FIRST_YEAR;
+export const MAX_YEAR = FIRST_YEAR + MAX_DAY_INDEX / YEAR_DAYS - 1;
+
+/** Год в границах календаря кампании: для сетки и полей выбора даты. */
+export function clampYear(year: number): number {
+  const safe = Number.isFinite(year) ? Math.round(year) : FIRST_YEAR;
+  return Math.max(MIN_YEAR, Math.min(MAX_YEAR, safe));
+}
+
+/** Номер дня для Немого дня 1–5 указанного года. */
+export function silentDayIndex(year: number, day: number): number {
+  const safeYear = clampYear(year);
+  const safeDay = Math.max(1, Math.min(SILENT_DAYS, Math.round(day)));
+  return (safeYear - FIRST_YEAR) * YEAR_DAYS + DAYS_PER_MONTH * 12 + safeDay - 1;
+}
+
+/**
+ * Сетка месяца для календаря мастера: 30 дней обычного месяца или пять
+ * Немых дней при `month = 0`. Ячейки — те же даты, что и на столе, вместе
+ * с днём шестицы и праздником, поэтому календарь и часы не расходятся.
+ */
+export function monthCells(year: number, month: number): GameDateInfo[] {
+  const safeYear = clampYear(year);
+  const rawMonth = Number.isFinite(month) ? Math.round(month) : 0;
+  const safeMonth = Math.max(0, Math.min(MONTHS.length, rawMonth));
+  const count = safeMonth === 0 ? SILENT_DAYS : DAYS_PER_MONTH;
+  const cells: GameDateInfo[] = [];
+  for (let day = 1; day <= count; day += 1) {
+    cells.push(
+      describeDay(
+        safeMonth === 0 ? silentDayIndex(safeYear, day) : dayIndex(safeYear, safeMonth, day),
+      ),
+    );
+  }
+  return cells;
+}
+
 /** «14:05» — часы кампании. */
 export function formatClock(hour: number, minute: number): string {
   const safeHour = ((Math.floor(hour) % 24) + 24) % 24;

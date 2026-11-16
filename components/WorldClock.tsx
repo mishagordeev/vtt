@@ -10,6 +10,7 @@ import {
   worldClock,
 } from "@/lib/calendar";
 import type { WorldState } from "@/lib/types";
+import { CalendarPicker } from "@/components/CalendarPicker";
 
 interface WorldClockProps {
   world: WorldState;
@@ -72,6 +73,8 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
   const [busy, setBusy] = useState(false);
   /** Погода свёрнута в одну строку; по клику раскрывается целиком. */
   const [open, setOpen] = useState(false);
+  /** Календарь: сетка месяца под часами, дату выбирает мастер. */
+  const [picking, setPicking] = useState(false);
 
   // Минута игры = минута за столом: раз в 20 секунд пересчитываем стрелки.
   useEffect(() => {
@@ -103,10 +106,25 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div className="min-w-0">
-          <p className="truncate text-sm text-zinc-100">
-            <span className="mr-1.5 text-zinc-500">📅</span>
-            {date.label}
-            {date.weekday ? <span className="text-zinc-500"> · {date.weekday}</span> : null}
+          <p className="flex min-w-0 items-baseline gap-1.5 text-sm text-zinc-100">
+            <span className="text-zinc-500">📅</span>
+            <span className="truncate">{date.label}</span>
+            {date.weekday ? (
+              <span className="shrink-0 text-zinc-500">· {date.weekday}</span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setPicking((value) => !value)}
+              aria-expanded={picking}
+              title={
+                picking
+                  ? "Свернуть календарь"
+                  : "Календарь Кас-Хатара: месяц, праздники, Немые дни; мастер выбирает дату"
+              }
+              className="shrink-0 rounded border border-zinc-700 px-1 text-[10px] text-zinc-400 transition hover:border-sky-400/60 hover:text-sky-200"
+            >
+              {picking ? "▴" : "▾"}
+            </button>
           </p>
           <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">
             {date.silent ? "немой день" : `${date.season} · ${date.sign?.name ?? "—"}`}
@@ -198,6 +216,17 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
             </span>
             <span className="col-span-2 text-zinc-400">{moonTitle}</span>
           </div>
+        </div>
+      ) : null}
+
+      {picking ? (
+        <div className="mt-2">
+          <CalendarPicker
+            current={date}
+            gm={gm}
+            disabled={busy}
+            onPick={(index) => void act({ action: "set", day: index })}
+          />
         </div>
       ) : null}
 
