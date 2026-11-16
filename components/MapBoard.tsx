@@ -641,7 +641,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   // Курсор рамки: зажатый пробел (временная «Рука») показывает захват даже над кистью.
   const cursor = mapCursor(tool, tempHand);
   return (
-    <section>
+    <section className="flex min-h-0 flex-col lg:flex-1">
       {/* Заголовок вкладки и счётчик меток — и больше ничего: абзац-пояснение
           под заголовком убран, он отнимал высоту у самой карты, а те же правила
           есть в подсказках кнопок («Рука», «Точка», «Видят»). */}
@@ -941,7 +941,12 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
         </div>
       </div>
 
-      <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+      {/* Поле карты. На телефоне высоту задаёт сама рамка (пропорции растра по
+          ширине колонки), на широком экране — это остаток высоты стола, и рамка
+          вписывается в него целиком (`.pp-map-field` в `app/globals.css`).
+          Страница при этом не прокручивается: двигается только карта внутри
+          рамки — перетаскиванием и колесом. */}
+      <div className="pp-map-field mt-2" data-map-field>
         {/* Пробел тянет карту, только пока курсор над ней: за пределами рамки он
             остаётся обычным пробелом и не прокручивает стол. */}
         <div
@@ -958,7 +963,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           }}
           style={{ aspectRatio: `${MAP_RASTER.width} / ${MAP_RASTER.height}` }}
           data-map-temp-hand={tempHand ? "on" : "off"}
-          className={`map-frame relative touch-none select-none overflow-hidden ${
+          className={`map-frame relative touch-none select-none overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40 ${
             cursor === "grab" ? "cursor-grab active:cursor-grabbing" : `cursor-${cursor}`
           }`}
         >

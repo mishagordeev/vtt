@@ -1115,4 +1115,65 @@ test("под заголовком карты нет абзаца-пояснен�
   assert.match(board, /Видят/, "выбор адресатов записи остался в панели");
 });
 
+test("стол статичен на странице: прокрутки нет, двигается только карта", () => {
+  const room = read("components", "RoomScreen.tsx");
+  const desk = read("components", "DeskPanel.tsx");
+  const board = read("components", "MapBoard.tsx");
+  const css = read("app", "globals.css");
+
+  // Страница стола ровно в высоту окна, а у колонки со столом своей прокрутки
+  // больше нет: раньше она прокручивалась (`lg:overflow-y-auto`) и карта
+  // уезжала вверх вместе с ней.
+  assert.match(room, /flex min-h-dvh flex-col lg:h-dvh/, "на широком экране стол ровно в высоту окна");
+  assert.match(
+    room,
+    /lg:min-h-0 lg:flex-1 lg:overflow-hidden/,
+    "у колонки стола на широком экране нет прокрутки",
+  );
+  assert.ok(!/lg:overflow-y-auto/.test(room), "собственной прокрутки у стола не осталось");
+
+  // Стол — колонка на всю высоту: часы сверху, карта забирает остаток.
+  assert.match(
+    desk,
+    /className="flex h-full min-h-0 flex-col gap-5 px-4 py-4"/,
+    "стол растянут на всю высоту и раскладывается колонкой",
+  );
+  assert.ok(!/space-y-5/.test(desk), "отступы задаёт gap: space-y добавлял липкой шапке лишний отступ");
+
+  // Поле карты — остаток высоты стола, рамка вписана в него целиком.
+  assert.match(
+    board,
+    /<section className="flex min-h-0 flex-col lg:flex-1">/,
+    "карта забирает остаток высоты у часов",
+  );
+  assert.match(board, /<div className="pp-map-field mt-2" data-map-field>/, "у поля карты есть свой класс");
+  assert.match(css, /\.pp-map-field\s*\{[^}]*min-height: 0/, "поле может ужиматься, а не растягивать стол");
+  assert.match(
+    css,
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-map-field\s*\{[^}]*flex: 1 1 auto[^}]*overflow: hidden/,
+    "на широком экране поле занимает остаток и не выпускает карту за свои края",
+  );
+  // Вписывание — absolute + inset 0 + margin auto + max-*: при width: 100% с
+  // max-height браузер ужимает одну сторону и растягивает карту.
+  assert.match(
+    css,
+    /\.pp-map-field > \.map-frame\s*\{[^}]*position: absolute[^}]*inset: 0[^}]*margin: auto[^}]*max-width: 100%[^}]*max-height: 100%/,
+    "рамка вписывается в поле с сохранением пропорций",
+  );
+  assert.match(
+    board,
+    /style=\{\{ aspectRatio: `\$\{MAP_RASTER\.width\} \/ \$\{MAP_RASTER\.height\}` \}\}/,
+    "пропорции рамки — пропорции растра: по ним считаются масштаб и клик",
+  );
+
+  // Раскрытый календарь больше не вытесняет карту: на широком экране у панели
+  // часов есть предел высоты.
+  assert.match(
+    css,
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-sticky-clock\s*\{[^}]*max-height: calc\(100dvh - var\(--pp-top-bar-h\) - 16rem\)/,
+    "место под карту зарезервировано и при раскрытом календаре",
+  );
+});
+
+
 

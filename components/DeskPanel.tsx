@@ -22,18 +22,18 @@ interface DeskPanelProps {
 /**
  * Стол: часы кампании над картой и сама карта Кас-Хатара.
  *
- * Часы и погода липкие (`pp-sticky-clock` в `app/globals.css`): карта
- * прокручивается под ними, а дата, время и погода остаются на виду. Своей
- * прокрутки у стола нет намеренно: липкие блоки внутри области с
- * `overflow-y: auto`, которая сама не прокручивается, к экрану не липнут —
- * на широком экране прокручивается колонка в `RoomScreen`, на телефоне весь
- * документ. Карта по-прежнему единственный блок под часами, а вкладки и
- * инструменты карты липнут следом за часами.
+ * Стол — колонка на всю высоту окна: часы сверху, карта забирает остаток.
+ * Часы и погода липкие (`pp-sticky-clock` в `app/globals.css`) и на телефоне
+ * остаются на виду, пока прокручивается страница. Своей прокрутки у стола нет
+ * намеренно: на широком экране страница не прокручивается вовсе — стол
+ * статичен, а двигается только карта внутри своей рамки (перетаскивание и
+ * колесо). `h-full` вместе с `min-h-0` нужен, чтобы колонка не разрослась по
+ * содержимому и не вытолкнула карту из окна.
  *
  * Прежний блок «Комната» под картой (код, ссылка, мастер, хранилище) убран:
  * код комнаты, имя и «Выйти» стоят в верхней панели на всю ширину, а пинг и
  * состояние хранилища — там же и в диагностике мастера. Под картой ничего не
- * осталось, поэтому на телефоне до нижней плашки меньше прокрутки.
+ * осталось, поэтому карте достаётся вся оставшаяся высота.
  */
 export function DeskPanel({
   me,
@@ -47,19 +47,17 @@ export function DeskPanel({
   onWorldAction,
 }: DeskPanelProps) {
   return (
-    <div className="px-4 py-4">
-      <div className="space-y-5">
-        <WorldClock world={world} clockOffset={clockOffset} gm={me.trim().toLowerCase() === gm.trim().toLowerCase()} onAction={onWorldAction} />
+    <div className="flex h-full min-h-0 flex-col gap-5 px-4 py-4">
+      <WorldClock world={world} clockOffset={clockOffset} gm={me.trim().toLowerCase() === gm.trim().toLowerCase()} onAction={onWorldAction} />
 
-        <MapBoard
-          me={me}
-          gm={gm}
-          map={map}
-          characters={characters}
-          pingColor={myColor}
-          onAction={onMapAction}
-        />
-      </div>
+      <MapBoard
+        me={me}
+        gm={gm}
+        map={map}
+        characters={characters}
+        pingColor={myColor}
+        onAction={onMapAction}
+      />
     </div>
   );
 }
