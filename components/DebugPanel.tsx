@@ -268,12 +268,6 @@ export function DebugPanel({
                 </dd>
                 <dt className="text-zinc-500">источник</dt>
                 <dd className="text-zinc-300">{storage?.source ?? "—"}</dd>
-                <dt className="text-zinc-500">пинг</dt>
-                <dd className="text-zinc-300">
-                  {storage?.latencyMs === null || storage?.latencyMs === undefined
-                    ? "—"
-                    : `${storage.latencyMs} мс`}
-                </dd>
                 <dt className="text-zinc-500">запись</dt>
                 <dd className="text-zinc-300">
                   {storage?.canWrite === null || storage?.canWrite === undefined

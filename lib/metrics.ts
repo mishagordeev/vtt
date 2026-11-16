@@ -240,6 +240,24 @@ export function usageSnapshot(): UsageSnapshot {
   return store.snapshot;
 }
 
+/** Запросы комнаты: и снимок `/state`, и голова `/rev` — оба про стол. */
+const ROOM_ENDPOINT = "/api/rooms/";
+
+/**
+ * Пинг стола — время последнего удачного ответа на запрос комнаты.
+ *
+ * Верхней панели нужно одно число, а не вся история: живой опрос ходит в голову
+ * комнаты каждые 3–8 с, поэтому значение остаётся свежим само, без отдельного
+ * запроса ради замера. Неудачные попытки не считаются: у таймаута там 20 с,
+ * и он подменил бы «сколько идёт стол» на «сколько ждали впустую».
+ */
+export function lastRoomPingMs(snapshot: UsageSnapshot): number | null {
+  const entry = snapshot.recent.find(
+    (item) => item.ok && item.label.startsWith(ROOM_ENDPOINT),
+  );
+  return entry ? entry.ms : null;
+}
+
 export function subscribeUsage(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

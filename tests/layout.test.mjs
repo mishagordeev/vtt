@@ -363,6 +363,47 @@ test("верхняя панель комнаты на всю ширину: «В�
   assert.match(bar, /onLeave/, "выход из стола — кнопкой на панели");
   assert.match(bar, />\s*Выйти\s*</, "кнопка выхода подписана «Выйти»");
   assert.match(bar, /<ThemeToggle variant="bar" \/>/, "переключатель темы стоит на панели");
+  assert.match(bar, /lastRoomPingMs\(usage\)/, "пинг берётся из измерений клиента API");
+  assert.match(
+    bar,
+    /\{pingKnown \? `\$\{ping\} мс` : "—"\}/,
+    "рядом с точкой связи видно время ответа сервера",
+  );
+  assert.match(bar, /пинг/, "подпись «пинг» на панели есть");
+  assert.match(
+    bar,
+    /usage\.recent\.find|lastRoomPingMs/,
+    "пинг — это последний запрос комнаты, а не отдельный замер",
+  );
+});
+
+test("описание комнаты убрано из-под карты, а пинг переехал в верхнюю панель", () => {
+  const room = read("components", "RoomScreen.tsx");
+  const desk = read("components", "DeskPanel.tsx");
+  const bar = read("components", "TopBar.tsx");
+  const debug = read("components", "DebugPanel.tsx");
+  const metrics = read("lib", "metrics.ts");
+
+  // Под картой ничего не осталось: блок «Комната» (код, ссылка, мастер,
+  // хранилище) убран целиком вместе со своим запросом /api/health.
+  assert.ok(!/Хранилище/.test(desk), "состояния хранилища под картой больше нет");
+  assert.ok(!/Мастер стола/.test(desk), "имя мастера под картой больше не дублируется");
+  assert.ok(!/describeStorage/.test(desk), "подпись хранилища под картой убрана вместе с блоком");
+  assert.ok(!/api\/health/.test(desk), "стол больше не спрашивает здоровье хранилища ради подписи");
+  assert.ok(!/code\s*:\s*string/.test(desk), "проп code у стола больше не нужен");
+  assert.match(desk, /<WorldClock/, "часы кампании остались над картой");
+  assert.match(desk, /<MapBoard/, "карта осталась единственным блоком под часами");
+  assert.ok(
+    !/<DeskPanel[\s\S]{0,120}code=\{code\}/.test(room),
+    "комната не передаёт код комнаты в стол",
+  );
+
+  // Пинг — пинг стола: последний удачный запрос комнаты, без отдельного замера.
+  assert.match(metrics, /export function lastRoomPingMs/, "пинг считается в lib/metrics");
+  assert.match(metrics, /item\.ok && item\.label\.startsWith\(ROOM_ENDPOINT\)/, "неудачные запросы пингом не считаются");
+  assert.ok(!/<dt className="text-zinc-500">пинг<\/dt>/.test(debug), "поле «пинг» ушло из диагностики мастера");
+  assert.match(debug, /storage\.latencyMs/, "задержка хранилища в подписи диагностики осталась");
+  assert.match(bar, /title=\{pingHint\}/, "у пинга есть подсказка: что именно измерено");
 });
 
 

@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import {
+  lastRoomPingMs,
+  subscribeUsage,
+  usageSnapshot,
+  type UsageSnapshot,
+} from "@/lib/metrics";
 import { APP_VERSION } from "@/lib/version";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -29,8 +35,14 @@ interface TopBarProps {
  *
  * Раньше шапка жила внутри правой панели и делила её 352 px с чатом и кубиками:
  * код комнаты, имя игрока и выход прижимались к ряду костей. Теперь это
- * отдельная полоса над столом — «Вторые», сборка, код комнаты, кто за столом,
- * «Выйти» и переключатель темы; стол и правая панель остались под ней как были.
+ * отдельная полоса над столом — «Вторые», сборка, код комнаты, пинг, кто за
+ * столом, «Выйти» и переключатель темы; стол и правая панель остались под ней
+ * как были.
+ *
+ * Пинг стоит рядом с точкой связи и говорит, за сколько отвечает сервер:
+ * это время последнего удачного запроса комнаты (`lastRoomPingMs`), а живой
+ * опрос головы обновляет его каждые 3–8 с. Раньше эта цифра жила в диагностике
+ * мастера — теперь её видит каждый за столом.
  *
  * Полоса липкая (`sticky`), потому что на телефоне страница прокручивается
  * целиком: имя, код и «Выйти» должны оставаться под рукой, а не уезжать вверх
@@ -47,6 +59,28 @@ export function TopBar({
   onLeave,
 }: TopBarProps) {
   const isGM = me.trim().length > 0 && me.trim().toLowerCase() === gm.trim().toLowerCase();
+
+  // Счётчики обмена ведёт клиент API: пинг — оттуда же, отдельного запроса ради
+  // замера не нужно.
+  const usage = useSyncExternalStore<UsageSnapshot>(
+    subscribeUsage,
+    usageSnapshot,
+    usageSnapshot,
+  );
+  const ping = lastRoomPingMs(usage);
+  const pingKnown = connected && ping !== null;
+  const pingTone = !pingKnown
+    ? "text-zinc-600"
+    : ping < 400
+      ? "text-emerald-300"
+      : ping < 1200
+        ? "text-amber-300"
+        : "text-rose-300";
+  const pingHint = !connected
+    ? "Нет связи с сервером — пинг неизвестен"
+    : ping === null
+      ? "Пинг: ответов комнаты ещё не было"
+      : `Пинг ${ping} мс — столько шёл последний ответ сервера на запрос комнаты. Живой опрос обновляет его сам, каждые 3–8 с`;
 
   // Пока панель на экране, угловая кнопка темы не нужна: у переключателя есть
   // своё место здесь. Правило `body[data-top-bar="room"]` — в app/globals.css.
@@ -92,6 +126,13 @@ export function TopBar({
 
       {/* Кто за столом и что с этим можно сделать — справа. */}
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
+        <span
+          className={`shrink-0 font-mono text-[10px] ${pingTone}`}
+          title={pingHint}
+        >
+          <span className="hidden sm:inline">пинг </span>
+          {pingKnown ? `${ping} мс` : "—"}
+        </span>
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${connected ? "bg-emerald-400" : "bg-rose-500"}`}
           title={connected ? "Ответы сервера приходят" : "Нет связи с сервером"}

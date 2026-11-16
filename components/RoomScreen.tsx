@@ -1148,7 +1148,6 @@ export default function RoomScreen({ code }: { code: string }) {
             и кубики остаются под рукой. */}
         <section className="scroll-thin min-h-[60vh] lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
           <DeskPanel
-            code={code}
             me={me}
             gm={gm}
             characters={characters}
