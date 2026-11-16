@@ -783,7 +783,15 @@ test("Python-сервер: голова комнаты растёт на зап�
 
   const third = await call(baseUrl, "GET", `/api/rooms/${code}/rev`);
   assert.ok(third.payload.rev > first.payload.rev, "после сообщения rev не вырос");
-  assert.ok(third.payload.seen["Игрок"] > 0, "имя пропало из головы, хотя его не убирали");
+  // Живой опрос головы идёт без имени: присутствие тогда не читается вовсе,
+  // и проверка стоит одного ключа вместо двух.
+  assert.deepEqual(third.payload.seen, {}, "без имени голова читает ключ присутствия");
+  const named = await call(
+    baseUrl,
+    "GET",
+    `/api/rooms/${code}/rev?name=${encodeURIComponent("Игрок")}`,
+  );
+  assert.ok(named.payload.seen["Игрок"] > 0, "имя пропало из головы, хотя его не убирали");
 
   // --- боковой ключ головы и восстановление из документа ---
   const headPath = path.join(dataDir, `${code}.rev.json`);

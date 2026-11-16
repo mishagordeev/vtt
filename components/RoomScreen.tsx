@@ -13,6 +13,7 @@ import {
   portraitKey,
   snapshotQuery,
 } from "@/lib/snapshot";
+import { headIsNewer, watchDelay } from "@/lib/syncWatch";
 import {
   advanceMarks,
   dropCharacter,
@@ -22,7 +23,7 @@ import {
   renameMessages,
   renameMusicAuthors,
 } from "@/lib/writes";
-import type { ChatMessage, Character, CharacterDraft, MapPing, MapState, MusicState, Player, RoomSnapshot, RoomWriteMeta, SnapshotRequest, WorldState } from "@/lib/types";
+import type { ChatMessage, Character, CharacterDraft, MapPing, MapState, MusicState, Player, RoomHead, RoomSnapshot, RoomWriteMeta, SnapshotRequest, WorldState } from "@/lib/types";
 import { forgetRoom, readRooms, rememberRoom, type RememberedRoom } from "@/lib/rooms";
 import { CharactersDialog } from "./CharactersDialog";
 import { CharactersRail } from "./CharactersRail";
@@ -159,6 +160,15 @@ export default function RoomScreen({ code }: { code: string }) {
   /** Номер изменения комнаты: из снимка после чтения, из ответа — после своей записи. */
   const [roomRev, setRoomRev] = useState(0);
   /**
+   * Тот же номер без ожидания перерисовки: живой опрос головы сравнивает с ним
+   * сразу после ответа и не запускает вторую перечитку из-за устаревшего состояния.
+   */
+  const roomRevRef = useRef(0);
+  /** Когда стол последний раз менялся или игрок что-то делал: от этого — шаг опроса. */
+  const lastChangeAtRef = useRef(Date.now());
+  /** Чтение комнаты уже идёт: параллельный `/state` не нужен — метки бы разъехались. */
+  const loadBusyRef = useRef(false);
+  /**
    * Что уже лежит в состоянии. Ответы мутаций применяются к нему напрямую
    * (`lib/writes.ts`), и без этих ссылок не видно, какой портрет у клиента есть
    * и какую карту он показывает.
@@ -187,10 +197,16 @@ export default function RoomScreen({ code }: { code: string }) {
     };
   }, []);
 
-  /** Номер изменения из ответа мутации: голова комнаты и дебаг-панель видят его сразу. */
+  /**
+   * Номер изменения из ответа мутации: голова комнаты и дебаг-панель видят его
+   * сразу. Своё действие делает стол «живым» — живой опрос переходит на частый шаг.
+   */
   const rememberRev = useCallback((meta: { rev?: number } | undefined) => {
     const rev = Number(meta?.rev);
-    if (Number.isFinite(rev) && rev > 0) setRoomRev(rev);
+    if (!Number.isFinite(rev) || rev <= 0) return;
+    roomRevRef.current = rev;
+    lastChangeAtRef.current = Date.now();
+    setRoomRev(rev);
   }, []);
 
   /** Я мастер: мне доступны полный список листов, музыка и запуск треков. */
@@ -224,6 +240,11 @@ export default function RoomScreen({ code }: { code: string }) {
 
 
   const load = useCallback(async () => {
+    // Параллельные чтения не нужны: ответы приходят из разных моментов и могут
+    // переставить метки назад. Запрос, пришедший во время чтения, пропускаем —
+    // следующий опрос головы увидит тот же выросший номер и повторит.
+    if (loadBusyRef.current) return;
+    loadBusyRef.current = true;
     try {
       // Полная перечитка (since=0) приносит всю историю: её броски не показываем заново.
       const request = syncRef.current;
@@ -286,6 +307,8 @@ export default function RoomScreen({ code }: { code: string }) {
       setLoadError(
         error instanceof Error ? error.message : "Не удалось связаться с комнатой",
       );
+    } finally {
+      loadBusyRef.current = false;
     }
   }, [code, rememberRev]);
 
@@ -305,6 +328,25 @@ export default function RoomScreen({ code }: { code: string }) {
       setRetryLoadBusy(false);
     }
   }, [load]);
+
+  /**
+   * Одна проверка головы: номер изменения без чтения документа комнаты.
+   * `changed` — номер вырос, комнату пора перечитать; `failed` — сеть или сервер
+   * не ответили (опрос уйдёт на паузу, баннер ошибки не показываем: следующий
+   * шаг — сама проверка, а не кнопка «Повторить»).
+   */
+  const checkHead = useCallback(async (): Promise<"changed" | "idle" | "failed"> => {
+    try {
+      // Без `name`: присутствие не спрашиваем, поэтому ответ стоит одного ключа.
+      const head = await api<RoomHead>(`/api/rooms/${code}/rev`, undefined, {
+        timeoutMs: 8_000,
+      });
+      return headIsNewer(head.rev, roomRevRef.current) ? "changed" : "idle";
+    } catch (error) {
+      if (error instanceof AppError && error.status === 404) setPhase("missing");
+      return "failed";
+    }
+  }, [code]);
 
   /** Вход уже идёт: второй клик (или автоповтор при возврате на вкладку) не нужен. */
   const joinBusyRef = useRef(false);
@@ -436,8 +478,9 @@ export default function RoomScreen({ code }: { code: string }) {
     };
   }, [phase, join, retryBoot]);
 
-  // Запросы в базу — только по действиям. Фонового опроса по таймеру нет:
-  // читаем комнату после своих правок, при возврате к столу и по кнопке «⟳».
+  // Чтение комнаты по действиям остаётся: после своих правок, при возврате на
+  // вкладку, после карточек и по кнопке «⟳» отвечать сразу, не дожидаясь опроса.
+  // Чужие изменения приносит живой опрос головы ниже — он же будит вкладку после фона.
   useEffect(() => {
     if (phase !== "room") return;
     const onVisibility = () => {
@@ -453,6 +496,63 @@ export default function RoomScreen({ code }: { code: string }) {
       window.removeEventListener("focus", onFocus);
     };
   }, [phase, load]);
+
+  /**
+   * Живой опрос головы: чужой бросок, сообщение или точка на карте появляются
+   * за пару секунд, а не после возврата на вкладку или кнопки «⟳».
+   *
+   * Каждая проверка — маленький `/rev` (номер изменения и время сервера,
+   * документ комнаты не читается). Комната читается только когда номер вырос,
+   * и то частично: `/state` с метками отдаёт одну ленту с нового сообщения или
+   * изменившуюся карту. В тишине шаг реже, в фоне запросов нет совсем —
+   * расписание считает `watchDelay` из `lib/syncWatch.ts`.
+   */
+  useEffect(() => {
+    if (phase !== "room") return;
+    let alive = true;
+    let timer = 0;
+    let failures = 0;
+
+    const schedule = () => {
+      if (!alive) return;
+      const delay = watchDelay({
+        visible: document.visibilityState === "visible",
+        sinceChangeMs: Date.now() - lastChangeAtRef.current,
+        failures,
+      });
+      timer = window.setTimeout(() => void tick(), delay);
+    };
+
+    const tick = async () => {
+      if (!alive) return;
+      if (document.visibilityState === "visible") {
+        const state = await checkHead();
+        failures = state === "failed" ? failures + 1 : 0;
+        if (state === "changed") {
+          // Стол ожил: следующие проверки идут частым шагом.
+          lastChangeAtRef.current = Date.now();
+          await load();
+        }
+      }
+      schedule();
+    };
+
+    // Вернулись на вкладку — проверяем сразу, не дожидаясь фоновой паузы таймера.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      window.clearTimeout(timer);
+      lastChangeAtRef.current = Date.now();
+      void tick();
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    schedule();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [phase, checkHead, load]);
 
   /**
    * Заход запоминается на этом устройстве: код, имя, мастер и время. Главная
@@ -901,6 +1001,8 @@ export default function RoomScreen({ code }: { code: string }) {
     window.localStorage.removeItem("pp:name");
     meRef.current = "";
     syncRef.current = emptySnapshotRequest();
+    roomRevRef.current = 0;
+    lastChangeAtRef.current = Date.now();
     setRoomRev(0);
     animatedRollsRef.current = new Set();
     setLastSyncAt(0);

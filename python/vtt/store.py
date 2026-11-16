@@ -526,10 +526,15 @@ def get_room_head(code, raw_name=""):
         write_head(code, rev)
 
     now = _now()
-    seen = _fresh_seen(storage.read_seen(code), now)
-    if name and now - seen.get(name, 0) >= SEEN_WINDOW_MS:
-        seen[name] = now
-        storage.write_seen(code, seen)
+    # Присутствие спрашивают только вместе с именем: без `name` это лишнее
+    # чтение ключа `seen` на каждую проверку, а живой опрос головы идёт без него.
+    if name:
+        seen = _fresh_seen(storage.read_seen(code), now)
+        if now - seen.get(name, 0) >= SEEN_WINDOW_MS:
+            seen[name] = now
+            storage.write_seen(code, seen)
+    else:
+        seen = {}
     return {"rev": rev, "seen": seen, "serverNow": now}
 
 

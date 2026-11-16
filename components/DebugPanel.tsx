@@ -181,7 +181,7 @@ export function DebugPanel({
         <span className="font-mono text-zinc-600">сессия: {formatBytes(sessionTraffic)}</span>
         <span className="ml-auto font-mono text-zinc-600">
           изменение: rev <span className="text-zinc-400">{rev || "—"}</span> · синхронизация:{" "}
-          {formatTime(lastSyncAt)} · только по действиям
+          {formatTime(lastSyncAt)} · живой опрос головы
         </span>
         <button
           type="button"

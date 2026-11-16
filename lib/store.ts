@@ -827,7 +827,9 @@ export async function getRoomHead(code: string, rawName: unknown = ""): Promise<
   }
 
   const now = Date.now();
-  const seen = freshSeen(await readSeen(code), now);
+  // Присутствие спрашивают только вместе с именем: без `name` это лишнее
+  // чтение ключа `seen` на каждую проверку, а живой опрос головы идёт без него.
+  const seen: Record<string, number> = name ? freshSeen(await readSeen(code), now) : {};
   if (name && now - (seen[name] ?? 0) >= SEEN_WINDOW_MS) {
     seen[name] = now;
     await writeSeen(code, seen);
