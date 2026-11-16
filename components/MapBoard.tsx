@@ -642,14 +642,18 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   const cursor = mapCursor(tool, tempHand);
   return (
     <section className="flex min-h-0 flex-col lg:flex-1">
-      {/* Заголовок вкладки и счётчик меток — и больше ничего: абзац-пояснение
-          под заголовком убран, он отнимал высоту у самой карты, а те же правила
-          есть в подсказках кнопок («Рука», «Точка», «Видят»). */}
+      {/* Счётчик меток — и больше ничего над картой: у карты Кас-Хатара
+          заголовка нет (имя вкладки видно на кнопке «Кас-Хатар»), а у своих
+          полотен остаётся их имя. Абзац-пояснение тоже убран, он отнимал
+          высоту у самой карты, а те же правила есть в подсказках кнопок
+          («Рука», «Точка», «Видят»). */}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          {tab.kind === "kas-khatar" ? "Карта Кас-Хатара" : tab.name}
-        </h2>
-        <span className="rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
+        {tab.kind === "kas-khatar" ? null : (
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+            {tab.name}
+          </h2>
+        )}
+        <span className="ml-auto rounded border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-500">
           метки: {pings.length}
         </span>
       </div>
@@ -673,7 +677,7 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
               onClick={() => setActiveTab(entry.id)}
               title={
                 entry.kind === "kas-khatar"
-                  ? "Карта Кас-Хатара"
+                  ? "Вкладка «Кас-Хатар»: карта мира"
                   : `Вкладка «${entry.name}»: пустой лист с сеткой`
               }
               className={`rounded-md border px-2 py-0.5 text-[10px] transition ${

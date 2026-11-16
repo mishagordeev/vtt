@@ -262,11 +262,6 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
               🎲 погода
             </button>
           ) : null}
-          {gm ? (
-            <span className="text-[10px] text-zinc-600">
-              часы и погоду ведёт мастер; у всех за столом они совпадают
-            </span>
-          ) : null}
         </div>
       </div>
 
