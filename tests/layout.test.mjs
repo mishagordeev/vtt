@@ -903,6 +903,38 @@ test("часы кампании: дату стола выбирают кален
   );
 });
 
+test("часы кампании: кнопки времени стоят в строке часов, а не под погодой", () => {
+  const clock = read("components", "WorldClock.tsx");
+
+  // Строка часов помечена атрибутом: в ней часы, пауза, сдвиги и переброс погоды.
+  const group = clock.indexOf('data-clock-controls="on"');
+  assert.ok(group > 0, "у строки с часами есть метка data-clock-controls");
+  assert.match(
+    clock.slice(clock.lastIndexOf("<div", group), clock.indexOf("</div>", group)),
+    /ml-auto flex flex-wrap items-center gap-1\.5/,
+    "группа часов — flex-строка, на узком экране она переносится внутри себя",
+  );
+
+  const face = clock.indexOf("{formatClock(clock.hour, clock.minute)}");
+  const pause = clock.indexOf('action: "running"');
+  const shifts = clock.indexOf("SHIFTS.map((shift) => (");
+  const weather = clock.indexOf('title="Перебросить погоду и ветер"');
+  const summary = clock.indexOf("aria-expanded={open}");
+  assert.ok(face > group, "в размеченной строке сначала стоят сами часы");
+  assert.ok(pause > face, "пауза часов — рядом с часами");
+  assert.ok(shifts > pause, "сдвиги времени идут сразу за часами и паузой");
+  assert.ok(weather > shifts, "переброс погоды стоит в том же ряду, что и сдвиги");
+  assert.ok(summary > weather, "строка погоды начинается только после блока часов");
+
+  // Отдельного блока кнопок под погодой больше нет: SHIFTS выводится один раз.
+  assert.equal(clock.split("SHIFTS.map").length - 1, 1, "кнопки времени выводятся в одном месте");
+  assert.doesNotMatch(
+    clock,
+    /className="mt-2 flex flex-wrap items-center gap-1"/,
+    "прежний отдельный ряд кнопок под погодой убран",
+  );
+});
+
 test("часы кампании: облачность и осадки словами, рассвет и закат на месте", () => {
   const clock = read("components", "WorldClock.tsx");
 

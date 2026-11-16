@@ -32,6 +32,9 @@ interface WorldClockProps {
  * лишнее в соседний день (и вперёд, и назад), поэтому шаг «+10 мин» и «+4 ч»
  * ничего не ломают. Пара «−1 мин» / «+1 мин» — самый мелкий шаг: поправить
  * промах, дождаться нужной минуты, не двигая стол на десять.
+ *
+ * Стоят эти кнопки в той же строке, что и сами часы (`data-clock-controls`),
+ * а не отдельным блоком ниже погоды: время и то, чем его двигают, — одно место.
  */
 const SHIFTS: { label: string; hours?: number; minutes?: number; title: string }[] = [
   { label: "−1 ч", hours: -1, title: "Отмотать час назад" },
@@ -135,7 +138,7 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
 
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <div className="min-w-0">
           <p className="flex min-w-0 items-baseline gap-1.5 text-sm text-zinc-100">
             <span className="text-zinc-500">📅</span>
@@ -162,11 +165,14 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
             {date.holiday ? ` · праздник «${date.holiday.name}»` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Часы и всё, чем мастер двигает время, — одна строка: кнопки стоят
+            рядом с часами, а не отдельным блоком ниже погоды. На узком экране
+            группа переносится целиком под дату, часы держатся первыми. */}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5" data-clock-controls="on">
           <span className="font-mono text-xl text-emerald-200">
             {formatClock(clock.hour, clock.minute)}
           </span>
-          <span className="text-[11px] text-zinc-500">{partOfDay(clock.hour)}</span>
+          <span className="mr-1 text-[11px] text-zinc-500">{partOfDay(clock.hour)}</span>
           {gm ? (
             <button
               type="button"
@@ -181,6 +187,38 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
             >
               {world.running ? "⏸" : "▶"}
             </button>
+          ) : null}
+          {gm
+            ? SHIFTS.map((shift) => (
+                <button
+                  key={shift.label}
+                  type="button"
+                  disabled={busy}
+                  title={shift.title}
+                  onClick={() =>
+                    void act({ action: "advance", hours: shift.hours, minutes: shift.minutes })
+                  }
+                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200 disabled:opacity-40"
+                >
+                  {shift.label}
+                </button>
+              ))
+            : null}
+          {gm ? (
+            <button
+              type="button"
+              disabled={busy}
+              title="Перебросить погоду и ветер"
+              onClick={() => void act({ action: "weather" })}
+              className="rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 transition hover:border-sky-400/60 hover:text-sky-200 disabled:opacity-40"
+            >
+              🎲 погода
+            </button>
+          ) : null}
+          {gm ? (
+            <span className="text-[10px] text-zinc-600">
+              часы и погоду ведёт мастер; у всех за столом они совпадают
+            </span>
           ) : null}
         </div>
       </div>
@@ -263,37 +301,6 @@ export function WorldClock({ world, clockOffset, gm, onAction }: WorldClockProps
             disabled={busy}
             onPick={(index) => void act({ action: "set", day: index })}
           />
-        </div>
-      ) : null}
-
-      {gm ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          {SHIFTS.map((shift) => (
-            <button
-              key={shift.label}
-              type="button"
-              disabled={busy}
-              title={shift.title}
-              onClick={() =>
-                void act({ action: "advance", hours: shift.hours, minutes: shift.minutes })
-              }
-              className="rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 transition hover:border-emerald-400/60 hover:text-emerald-200 disabled:opacity-40"
-            >
-              {shift.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            disabled={busy}
-            title="Перебросить погоду и ветер"
-            onClick={() => void act({ action: "weather" })}
-            className="rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 transition hover:border-sky-400/60 hover:text-sky-200 disabled:opacity-40"
-          >
-            🎲 погода
-          </button>
-          <span className="ml-1 text-[10px] text-zinc-600">
-            часы и погоду ведёт мастер; у всех за столом они совпадают
-          </span>
         </div>
       ) : null}
     </section>
