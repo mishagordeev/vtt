@@ -114,6 +114,8 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   const startRef = useRef<MapPoint | null>(null);
   const movedRef = useRef(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  /** Строка вкладок: её высоту панель инструментов отступает на телефоне. */
+  const headRef = useRef<HTMLDivElement>(null);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
   // «Рука» выбрана сразу: зажать ЛКМ над картой и потянуть — обычный способ
@@ -195,6 +197,34 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
+  }, []);
+
+  /**
+   * Высота строки вкладок — в `--pp-map-tabs-h`: по ней липнет панель
+   * инструментов на телефоне. Она стоит сразу под вкладками, и без этого
+   * отступа при прокрутке заезжала бы под них. Числом высоту не задать: вкладок
+   * становится больше, и они переносятся на вторую строку. Поэтому меряем и
+   * пересчитываем на каждое изменение размера, как `TopBar` и часы со своими
+   * полосами.
+   */
+  useEffect(() => {
+    const head = headRef.current;
+    if (!head) return;
+    const root = document.documentElement;
+    const write = () => {
+      root.style.setProperty(
+        "--pp-map-tabs-h",
+        `${Math.ceil(head.getBoundingClientRect().height)}px`,
+      );
+    };
+    write();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(write);
+    observer.observe(head);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--pp-map-tabs-h");
+    };
   }, []);
 
   // Стол изменил ширину — сдвиг поджимается, чтобы карта не оторвалась от рамки.
@@ -641,13 +671,15 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
   // Курсор рамки: зажатый пробел (временная «Рука») показывает захват даже над кистью.
   const cursor = mapCursor(tool, tempHand);
   return (
-    <section className="flex min-h-0 flex-col lg:flex-1">
+    // На широком экране это сетка (`pp-map-board` в `app/globals.css`): карта
+    // слева, панель инструментов колонкой справа, вкладки — во всю ширину.
+    <section className="pp-map-board flex min-h-0 flex-col lg:flex-1" data-map-board>
       {/* Счётчик меток — и больше ничего над картой: у карты Кас-Хатара
           заголовка нет (имя вкладки видно на кнопке «Кас-Хатар»), а у своих
           полотен остаётся их имя. Абзац-пояснение тоже убран, он отнимал
           высоту у самой карты, а те же правила есть в подсказках кнопок
           («Рука», «Точка», «Видят»). */}
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2" data-map-caption>
         {tab.kind === "kas-khatar" ? null : (
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
             {tab.name}
@@ -658,13 +690,14 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
         </span>
       </div>
 
-      {/* Шапка карты — вкладки и инструменты — липнет под часами: смещение
-          считает `pp-sticky-map-head` в `app/globals.css` по высоте закреплённой
-          панели с погодой (`--pp-clock-h`). Вкладки стоят под плашкой с погодой,
-          инструменты — над самой картой, и при прокрутке стола ни те, ни другие
-          не уезжают под верхнюю плашку. */}
+      {/* Вкладки карты липнут под часами: смещение считает
+          `pp-sticky-map-head` в `app/globals.css` по фактической высоте панели
+          с погодой (`--pp-clock-h`), поэтому раскрытый календарь их не
+          накрывает. Свою высоту строка отдаёт в `--pp-map-tabs-h`: по ней
+          липнет панель инструментов — она идёт сразу под вкладками. */}
       <div
-        className="pp-sticky-map-head space-y-1 rounded-lg border border-zinc-800 bg-zinc-900/95 p-1 shadow-lg backdrop-blur"
+        ref={headRef}
+        className="pp-sticky-map-head rounded-lg border border-zinc-800 bg-zinc-900/95 p-1 shadow-lg backdrop-blur"
         data-map-head
       >
         {/* Вкладки карт: «Кас-Хатар» и полотна, которые мастер добавляет сам.
@@ -710,12 +743,19 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
             </button>
           ) : null}
         </div>
+      </div>
 
-        {/* Панель инструментов — своя полоса над картой, а не плашка поверх её
-            верхнего угла: карту она больше не закрывает, а закрепление живёт на
-            шапке карты. Колесо над ней масштаб не меняет (`data-map-controls`
-            проверяет обработчик рамки), хотя слушатель висит на самой карте. */}
-        <div className="flex flex-col gap-1" data-map-controls data-map-toolbar>
+        {/* Панель инструментов: на широком экране — вертикальная колонка у правого
+            края карты (`pp-map-board` в `app/globals.css`), на телефоне — полоса
+            над картой. Прежняя строка в шапке отнимала у листа высоту; теперь это
+            место достаётся самой карте. Колесо над панелью масштаб не меняет
+            (`data-map-controls` проверяет обработчик рамки), хотя слушатель висит
+            на самой карте. */}
+        <div
+          className="pp-map-tools rounded-lg border border-zinc-800 bg-zinc-900/95 p-1 shadow-lg backdrop-blur"
+          data-map-controls
+          data-map-toolbar
+        >
           <div className="flex flex-wrap items-center gap-1">
           <button
             type="button"
@@ -739,19 +779,21 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
           >
             Ластик
           </button>
-          {COLORS.map((entry) => (
-            <button
-              key={entry}
-              type="button"
-              onClick={() => {
-                setColor(entry);
-                setTool("pen");
-              }}
-              title={`Цвет ${entry}`}
-              className={`h-4 w-4 rounded-full border ${color === entry && tool === "pen" ? "border-zinc-100" : "border-zinc-800"}`}
-              style={{ backgroundColor: entry }}
-            />
-          ))}
+          <div className="flex flex-wrap items-center gap-1" data-map-colors>
+            {COLORS.map((entry) => (
+              <button
+                key={entry}
+                type="button"
+                onClick={() => {
+                  setColor(entry);
+                  setTool("pen");
+                }}
+                title={`Цвет ${entry}`}
+                className={`h-4 w-4 rounded-full border ${color === entry && tool === "pen" ? "border-zinc-100" : "border-zinc-800"}`}
+                style={{ backgroundColor: entry }}
+              />
+            ))}
+          </div>
           <select
             value={width}
             onChange={(event) => setWidth(Number(event.target.value))}
@@ -828,16 +870,18 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
                       <option key={entry.value} value={entry.value}>{entry.label}</option>
                     ))}
                   </select>
-                  {COLORS.map((entry) => (
-                    <button
-                      key={`text-${entry}`}
-                      type="button"
-                      onClick={() => setTextColor(entry)}
-                      title={`Цвет надписи ${entry}`}
-                      className={`h-4 w-4 rounded-full border ${textColor === entry ? "border-zinc-100" : "border-zinc-800"}`}
-                      style={{ backgroundColor: entry }}
-                    />
-                  ))}
+                  <div className="flex flex-wrap items-center gap-1" data-map-colors>
+                    {COLORS.map((entry) => (
+                      <button
+                        key={`text-${entry}`}
+                        type="button"
+                        onClick={() => setTextColor(entry)}
+                        title={`Цвет надписи ${entry}`}
+                        className={`h-4 w-4 rounded-full border ${textColor === entry ? "border-zinc-100" : "border-zinc-800"}`}
+                        style={{ backgroundColor: entry }}
+                      />
+                    ))}
+                  </div>
                   {/* Кому видна запись: точка или надпись может быть тайной
                       мастера или подсказкой только для выбранных персонажей. */}
                   <details className="relative" data-map-audience>
@@ -943,7 +987,6 @@ export function MapBoard({ me, gm, map, characters, pingColor, onAction }: MapBo
             </div>
           ) : null}
         </div>
-      </div>
 
       {/* Поле карты. На телефоне высоту задаёт сама рамка (пропорции растра по
           ширине колонки), на широком экране — это остаток высоты стола, и рамка

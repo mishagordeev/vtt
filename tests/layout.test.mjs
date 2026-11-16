@@ -1057,33 +1057,40 @@ test("часы и погода закреплены под верхней пла
   );
 });
 
-test("вкладки карты и панель инструментов закреплены под часами", () => {
+test("вкладки закреплены под часами, инструменты — вертикальной колонкой справа", () => {
   const board = read("components", "MapBoard.tsx");
   const clock = read("components", "WorldClock.tsx");
   const css = read("app", "globals.css");
   const desk = read("components", "DeskPanel.tsx");
 
-  // Шапка карты — один липкий блок: вкладки идут под плашкой с погодой,
-  // инструменты — над самой картой. Раньше панель инструментов висела плашкой
-  // в верхнем углу рамки и закрывала часть листа.
+  // Панель инструментов больше не строка в липкой шапке: она стоит отдельным
+  // блоком после вкладок, а на широком экране уезжает вертикальной колонкой к
+  // правому краю карты (`pp-map-board` — сетка). Высоту, которую эта строка
+  // раньше отнимала, теперь забирает сама карта.
   const headAt = board.indexOf("data-map-head");
   const tabsAt = board.indexOf("data-map-tabs");
   const toolsAt = board.indexOf("data-map-toolbar");
   const frameAt = board.indexOf("overflow-hidden rounded-xl border border-zinc-800");
   const zoomAt = board.indexOf("data-map-zoom");
-  assert.ok(headAt > 0, "у шапки карты есть своя метка");
-  assert.ok(tabsAt > headAt && toolsAt > tabsAt, "вкладки стоят первыми, инструменты под ними");
-  assert.ok(frameAt > toolsAt, "рамка карты идёт после шапки — инструменты стоят над картой");
+  assert.ok(headAt > 0, "у строки вкладок есть своя метка");
+  assert.ok(tabsAt > headAt, "вкладки живут в липкой строке");
+  assert.ok(toolsAt > tabsAt, "панель инструментов идёт после вкладок");
+  assert.ok(frameAt > toolsAt, "рамка карты идёт после панели инструментов");
   assert.ok(zoomAt > frameAt, "масштаб остался в рамке карты");
   assert.match(
     board,
-    /className="pp-sticky-map-head[^"]*"[\s\S]{0,80}?data-map-head/,
-    "закрепление висит на шапке карты",
+    /className="pp-sticky-map-head[^"]*"[\s\S]{0,40}?data-map-head\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="flex flex-wrap items-center gap-1" data-map-tabs>[\s\S]*?<\/div>\s*<\/div>/,
+    "в липкой строке остались только вкладки — инструменты из неё вынуты",
   );
   assert.match(
     board,
-    /<div className="flex flex-col gap-1" data-map-controls data-map-toolbar>/,
-    "панель инструментов — полоса в шапке, а не плашка поверх карты",
+    /className="pp-map-tools[^"]*"[\s\S]{0,120}?data-map-controls[\s\S]{0,40}?data-map-toolbar/,
+    "панель инструментов — свой блок с меткой, а не плашка поверх карты",
+  );
+  assert.match(
+    board,
+    /<section className="pp-map-board[^"]*" data-map-board>/,
+    "у стола карты есть класс сетки: карта и колонка инструментов",
   );
   assert.doesNotMatch(board, /absolute left-2 top-2/, "плашки поверх верхнего угла карты больше нет");
 
@@ -1102,6 +1109,79 @@ test("вкладки карты и панель инструментов зак�
     css,
     /\.pp-sticky-map-head\s*\{[^}]*z-index: 25/,
     "шапка карты ниже часов и плашки, но выше карты",
+  );
+
+  // Панель инструментов на телефоне липнет следом за вкладками: смещение
+  // складывается из плашки, часов и фактической высоты строки вкладок.
+  assert.match(
+    css,
+    /\.pp-map-tools\s*\{[^}]*position: sticky/,
+    "на телефоне панель инструментов липкая",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools\s*\{[^}]*top: calc\(var\(--pp-top-bar-h\) \+ var\(--pp-clock-h\) \+ var\(--pp-map-tabs-h\)\)/,
+    "панель отступает на высоту плашки, часов и вкладок, а не на число",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools\s*\{[^}]*z-index: 24/,
+    "панель ниже вкладок: при прокрутке они остаются сверху",
+  );
+  assert.match(
+    css,
+    /:root\s*\{[^}]*--pp-map-tabs-h: 0px/,
+    "у высоты вкладок есть значение по умолчанию",
+  );
+  assert.match(board, /ref=\{headRef\}/, "у строки вкладок есть ссылка на собственный узел");
+  assert.match(board, /--pp-map-tabs-h/, "строка вкладок отдаёт свою высоту панели инструментов");
+  assert.match(
+    board,
+    /new ResizeObserver\(write\)[\s\S]{0,80}?observer\.observe\(head\)/,
+    "новая вкладка на второй строке пересчитывает высоту",
+  );
+
+  // Широкий экран: стол — сетка, инструменты — вертикальная колонка справа от
+  // карты, поэтому высоту у листа они больше не отнимают.
+  assert.match(
+    css,
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-map-board\s*\{[^}]*display: grid[^}]*grid-template-columns: minmax\(0, 1fr\) auto/,
+    "карта и колонка инструментов стоят рядом, а не друг под другом",
+  );
+  assert.match(
+    css,
+    /\.pp-map-board > \[data-map-toolbar\]\s*\{[^}]*grid-column: 2[^}]*grid-row: 3/,
+    "колонка инструментов — справа, в одной строке с картой",
+  );
+  assert.match(
+    css,
+    /\.pp-map-board > \[data-map-field\]\s*\{[^}]*grid-column: 1[^}]*grid-row: 3/,
+    "карта занимает левую часть той же строки",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools\s*\{[^}]*position: static[^}]*width: 5\.5rem[^}]*max-height: 100%[^}]*overflow-y: auto/,
+    "на широком экране колонка не липнет, а прокручивается внутри себя",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools > div\s*\{[^}]*flex-direction: column[^}]*flex-wrap: nowrap/,
+    "кнопки в колонке идут друг под другом, а не в строку",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools > div > button,[\s\S]{0,120}?\.pp-map-tools > div > select[\s\S]{0,80}?\{[^}]*width: 100%/,
+    "кнопки и списки занимают всю ширину узкой колонки",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools \[data-map-colors\]\s*\{[^}]*display: grid[^}]*grid-template-columns: repeat\(3, 1fr\)/,
+    "кружки цветов в колонке раскладываются по три в ряд",
+  );
+  assert.match(
+    css,
+    /\.pp-map-tools \[data-map-audience\] > div\s*\{[^}]*position: static/,
+    "«Видят» раскрывается на месте: прокрутка колонки обрезала бы плашку",
   );
   assert.match(
     css,
@@ -1135,9 +1215,7 @@ test("над картой нет ни абзаца-пояснения, ни за
   // Раньше над картой шли сначала абзац «Клик по карте — метка цветом игрока …»,
   // а потом заголовок «Карта Кас-Хатара»: оба занимали высоту у самой карты.
   // Имя вкладки и так видно на кнопке «Кас-Хатар», правила — в подсказках.
-  const titleAt = board.indexOf(
-    '<div className="mb-2 flex flex-wrap items-center justify-between gap-2">',
-  );
+  const titleAt = board.indexOf("data-map-caption");
   const headAt = board.indexOf("data-map-head");
   assert.ok(titleAt > 0 && headAt > titleAt, "счётчик меток стоит над шапкой инструментов");
   const caption = board.slice(titleAt, headAt);
@@ -1205,15 +1283,22 @@ test("стол статичен на странице: прокрутки нет
   // Поле карты — остаток высоты стола, рамка вписана в него целиком.
   assert.match(
     board,
-    /<section className="flex min-h-0 flex-col lg:flex-1">/,
+    /<section className="pp-map-board flex min-h-0 flex-col lg:flex-1" data-map-board>/,
     "карта забирает остаток высоты у часов",
   );
   assert.match(board, /<div className="pp-map-field mt-2" data-map-field>/, "у поля карты есть свой класс");
   assert.match(css, /\.pp-map-field\s*\{[^}]*min-height: 0/, "поле может ужиматься, а не растягивать стол");
   assert.match(
     css,
-    /@media \(min-width: 64rem\)\s*\{\s*\.pp-map-field\s*\{[^}]*flex: 1 1 auto[^}]*overflow: hidden/,
-    "на широком экране поле занимает остаток и не выпускает карту за свои края",
+    /@media \(min-width: 64rem\)\s*\{\s*\.pp-map-field\s*\{[^}]*position: relative[^}]*min-width: 0[^}]*overflow: hidden/,
+    "на широком экране поле занимает свою ячейку и не выпускает карту за свои края",
+  );
+  // Строка сетки под вкладками — остаток высоты стола: её делят карта и колонка
+  // инструментов, поэтому карта получила высоту прежней полосы инструментов.
+  assert.match(
+    css,
+    /\.pp-map-board\s*\{[^}]*grid-template-rows: auto auto minmax\(0, 1fr\)/,
+    "под вкладками остаётся вся высота стола, а не фиксированная полоса",
   );
   // Вписывание — absolute + inset 0 + margin auto + max-*: при width: 100% с
   // max-height браузер ужимает одну сторону и растягивает карту.
