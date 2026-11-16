@@ -244,18 +244,52 @@ export function usageSnapshot(): UsageSnapshot {
 const ROOM_ENDPOINT = "/api/rooms/";
 
 /**
- * Пинг стола — время последнего удачного ответа на запрос комнаты.
+ * По скольким последним ответам комнаты сглаживается пинг в верхней панели.
  *
- * Верхней панели нужно одно число, а не вся история: живой опрос ходит в голову
- * комнаты каждые 3–8 с, поэтому значение остаётся свежим само, без отдельного
- * запроса ради замера. Неудачные попытки не считаются: у таймаута там 20 с,
- * и он подменил бы «сколько идёт стол» на «сколько ждали впустую».
+ * Живой опрос ходит в голову каждые 3–8 с, поэтому пяти значений хватает
+ * примерно на полминуты: один медленный ответ тонет в медиане, а затяжная
+ * деградация всё равно видна — она сдвигает все пять.
  */
+export const PING_WINDOW = 5;
+
+/**
+ * Длительности последних удачных ответов на запрос комнаты, свежие — первыми.
+ *
+ * Отдельного запроса ради замера нет: берём то, что уже измерил клиент API.
+ * Неудачные попытки не считаются — у таймаута там 20 с, и он подменил бы
+ * «сколько идёт стол» на «сколько ждали впустую».
+ */
+export function roomPingSamples(snapshot: UsageSnapshot, limit = PING_WINDOW): number[] {
+  const samples: number[] = [];
+  for (const item of snapshot.recent) {
+    if (samples.length >= limit) break;
+    if (item.ok && item.label.startsWith(ROOM_ENDPOINT)) samples.push(item.ms);
+  }
+  return samples;
+}
+
+/** Пинг стола без сглаживания — время последнего удачного ответа комнаты. */
 export function lastRoomPingMs(snapshot: UsageSnapshot): number | null {
-  const entry = snapshot.recent.find(
-    (item) => item.ok && item.label.startsWith(ROOM_ENDPOINT),
-  );
-  return entry ? entry.ms : null;
+  return roomPingSamples(snapshot, 1)[0] ?? null;
+}
+
+/**
+ * Пинг стола на панели — медиана последних пяти удачных ответов комнаты.
+ *
+ * Одно число вместо последнего замера: разовый скачок сети на 1,5 с выглядел
+ * как «сеть легла», хотя следующий ответ приходил за 20 мс. Медиана такой
+ * выброс игнорирует, но не прячет настоящую деградацию и не отстаёт от неё:
+ * выборка короткая и целиком состоит из свежих ответов. Последнее значение
+ * остаётся в подсказке, чтобы всплеск всё-таки можно было увидеть.
+ */
+export function medianRoomPingMs(snapshot: UsageSnapshot): number | null {
+  const samples = roomPingSamples(snapshot);
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
 export function subscribeUsage(listener: () => void): () => void {

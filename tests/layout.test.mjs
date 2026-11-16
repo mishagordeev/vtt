@@ -12,6 +12,13 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  PING_WINDOW,
+  lastRoomPingMs,
+  medianRoomPingMs,
+  roomPingSamples,
+} from "../lib/metrics.ts";
+
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (...parts) => fs.readFileSync(path.join(projectDir, ...parts), "utf8");
 
@@ -363,17 +370,24 @@ test("верхняя панель комнаты на всю ширину: «В�
   assert.match(bar, /onLeave/, "выход из стола — кнопкой на панели");
   assert.match(bar, />\s*Выйти\s*</, "кнопка выхода подписана «Выйти»");
   assert.match(bar, /<ThemeToggle variant="bar" \/>/, "переключатель темы стоит на панели");
-  assert.match(bar, /lastRoomPingMs\(usage\)/, "пинг берётся из измерений клиента API");
+  assert.match(bar, /medianRoomPingMs\(usage\)/, "на панели видно сглаженный пинг — медиану");
+  assert.match(bar, /lastRoomPingMs\(usage\)/, "последнее значение без сглаживания остаётся");
   assert.match(
     bar,
     /\{pingKnown \? `\$\{ping\} мс` : "—"\}/,
     "рядом с точкой связи видно время ответа сервера",
   );
   assert.match(bar, /пинг/, "подпись «пинг» на панели есть");
+  assert.match(bar, /медиана/, "подсказка объясняет, что число сглажено медианой");
   assert.match(
     bar,
-    /usage\.recent\.find|lastRoomPingMs/,
-    "пинг — это последний запрос комнаты, а не отдельный замер",
+    /последний ответ шёл \$\{pingLast\} мс/,
+    "в подсказке видно последнее значение — по нему заметен всплеск",
+  );
+  assert.match(
+    bar,
+    /usage\.recent\.find|lastRoomPingMs|roomPingSamples/,
+    "пинг — это запросы комнаты, а не отдельный замер",
   );
 });
 
@@ -398,15 +412,73 @@ test("описание комнаты убрано из-под карты, а п
     "комната не передаёт код комнаты в стол",
   );
 
-  // Пинг — пинг стола: последний удачный запрос комнаты, без отдельного замера.
-  assert.match(metrics, /export function lastRoomPingMs/, "пинг считается в lib/metrics");
+  // Пинг — пинг стола: медиана последних пяти удачных запросов комнаты без
+  // отдельного замера, а последнее значение остаётся в подсказке.
+  assert.match(metrics, /export const PING_WINDOW = 5/, "пинг сглаживается по последним пяти ответам");
+  assert.match(metrics, /export function roomPingSamples/, "выборка последних ответов комнаты — одна на всех");
+  assert.match(metrics, /limit = PING_WINDOW/, "по умолчанию выборка ограничена пятью ответами");
+  assert.match(metrics, /export function lastRoomPingMs/, "последнее значение считается в lib/metrics");
+  assert.match(metrics, /export function medianRoomPingMs/, "медиана считается в lib/metrics");
   assert.match(metrics, /item\.ok && item\.label\.startsWith\(ROOM_ENDPOINT\)/, "неудачные запросы пингом не считаются");
+  assert.match(metrics, /sorted\[mid\]/, "нечётная выборка берёт середину");
+  assert.match(
+    metrics,
+    /Math\.round\(\(sorted\[mid - 1\] \+ sorted\[mid\]\) \/ 2\)/,
+    "чётная выборка берёт среднее двух средних",
+  );
   assert.ok(!/<dt className="text-zinc-500">пинг<\/dt>/.test(debug), "поле «пинг» ушло из диагностики мастера");
   assert.match(debug, /storage\.latencyMs/, "задержка хранилища в подписи диагностики осталась");
   assert.match(bar, /title=\{pingHint\}/, "у пинга есть подсказка: что именно измерено");
 });
 
 
+
+test("пинг стола: показывается медиана последних пяти ответов, а не последний замер", () => {
+  // Снимок клиента API: функции пинга смотрят только на `recent`, свежие — первыми.
+  const entry = (ms, { label = "/api/rooms/:code/rev", ok = true } = {}) => ({
+    at: 0,
+    label,
+    method: "GET",
+    status: ok ? 200 : 504,
+    bytesIn: 100,
+    bytesOut: 0,
+    ms,
+    ok,
+  });
+  const snapshot = (recent) => ({ recent });
+
+  assert.equal(PING_WINDOW, 5, "сглаживание — по последним пяти ответам");
+
+  const fast = snapshot([
+    entry(10),
+    entry(12),
+    entry(900), // одиночный скачок сети
+    entry(8),
+    entry(6),
+    entry(4), // шестой ответ в выборку уже не входит
+    entry(2),
+  ]);
+  assert.deepEqual(roomPingSamples(fast), [10, 12, 900, 8, 6], "в выборке ровно пять свежих ответов");
+  assert.equal(medianRoomPingMs(fast), 10, "скачок 900 мс медиану не сдвигает");
+  assert.equal(lastRoomPingMs(fast), 10, "последнее значение остаётся отдельно — для подсказки");
+
+  assert.equal(medianRoomPingMs(snapshot([entry(2000), entry(10), entry(12), entry(8), entry(6)])), 10, "скачок в самом свежем ответе тоже не сдвигает медиану");
+  assert.equal(medianRoomPingMs(snapshot([entry(900), entry(900), entry(900), entry(10), entry(12)])), 900, "затяжное замедление видно: медиана уходит за ним");
+
+  assert.equal(medianRoomPingMs(snapshot([entry(10), entry(20)])), 15, "на чётной выборке — среднее двух средних");
+  assert.equal(medianRoomPingMs(snapshot([entry(10), entry(20), entry(30)])), 20, "на нечётной — середина");
+
+  const mixed = snapshot([
+    entry(5000, { ok: false }),
+    entry(5000, { label: "/api/health" }),
+    entry(7),
+  ]);
+  assert.deepEqual(roomPingSamples(mixed), [7], "неудачные ответы и чужие адреса в пинг не идут");
+  assert.equal(medianRoomPingMs(mixed), 7);
+
+  assert.equal(medianRoomPingMs(snapshot([])), null, "без ответов комнаты пинга нет");
+  assert.equal(lastRoomPingMs(snapshot([])), null);
+});
 
 test("нижняя плашка стола: игроки отдельной строкой и пометка «в сети»", () => {
   const room = read("components", "RoomScreen.tsx");
