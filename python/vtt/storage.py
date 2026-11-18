@@ -38,6 +38,11 @@ SEEN_KEY_SECONDS = 600
 # иначе каждая правка листа стоила бы семи лишних команд Redis.
 PARTS_TTL_REFRESH_SECONDS = 6 * 24 * 3600
 HTTP_TIMEOUT = 10
+# Первый заход за значением ждёт меньше: если ответ не пришёл, дешевле сразу
+# перейти на куски, чем держать игрока на экране входа. Холостое ожидание
+# таймаута видно на живом столе 18.11.2026: `/state` собирается из документа,
+# ленты и портретов, и 10 секунд на каждом — это минуты.
+READ_ATTEMPT_TIMEOUT = 4
 # Большой ответ приходит не всегда: документ живой комнаты весит 78 КБ, портрет
 # листа — до 450 КБ, и одним GET такое значение иногда обрывается на середине
 # (соединение с Upstash закрывается, ответ висит до таймаута). В бою 18.11.2026
@@ -256,7 +261,7 @@ def _read_value(creds, key, action="read"):
     """
     quoted = urlparse.quote(key, safe="")
     try:
-        status, text = _redis(creds, "/get/" + quoted)
+        status, text = _redis(creds, "/get/" + quoted, timeout=READ_ATTEMPT_TIMEOUT)
     except StorageUnavailable as error:
         print("storage: %s — ответ не доехал, дочитываю кусками" % key, file=sys.stderr)
         return _read_chunks(creds, key, error)

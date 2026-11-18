@@ -275,8 +275,13 @@ test("Python-версия повторяет частичное чтение и 
   assert.match(store, /snapshot\["characters"\] = changed_characters/, "листы приходят по изменению");
   assert.match(
     store,
-    /if known != key:\s*\n\s*read, portrait = load_portrait\(code, character\.get\("id"\)\)/,
+    /if known != key:\s*\n\s*wanted\.append\(len\(changed\) - 1\)/,
     "портрет режется по подписи, а сама картинка читается своим ключом",
+  );
+  assert.match(
+    store,
+    /with ThreadPoolExecutor\(max_workers=min\(6, len\(wanted\)\)\) as pool:/,
+    "портреты читаются разом: один медленный лист не держит остальные",
   );
   assert.match(
     store,

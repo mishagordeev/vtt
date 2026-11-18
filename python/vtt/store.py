@@ -14,6 +14,7 @@ import re
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from . import data, dice, storage, tracks, convert
 from .characters import can_edit, draft_from_character, normalize_draft, xp_for_level
@@ -715,29 +716,45 @@ def changed_characters(code, characters, marks):
     Портрет в листе стоит до 260 КБ, поэтому он приходит только при другой
     подписи: чужая правка навыка стоит 2 КБ вместо 1,5 МБ. Сама картинка лежит
     своим ключом (`storage.read_portrait`) и читается только тому, у кого её
-    ещё нет, — в документе комнаты осталась лишь её подпись.
+    ещё нет, — в документе комнаты осталась лишь её подпись. Картинки читаются
+    разом (по потоку на лист): один вставший запрос не должен держать вход.
     """
     since = int(number_or(marks.get("chars"), 0))
     portraits = marks.get("portraits")
     known_all = portraits if isinstance(portraits, dict) else None
     changed = []
+    wanted = []
     for character in characters:
         if since > 0 and int(number_or(character.get("updatedAt"), 0)) < since:
             continue
         key = character.get("portraitKey") or portrait_key("")
         known = known_all.get(character.get("id")) if known_all is not None else None
         copy = dict(character)
-        portrait, read = "", True
-        if known != key:
-            read, portrait = load_portrait(code, character.get("id"))
-        copy["portrait"] = portrait
+        copy["portrait"] = ""
         copy["portraitFull"] = ""
-        # Непрочитанную картинку не выдаём за пришедшую: подпись остаётся той,
-        # что уже у клиента, и он спросит портрет снова. Иначе пустая картинка
-        # закрепилась бы навсегда — клиент запоминает подпись из ответа.
-        copy["portraitKey"] = key if read else (known or "")
-        changed.append(with_xp(copy))
-    return changed
+        copy["portraitKey"] = key
+        changed.append((copy, key, known))
+        if known != key:
+            wanted.append(len(changed) - 1)
+    if wanted:
+        # Портрет — свой ключ до 450 КБ, и медленный запрос за ним держал бы
+        # остальные листы в очереди: читаем разом, по потоку на лист (их не
+        # больше шести). Иначе вход в комнату упирался в срок клиента.
+        with ThreadPoolExecutor(max_workers=min(6, len(wanted))) as pool:
+            readings = list(
+                pool.map(
+                    lambda index: load_portrait(code, changed[index][0].get("id")),
+                    wanted,
+                )
+            )
+        for index, (read, portrait) in zip(wanted, readings):
+            copy, key, known = changed[index]
+            copy["portrait"] = portrait
+            # Непрочитанную картинку не выдаём за пришедшую: подпись остаётся
+            # той, что у клиента, и он спросит портрет снова. Иначе пустая
+            # картинка закрепилась бы навсегда — клиент запоминает подпись.
+            copy["portraitKey"] = key if read else (known or "")
+    return [with_xp(copy) for copy, _, _ in changed]
 
 
 def load_portrait(code, character_id):
@@ -749,9 +766,9 @@ def load_portrait(code, character_id):
     """
     try:
         payload = storage.read_portrait(code, character_id)
-    except AppError as error:
+    except (AppError, OSError) as error:
         print(
-            "портрет %s:%s не прочитан: %s" % (code, character_id, error.message),
+            "портрет %s:%s не прочитан: %s" % (code, character_id, error),
             file=sys.stderr,
         )
         return False, ""

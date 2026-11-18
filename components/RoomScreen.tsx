@@ -56,6 +56,16 @@ const MUSIC_VOLUME_KEY = "pp:music:volume";
 const DEFAULT_MUSIC_VOLUME = 50;
 /** Через сколько на экране загрузки появляется «Повторить», если комната молчит. */
 const BOOT_SLOW_MS = 8000;
+/**
+ * Срок на чтение комнаты — больше общего 20 секунд.
+ *
+ * Снимок собирается из документа (78 КБ у живого стола), ленты и портретов.
+ * Если Redis не отдал большой ответ целиком, сервер дочитывает его кусками
+ * (`python/vtt/storage.py`), и один такой путь — это секунды, а их до шести
+ * картинок. Ответ на `/state` идемпотентен, поэтому лучше подождать, чем
+ * показать ошибку и просить нажать ⟳.
+ */
+const SNAPSHOT_TIMEOUT_MS = 45_000;
 
 type Phase = "boot" | "join" | "room" | "missing";
 
@@ -265,6 +275,8 @@ export default function RoomScreen({ code }: { code: string }) {
         `/api/rooms/${code}/state?${snapshotQuery(request)}${
           viewer ? `&viewer=${encodeURIComponent(viewer)}` : ""
         }`,
+        undefined,
+        { timeoutMs: SNAPSHOT_TIMEOUT_MS },
       );
       // Метки берём из ответа: сервер знает настоящий момент изменения,
       // а клиент видит только пришедшие ему части.
