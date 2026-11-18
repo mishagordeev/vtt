@@ -11,6 +11,7 @@ import math
 import os
 import random
 import re
+import sys
 import time
 import uuid
 
@@ -726,20 +727,38 @@ def changed_characters(code, characters, marks):
         key = character.get("portraitKey") or portrait_key("")
         known = known_all.get(character.get("id")) if known_all is not None else None
         copy = dict(character)
-        copy["portrait"] = "" if known == key else load_portrait(code, character.get("id"))
+        portrait, read = "", True
+        if known != key:
+            read, portrait = load_portrait(code, character.get("id"))
+        copy["portrait"] = portrait
         copy["portraitFull"] = ""
-        copy["portraitKey"] = key
+        # Непрочитанную картинку не выдаём за пришедшую: подпись остаётся той,
+        # что уже у клиента, и он спросит портрет снова. Иначе пустая картинка
+        # закрепилась бы навсегда — клиент запоминает подпись из ответа.
+        copy["portraitKey"] = key if read else (known or "")
         changed.append(with_xp(copy))
     return changed
 
 
 def load_portrait(code, character_id):
-    """Миниатюра листа из своего ключа; ключа нет — пустая строка."""
-    payload = storage.read_portrait(code, character_id)
+    """Миниатюра листа: (прочитана ли, картинка).
+
+    Ключа нет — это не сбой, а пустой портрет. Сбой хранилища тоже не запирает
+    стол: лист открывается без картинки, а подпись в снимке остаётся прежней,
+    чтобы клиент попросил портрет ещё раз (см. `changed_characters`).
+    """
+    try:
+        payload = storage.read_portrait(code, character_id)
+    except AppError as error:
+        print(
+            "портрет %s:%s не прочитан: %s" % (code, character_id, error.message),
+            file=sys.stderr,
+        )
+        return False, ""
     if not isinstance(payload, dict):
-        return ""
+        return True, ""
     value = payload.get("portrait")
-    return value if isinstance(value, str) else ""
+    return True, value if isinstance(value, str) else ""
 
 
 def get_room_snapshot(code, marks=None, viewer=""):

@@ -16,8 +16,10 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
+from http.client import HTTPException
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
@@ -36,12 +38,31 @@ SEEN_KEY_SECONDS = 600
 # иначе каждая правка листа стоила бы семи лишних команд Redis.
 PARTS_TTL_REFRESH_SECONDS = 6 * 24 * 3600
 HTTP_TIMEOUT = 10
+# Большой ответ приходит не всегда: документ живой комнаты весит 78 КБ, портрет
+# листа — до 450 КБ, и одним GET такое значение иногда обрывается на середине
+# (соединение с Upstash закрывается, ответ висит до таймаута). В бою 18.11.2026
+# из-за этого перестал открываться стол PSWFWB: `/state` отвечал 500
+# «Внутренняя ошибка сервера». Кусками по 16 КБ то же значение читается целиком,
+# поэтому при сбое чтение пробует их, прежде чем сказать «не прочитано».
+CHUNK_BYTES = 16 * 1024
+CHUNK_TRIES = 4
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get("VTT_DATA_DIR") or os.path.join(BASE_DIR, "data", "rooms")
 
 _PROTOCOL = re.compile(r"^https?://", re.IGNORECASE)
 _SPACES = re.compile(r"\s+")
+
+
+class StorageUnavailable(AppError):
+    """Redis не ответил или оборвал ответ.
+
+    Отдельный класс, чтобы чтение комнаты отличало сбой связи от ответа-ошибки:
+    при сбое значение дочитывается кусками `GETRANGE`, а 401/429 повторять
+    бессмысленно. Раньше таймаут чтения уходил наверх как `TimeoutError`, и
+    клиент видел 500 «Внутренняя ошибка сервера» без подсказки, что делать.
+    """
+
 
 
 def _env(name):
@@ -125,18 +146,56 @@ def snippet(text):
     return flat[:180] if flat else None
 
 
-def _redis(creds, path, body=None, method="GET"):
-    """Запрос к REST API Upstash: (код, текст ответа)."""
+def transport_message(error, timeout):
+    """Текст для клиента вместо «внутренней ошибки»: что случилось и что делать."""
+    if isinstance(error, TimeoutError):
+        reason = "не ответило за %d с" % timeout
+    else:
+        reason = "оборвало ответ (%s)" % type(error).__name__
+    return (
+        "Хранилище Redis %s. Комната не прочитана — нажмите «⟳» над лентой: "
+        "повтор обычно проходит. Если не помогает, проверьте Usage в Upstash Console "
+        "(команды, трафик, объём)." % reason
+    )
+
+
+def _decode(data):
+    """Тело ответа строкой: обрыв посреди символа не должен ронять разбор."""
+    return data.decode("utf-8", "replace")
+
+
+def _payload_of(body):
+    """Тело ответа Upstash как словарь; строку и байты принимает одинаково."""
+    try:
+        payload = json.loads(body) if body else {}
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _redis(creds, path, body=None, method="GET", timeout=HTTP_TIMEOUT, raw=False):
+    """Запрос к REST API Upstash: (код, текст ответа или байты при `raw`).
+
+    Сбой связи (таймаут, обрыв соединения, TLS) уходит наверх как
+    `StorageUnavailable` с понятным клиенту текстом: раньше таймаут чтения
+    комнаты превращался в 500 «Внутренняя ошибка сервера», и по нему нельзя
+    было понять ни что случилось, ни что запрос стоит просто повторить.
+    """
     data = body.encode("utf-8") if body is not None else (b"" if method == "POST" else None)
     request = urlrequest.Request(creds["url"] + path, data=data, method=method)
     request.add_header("Authorization", "Bearer " + creds["token"])
     if body is not None:
         request.add_header("Content-Type", "text/plain")
     try:
-        with urlrequest.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-            return response.status, response.read().decode("utf-8", "replace")
+        with urlrequest.urlopen(request, timeout=timeout) as response:
+            payload = response.read()
+            return response.status, payload if raw else _decode(payload)
     except urlerror.HTTPError as error:
-        return error.code, error.read().decode("utf-8", "replace")
+        payload = error.read()
+        return error.code, payload if raw else _decode(payload)
+    except (TimeoutError, OSError, HTTPException) as error:
+        print("storage: %s — %s: %s" % (path, type(error).__name__, error), file=sys.stderr)
+        raise StorageUnavailable(504, transport_message(error, timeout)) from error
 
 
 def storage_error(status, action, detail=None):
@@ -186,6 +245,91 @@ def storage_error(status, action, detail=None):
     return AppError(502, "Не удалось сохранить данные комнаты (HTTP %d)." % status)
 
 
+def _read_value(creds, key, action="read"):
+    """Значение ключа строкой (или None): обычный GET, а при сбое — куски.
+
+    Один GET дешевле по командам, поэтому он и остаётся первым. Если ответ не
+    доехал целиком (`StorageUnavailable`) или пришёл обрезанным, значение
+    дочитывается `GETRANGE`: у живого стола документ 78 КБ, и обрыв на середине
+    раньше запирал вход в комнату («внутренняя ошибка сервера»). Теперь либо
+    приходит значение, либо понятный текст про Redis.
+    """
+    quoted = urlparse.quote(key, safe="")
+    try:
+        status, text = _redis(creds, "/get/" + quoted)
+    except StorageUnavailable as error:
+        print("storage: %s — ответ не доехал, дочитываю кусками" % key, file=sys.stderr)
+        return _read_chunks(creds, key, error)
+    if status != 200:
+        raise storage_error(status, action, snippet(text))
+    payload = _payload_of(text)
+    if "result" in payload:
+        value = payload["result"]
+        return value if isinstance(value, str) else None
+    # Ответ 200, но тело оборвалось на середине: вернуть «комнаты нет» нельзя.
+    print("storage: %s — тело ответа оборвалось, дочитываю кусками" % key, file=sys.stderr)
+    return _read_chunks(creds, key)
+
+
+def _chunks_failure(error):
+    """Что поднять, если и куски не дочитались."""
+    if error is not None:
+        return error
+    return StorageUnavailable(
+        504,
+        "Хранилище Redis оборвало ответ, и кусками значение не дочиталось. "
+        "Комната не прочитана — нажмите «⟳» над лентой: повтор обычно проходит.",
+    )
+
+
+def _read_chunks(creds, key, error=None):
+    """Дочитывает значение кусками `GETRANGE` — по 16 КБ за запрос.
+
+    Граница куска может разрезать многобайтовый символ, и тогда `json.loads`
+    по байтам падает с `UnicodeDecodeError`: кусок ужимается на байт и
+    запрашивается снова. Без этого в тексте комнаты появились бы знаки замены.
+    """
+    quoted = urlparse.quote(key, safe="")
+    try:
+        status, size_text = _redis(creds, "/strlen/" + quoted)
+    except StorageUnavailable:
+        raise _chunks_failure(error)
+    if status != 200:
+        raise storage_error(status, "read", snippet(size_text))
+    try:
+        size = int(_payload_of(size_text).get("result") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size <= 0:
+        return None
+    parts = []
+    start = 0
+    while start < size:
+        end = min(start + CHUNK_BYTES - 1, size - 1)
+        chunk = None
+        for _ in range(CHUNK_TRIES):
+            try:
+                status, body = _redis(creds, "/getrange/%s/%d/%d" % (quoted, start, end), raw=True)
+            except StorageUnavailable:
+                raise _chunks_failure(error)
+            if status != 200:
+                raise storage_error(status, "read", snippet(_decode(body)))
+            # Битый кусок `_payload_of` не разбирает (граница разрезала символ
+            # или оборвала escape), и он ужимается на байт.
+            value = _payload_of(body).get("result")
+            if isinstance(value, str):
+                chunk = value
+                break
+            end -= 1
+            if end < start:
+                raise _chunks_failure(error)
+        if chunk is None:
+            raise _chunks_failure(error)
+        parts.append(chunk)
+        start = end + 1
+    return "".join(parts)
+
+
 def _room_path(code):
     return os.path.join(DATA_DIR, "%s.json" % code)
 
@@ -223,18 +367,11 @@ def read_doc(code):
     """Документ комнаты или None, если её нет."""
     creds = credentials()
     if creds:
-        status, text = _redis(creds, "/get/" + urlparse.quote(storage_key(code), safe=""))
-        if status != 200:
-            raise storage_error(status, "read", snippet(text))
-        try:
-            payload = json.loads(text) if text else {}
-        except ValueError:
-            payload = {}
-        result = payload.get("result")
-        if not result:
+        value = _read_value(creds, storage_key(code))
+        if not value:
             return None
         try:
-            doc = json.loads(result)
+            doc = json.loads(value)
         except ValueError:
             return None
         return doc if isinstance(doc, dict) else None
@@ -314,18 +451,11 @@ def _part_read(code, suffix):
     """JSON-часть комнаты: Redis-ключ или файл `<КОД>.<suffix>.json`."""
     creds = credentials()
     if creds:
-        status, text = _redis(creds, "/get/" + urlparse.quote(_side_key(code, suffix), safe=""))
-        if status != 200:
-            raise storage_error(status, "read", snippet(text))
-        try:
-            payload = json.loads(text) if text else {}
-        except ValueError:
-            return None
-        result = payload.get("result")
-        if not result:
+        text = _read_value(creds, _side_key(code, suffix))
+        if not text:
             return None
         try:
-            value = json.loads(result)
+            value = json.loads(text)
         except ValueError:
             return None
         return value if isinstance(value, dict) else None
@@ -546,14 +676,10 @@ def read_rev(code):
     """Номер изменения из бокового ключа; None — ключа нет, нужен документ."""
     creds = credentials()
     if creds:
-        status, text = _redis(creds, "/get/" + urlparse.quote(rev_key(code), safe=""))
-        if status != 200:
-            raise storage_error(status, "read", snippet(text))
-        try:
-            payload = json.loads(text) if text else {}
-        except ValueError:
-            payload = {}
-        return positive_int(payload.get("result"))
+        text = _read_value(creds, rev_key(code))
+        if not text:
+            return None
+        return positive_int(text)
     payload = _side_read(code, "rev")
     return positive_int(payload.get("rev")) if payload else None
 
@@ -576,13 +702,9 @@ def read_seen(code):
     creds = credentials()
     if creds:
         try:
-            status, text = _redis(creds, "/get/" + urlparse.quote(seen_key(code), safe=""))
-            if status != 200:
-                return {}
-            payload = json.loads(text) if text else {}
-            result = payload.get("result")
-            seen = json.loads(result) if result else {}
-        except (OSError, ValueError, urlerror.URLError):
+            text = _read_value(creds, seen_key(code))
+            seen = json.loads(text) if text else {}
+        except (OSError, ValueError, urlerror.URLError, AppError):
             return {}
         return seen if isinstance(seen, dict) else {}
     payload = _side_read(code, "seen")
@@ -597,7 +719,7 @@ def write_seen(code, seen):
         try:
             path = "/set/%s?EX=%d" % (urlparse.quote(seen_key(code), safe=""), SEEN_KEY_SECONDS)
             _redis(creds, path, body=body, method="POST")
-        except (OSError, urlerror.URLError):
+        except (OSError, urlerror.URLError, AppError):
             pass
         return
     try:
@@ -825,7 +947,7 @@ def probe(deep=False):
             "status": write_status if write_status is not None else status,
             "error": write_error,
         }
-    except (OSError, urlerror.URLError, ValueError):
+    except (OSError, urlerror.URLError, ValueError, AppError):
         return {
             "mode": "redis",
             "reachable": False,

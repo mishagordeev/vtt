@@ -275,8 +275,13 @@ test("Python-версия повторяет частичное чтение и 
   assert.match(store, /snapshot\["characters"\] = changed_characters/, "листы приходят по изменению");
   assert.match(
     store,
-    /copy\["portrait"\] = "" if known == key else load_portrait\(code, character\.get\("id"\)\)/,
+    /if known != key:\s*\n\s*read, portrait = load_portrait\(code, character\.get\("id"\)\)/,
     "портрет режется по подписи, а сама картинка читается своим ключом",
+  );
+  assert.match(
+    store,
+    /copy\["portraitKey"\] = key if read else \(known or ""\)/,
+    "непрочитанный портрет не двигает подпись: иначе клиент больше его не спросит",
   );
   assert.match(
     store,
